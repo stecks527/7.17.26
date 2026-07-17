@@ -1,0 +1,43 @@
+/*************************************************
+ * 90 ENGINE ANALYTICS OS FEEDERS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Optional helper calls for recording simple analytics events
+ *************************************************/
+
+function recordEngineAnalyticsSnapshotCapture_(payload, results) {
+  if (typeof EngineRouterOS !== "function") return false;
+
+  EngineRouterOS().analytics(
+    "SnapshotOS",
+    "Queued Snapshot Capture",
+    1,
+    {
+      performance: payload && payload.performance ? payload.performance : "",
+      results: results || []
+    }
+  );
+
+  return true;
+}
+
+function recordEngineAnalyticsResolverValidation_(resolved, issues) {
+  if (typeof EngineRouterOS !== "function") return false;
+
+  const errorCount = (issues || []).filter(i => i.severity === "ERROR").length;
+  const warningCount = (issues || []).filter(i => i.severity === "WARNING").length;
+
+  EngineRouterOS().analytics(
+    "CastResolverOS",
+    "Resolver Validation",
+    1,
+    {
+      performanceDate: resolved ? resolved.performanceDate : "",
+      performanceLabel: resolved ? resolved.performanceLabel : "",
+      errors: errorCount,
+      warnings: warningCount
+    }
+  );
+
+  return true;
+}

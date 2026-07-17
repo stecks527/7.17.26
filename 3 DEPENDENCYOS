@@ -1,0 +1,3564 @@
+/*************************************************
+ * 03 DEPENDENCYOS
+ * Version: 0.3.0
+ * Status: ACTIVE
+ *
+ * Workbook architecture and dependency scanner.
+ *
+ * RESUMABLE CORE AUDIT
+ * - Stops safely before Apps Script timeout
+ * - Saves exact sheet/row progress
+ * - Stores growing audit data in hidden Engine staging sheets
+ * - Automatically resumes with a one-time trigger
+ * - Writes final reports only after scanning completes
+ *
+ * CURRENT CAPABILITIES
+ * - Formula dependency map
+ * - Cross-sheet reference map
+ * - IMPORTRANGE detection
+ * - Named-range map
+ * - Data-validation dependency map
+ * - Conditional-formatting dependency map
+ * - Source-of-truth architecture audit
+ * - High-impact cell/range risk report
+ * - Broken formula detection
+ * - Selected-cell dependency inspector
+ *
+ * IMPORTANT
+ * This version scans the spreadsheet itself.
+ * Script source-code scanning will be added in
+ * the next DependencyOS phase.
+ *************************************************/
+
+
+/* =========================================================
+ * PUBLIC API
+ * ========================================================= */
+
+function DependencyOS() {
+  return {
+    auditWorkbook: dependencyOSAuditWorkbook_,
+    resumeAudit: dependencyOSResumeAudit_,
+    resetAuditProgress: dependencyOSResetAuditProgress_,
+    auditStatus: dependencyOSGetAuditStatus_,
+    inspectActiveCell: dependencyOSInspectActiveCell_,
+    buildMenu: dependencyOSBuildMenu_,
+    clearReports: dependencyOSClearReports_
+  };
+}
+
+
+/* =========================================================
+ * MENU
+ * ========================================================= */
+
+/**
+ * Menu-safe wrapper.
+ */
+function dependencyOSAuditWorkbook() {
+  try {
+    return dependencyOSAuditWorkbook_();
+  } catch (error) {
+    dependencyOSShowError_("DependencyOS audit failed", error);
+    throw error;
+  }
+}
+
+
+/**
+ * Menu-safe wrapper.
+ */
+function dependencyOSInspectActiveCell() {
+  try {
+    dependencyOSInspectActiveCell_();
+  } catch (error) {
+    dependencyOSShowError_("DependencyOS cell inspection failed", error);
+    throw error;
+  }
+}
+
+
+/**
+ * Menu-safe wrapper.
+ */
+function dependencyOSClearReports() {
+  try {
+    dependencyOSClearReports_();
+  } catch (error) {
+    dependencyOSShowError_("DependencyOS cleanup failed", error);
+    throw error;
+  }
+}
+
+
+/* =========================================================
+ * CONFIGURATION
+ * ========================================================= */
+
+function dependencyOSConfig_() {
+  return {
+    version: "0.3.0",
+
+    engineSpreadsheetId:
+      "1pK4qgHRWyratU6L8_SYZh2QHtqPNCY83HxnY2qQmFho",
+
+    reportSheets: {
+      summary: "Dependency Summary",
+      formulas: "Dependency Formula Map",
+      architecture: "Source of Truth Audit",
+      namedRanges: "Dependency Named Ranges",
+      validations: "Dependency Validations",
+      formatting: "Dependency Formatting",
+      risks: "Dependency Risk Report",
+      inspector: "Dependency Cell Inspector"
+    },
+
+    stagingSheets: {
+      formulas: "_DEP_STAGE_FORMULAS",
+      references: "_DEP_STAGE_REFERENCES",
+      sheetStats: "_DEP_STAGE_SHEET_STATS",
+      external: "_DEP_STAGE_EXTERNAL",
+      broken: "_DEP_STAGE_BROKEN"
+    },
+
+    excludedSheets: [
+      "Dependency Summary",
+      "Dependency Formula Map",
+      "Source of Truth Audit",
+      "Dependency Named Ranges",
+      "Dependency Validations",
+      "Dependency Formatting",
+      "Dependency Risk Report",
+      "Dependency Cell Inspector"
+    ],
+
+    resumable: {
+      maxRunMs: 255000,
+      rowChunkSize: 250,
+      resumeAfterMs: 60000,
+      statePropertyKey:
+        "DEPENDENCYOS_V03_STATE"
+    },
+
+    highUsageThreshold: 10,
+    mediumUsageThreshold: 4,
+
+    headerBackground: "#1f4e78",
+    headerFontColor: "#ffffff",
+    sectionBackground: "#d9eaf7",
+    warningBackground: "#fff2cc",
+    highRiskBackground: "#f4cccc",
+    mediumRiskBackground: "#fce5cd",
+    lowRiskBackground: "#d9ead3"
+  };
+}
+
+/* =========================================================
+ * ENGINE WORKBOOK
+ * ========================================================= */
+
+function dependencyOSGetEngineWorkbook_() {
+  const config = dependencyOSConfig_();
+  const engineSpreadsheetId =
+    String(config.engineSpreadsheetId || "").trim();
+
+  if (!engineSpreadsheetId) {
+    throw new Error(
+      "DependencyOS engineSpreadsheetId has not been configured."
+    );
+  }
+
+  try {
+    return SpreadsheetApp.openById(engineSpreadsheetId);
+  } catch (error) {
+    throw new Error(
+      "DependencyOS could not open the Engine workbook. " +
+      "Confirm the spreadsheet ID and that you have access. " +
+      "Original error: " +
+      error.message
+    );
+  }
+}
+
+
+/* =========================================================
+ * MAIN AUDIT
+ * ========================================================= */
+
+function dependencyOSAuditWorkbook_() {
+  const activeSS = SpreadsheetApp.getActiveSpreadsheet();
+  if (!activeSS) throw new Error("DependencyOS must be started from the StageOS workbook.");
+
+  const existingState = dependencyOSLoadAuditState_();
+  if (existingState && existingState.sourceSpreadsheetId && existingState.sourceSpreadsheetId !== activeSS.getId()) {
+    throw new Error("A DependencyOS audit is already saved for another workbook. Run Reset Audit Progress first.");
+  }
+
+  if (!existingState || existingState.status === "COMPLETE") {
+    dependencyOSInitializeAudit_(activeSS);
+  }
+
+  return dependencyOSRunResumableAudit_(false);
+}
+
+
+/* =========================================================
+ * WORKBOOK SCANNER
+ * ========================================================= */
+
+function dependencyOSScanWorkbook_(ss, config) {
+  const sheets = dependencyOSGetIncludedSheets_(ss, config);
+  const scan = dependencyOSCreateEmptyScan_(ss);
+  sheets.forEach(function (sheet) { dependencyOSScanSheet_(sheet, scan); });
+  dependencyOSScanNamedRanges_(ss, scan);
+  dependencyOSFinalizeSheetRelationships_(scan);
+  return scan;
+}
+
+function dependencyOSScanSheet_(sheet, scan) {
+  const lastRow = sheet.getLastRow();
+  dependencyOSEnsureSheetStats_(sheet, scan);
+  if (lastRow < 1) return;
+  dependencyOSScanSheetChunk_(sheet, scan, 1, lastRow);
+}
+
+/* =========================================================
+ * RESUMABLE AUDIT ENGINE
+ * ========================================================= */
+
+function dependencyOSResumeAudit() {
+  try {
+    return dependencyOSResumeAudit_();
+  } catch (error) {
+    dependencyOSShowError_("DependencyOS resume failed", error);
+    throw error;
+  }
+}
+
+function dependencyOSResetAuditProgress() {
+  try {
+    return dependencyOSResetAuditProgress_();
+  } catch (error) {
+    dependencyOSShowError_("DependencyOS reset failed", error);
+    throw error;
+  }
+}
+
+function dependencyOSShowAuditStatus() {
+  const status = dependencyOSGetAuditStatus_();
+  SpreadsheetApp.getUi().alert(
+    "DependencyOS Audit Status",
+    status.message,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+  return status;
+}
+
+function dependencyOSResumeAuditTrigger_() {
+  dependencyOSRunResumableAudit_(true);
+}
+
+function dependencyOSResumeAudit_() {
+  const state = dependencyOSLoadAuditState_();
+  if (!state) {
+    throw new Error("No saved DependencyOS audit was found. Start the audit first.");
+  }
+  return dependencyOSRunResumableAudit_(false);
+}
+
+function dependencyOSInitializeAudit_(sourceSS) {
+  const config =
+    dependencyOSConfig_();
+
+  const engineSS =
+    dependencyOSGetEngineWorkbook_();
+
+  dependencyOSDeleteResumeTriggers_();
+  dependencyOSClearSavedAudit_();
+  dependencyOSResetStageSheets_(
+    engineSS,
+    config
+  );
+
+  const includedSheets =
+    dependencyOSGetIncludedSheets_(
+      sourceSS,
+      config
+    );
+
+  const state = {
+    version: config.version,
+    status: "RUNNING",
+    phase: "SCAN",
+    sourceSpreadsheetId:
+      sourceSS.getId(),
+    sourceSpreadsheetName:
+      sourceSS.getName(),
+    engineSpreadsheetId:
+      engineSS.getId(),
+    sheetNames:
+      includedSheets.map(function (sheet) {
+        return sheet.getName();
+      }),
+    sheetIndex: 0,
+    nextRow: 1,
+    startedAt:
+      new Date().toISOString(),
+    updatedAt:
+      new Date().toISOString(),
+    completedSheets: 0,
+    completedRows: 0,
+    lastMessage:
+      "Audit initialized."
+  };
+
+  dependencyOSSaveAuditState_(
+    state
+  );
+
+  sourceSS.toast(
+    "DependencyOS audit started. It will pause and resume automatically as needed.",
+    "DependencyOS",
+    8
+  );
+}
+
+function dependencyOSRunResumableAudit_(fromTrigger) {
+  const runStartedAt =
+    Date.now();
+
+  const config =
+    dependencyOSConfig_();
+
+  let state =
+    dependencyOSLoadAuditState_();
+
+  if (!state) {
+    if (fromTrigger) {
+      return null;
+    }
+
+    throw new Error(
+      "No saved DependencyOS audit was found."
+    );
+  }
+
+  const sourceSS =
+    SpreadsheetApp.openById(
+      state.sourceSpreadsheetId
+    );
+
+  const engineSS =
+    dependencyOSGetEngineWorkbook_();
+
+  console.log(
+    "DependencyOS: Resuming " +
+      state.phase +
+      " at sheet " +
+      (state.sheetIndex + 1) +
+      ", row " +
+      state.nextRow
+  );
+
+  while (
+    Date.now() - runStartedAt <
+    config.resumable.maxRunMs
+  ) {
+    if (state.phase === "SCAN") {
+      state =
+        dependencyOSProcessNextScanChunk_(
+          sourceSS,
+          engineSS,
+          config,
+          state
+        );
+
+      dependencyOSSaveAuditState_(
+        state
+      );
+
+      continue;
+    }
+
+    if (state.phase === "FINALIZE") {
+      const scan =
+        dependencyOSBuildScanFromStage_(
+          sourceSS,
+          engineSS,
+          config,
+          state
+        );
+
+      dependencyOSScanNamedRanges_(
+        sourceSS,
+        scan
+      );
+
+      dependencyOSFinalizeSheetRelationships_(
+        scan
+      );
+
+      scan.sourceSpreadsheetId =
+        sourceSS.getId();
+
+      scan.sourceSpreadsheetName =
+        sourceSS.getName();
+
+      scan.outputSpreadsheetId =
+        engineSS.getId();
+
+      scan.outputSpreadsheetName =
+        engineSS.getName();
+
+      dependencyOSWriteArchitectureAudit_(
+        engineSS,
+        config,
+        scan
+      );
+
+      dependencyOSWriteRiskReport_(
+        engineSS,
+        config,
+        scan
+      );
+
+      dependencyOSWriteSummary_(
+        engineSS,
+        config,
+        scan,
+        new Date(
+          state.startedAt
+        ).getTime()
+      );
+
+      state.phase =
+        "COMPLETE";
+
+      state.status =
+        "COMPLETE";
+
+      state.completedAt =
+        new Date().toISOString();
+
+      state.lastMessage =
+        "DependencyOS audit complete.";
+
+      dependencyOSSaveAuditState_(
+        state
+      );
+
+      dependencyOSDeleteResumeTriggers_();
+
+      sourceSS.toast(
+        "DependencyOS audit complete. Reports were written to the Engine workbook.",
+        "DependencyOS",
+        10
+      );
+
+      return {
+        status: "COMPLETE",
+        phase: "COMPLETE",
+        elapsedSeconds:
+          (
+            (
+              Date.now() -
+              new Date(
+                state.startedAt
+              ).getTime()
+            ) /
+            1000
+          ).toFixed(1),
+        state: state
+      };
+    }
+
+    if (state.phase === "COMPLETE") {
+      return {
+        status: "COMPLETE",
+        phase: "COMPLETE",
+        state: state
+      };
+    }
+
+    throw new Error(
+      "Unknown DependencyOS audit phase: " +
+      state.phase
+    );
+  }
+
+  state.status =
+    "PAUSED";
+
+  state.updatedAt =
+    new Date().toISOString();
+
+  state.lastMessage =
+    dependencyOSBuildProgressMessage_(
+      state
+    );
+
+  dependencyOSSaveAuditState_(
+    state
+  );
+
+  dependencyOSScheduleResume_();
+
+  sourceSS.toast(
+    state.lastMessage +
+      " It will resume automatically.",
+    "DependencyOS",
+    8
+  );
+
+  console.log(
+    "DependencyOS: Paused safely. " +
+      state.lastMessage
+  );
+
+  return {
+    status: "PAUSED",
+    phase: state.phase,
+    state: state
+  };
+}
+
+function dependencyOSProcessNextScanChunk_(
+  sourceSS,
+  engineSS,
+  config,
+  state
+) {
+  if (
+    state.sheetIndex >=
+    state.sheetNames.length
+  ) {
+    state.phase =
+      "FINALIZE";
+
+    state.lastMessage =
+      "All workbook sheets scanned.";
+
+    return state;
+  }
+
+  const sheetName =
+    state.sheetNames[
+      state.sheetIndex
+    ];
+
+  const sheet =
+    sourceSS.getSheetByName(
+      sheetName
+    );
+
+  if (!sheet) {
+    state.sheetIndex++;
+    state.nextRow = 1;
+    state.lastMessage =
+      "Skipped missing sheet: " +
+      sheetName;
+
+    return state;
+  }
+
+  const lastRow =
+    sheet.getLastRow();
+
+  dependencyOSEnsureStageSheetStats_(
+    engineSS,
+    config,
+    sheet
+  );
+
+  if (
+    lastRow < 1 ||
+    state.nextRow > lastRow
+  ) {
+    state.sheetIndex++;
+    state.nextRow = 1;
+    state.completedSheets++;
+    state.lastMessage =
+      "Completed sheet: " +
+      sheetName;
+
+    return state;
+  }
+
+  const rowCount =
+    Math.min(
+      config.resumable.rowChunkSize,
+      lastRow - state.nextRow + 1
+    );
+
+  dependencyOSScanSheetChunkToStage_(
+    sheet,
+    engineSS,
+    config,
+    state.nextRow,
+    rowCount
+  );
+
+  state.nextRow +=
+    rowCount;
+
+  state.completedRows +=
+    rowCount;
+
+  state.lastMessage =
+    "Scanned " +
+    sheetName +
+    " through row " +
+    (state.nextRow - 1) +
+    " of " +
+    lastRow +
+    ".";
+
+  if (state.nextRow > lastRow) {
+    state.sheetIndex++;
+    state.nextRow = 1;
+    state.completedSheets++;
+    state.lastMessage =
+      "Completed sheet: " +
+      sheetName;
+  }
+
+  return state;
+}
+
+function dependencyOSScanSheetChunk_(sheet, scan, startRow, rowCount) {
+  const sheetName = sheet.getName();
+  const lastColumn = sheet.getLastColumn();
+  dependencyOSEnsureSheetStats_(sheet, scan);
+  if (rowCount < 1 || lastColumn < 1) return;
+
+  const range = sheet.getRange(startRow, 1, rowCount, lastColumn);
+  const formulas = range.getFormulas();
+  const displayValues = range.getDisplayValues();
+
+  for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+    for (let columnIndex = 0; columnIndex < lastColumn; columnIndex++) {
+      const formula = formulas[rowOffset][columnIndex];
+      const displayValue = displayValues[rowOffset][columnIndex];
+      const stats = scan.sheetStats[sheetName];
+
+      if (formula || displayValue !== "") stats.populatedCells++;
+
+      if (!formula) {
+        if (displayValue !== "") stats.staticCells++;
+        continue;
+      }
+
+      stats.formulaCells++;
+      const actualRow = startRow + rowOffset;
+      const sourceA1 = dependencyOSColumnToLetter_(columnIndex + 1) + String(actualRow);
+      const sourceQualified = dependencyOSQualifiedAddress_(sheetName, sourceA1);
+
+      const formulaRecord = {
+        sourceSheet: sheetName,
+        sourceCell: sourceA1,
+        sourceQualified: sourceQualified,
+        formula: formula,
+        displayValue: displayValue,
+        isExternal: dependencyOSIsExternalFormula_(formula),
+        isBroken: dependencyOSIsBrokenFormula_(formula, displayValue),
+        references: []
+      };
+
+      if (formulaRecord.isExternal) {
+        stats.externalFormulaCount++;
+        scan.externalLinks.push({
+          sourceSheet: sheetName,
+          sourceCell: sourceA1,
+          formula: formula,
+          externalId: dependencyOSExtractImportRangeId_(formula),
+          externalRange: dependencyOSExtractImportRangeRange_(formula)
+        });
+      }
+
+      if (formulaRecord.isBroken) {
+        stats.brokenFormulaCount++;
+        scan.brokenFormulas.push({
+          sheet: sheetName,
+          cell: sourceA1,
+          formula: formula,
+          displayValue: displayValue
+        });
+      }
+
+      dependencyOSExtractFormulaReferences_(formula, sheetName)
+        .forEach(function (reference) {
+          const relationship = {
+            sourceSheet: sheetName,
+            sourceCell: sourceA1,
+            sourceQualified: sourceQualified,
+            targetSheet: reference.sheet,
+            targetRange: reference.range,
+            targetQualified: dependencyOSQualifiedAddress_(reference.sheet, reference.range),
+            relationshipType: reference.relationshipType,
+            formula: formula
+          };
+
+          formulaRecord.references.push(relationship);
+          scan.references.push(relationship);
+          dependencyOSRegisterReferenceUsage_(scan, relationship);
+        });
+
+      scan.formulas.push(formulaRecord);
+    }
+  }
+}
+
+function dependencyOSEnsureSheetStats_(sheet, scan) {
+  const sheetName = sheet.getName();
+  if (scan.sheetStats[sheetName]) return;
+
+  scan.sheetStats[sheetName] = {
+    sheetName: sheetName,
+    sheetId: sheet.getSheetId(),
+    lastRow: sheet.getLastRow(),
+    lastColumn: sheet.getLastColumn(),
+    populatedCells: 0,
+    formulaCells: 0,
+    staticCells: 0,
+    incomingReferenceCount: 0,
+    outgoingReferenceCount: 0,
+    incomingSourceCells: {},
+    outgoingTargetCells: {},
+    externalFormulaCount: 0,
+    brokenFormulaCount: 0,
+    namedRangeCount: 0,
+    validationCount: 0,
+    formattingRuleCount: 0
+  };
+}
+
+function dependencyOSCreateEmptyScan_(ss) {
+  return {
+    scannedAt: new Date(),
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
+    sheetStats: {},
+    formulas: [],
+    references: [],
+    namedRanges: [],
+    validations: [],
+    formattingRules: [],
+    externalLinks: [],
+    brokenFormulas: [],
+    usageByTarget: {},
+    incomingBySheet: {},
+    outgoingBySheet: {}
+  };
+}
+
+function dependencyOSGetIncludedSheets_(ss, config) {
+  return ss.getSheets().filter(function (sheet) {
+    return config.excludedSheets.indexOf(sheet.getName()) === -1;
+  });
+}
+
+function dependencyOSBuildProgressMessage_(state) {
+  const totalSheets = state.sheetNames ? state.sheetNames.length : 0;
+  const currentSheet = state.sheetNames && state.sheetNames[state.sheetIndex]
+    ? state.sheetNames[state.sheetIndex]
+    : "Final reports";
+
+  return (
+    "Paused after " + state.completedSheets + " of " + totalSheets +
+    " sheets. Next: " + currentSheet +
+    (state.phase === "SCAN" ? " row " + state.nextRow + "." : ".")
+  );
+}
+
+/* =========================================================
+ * SAVED STATE / SCAN SNAPSHOT
+ * ========================================================= */
+
+function dependencyOSGetProperties_() {
+  return PropertiesService.getDocumentProperties();
+}
+
+function dependencyOSStateKey_() {
+  return dependencyOSConfig_()
+    .resumable
+    .statePropertyKey;
+}
+
+
+
+function dependencyOSSaveAuditState_(state) {
+  state.updatedAt = new Date().toISOString();
+  dependencyOSGetProperties_().setProperty(
+    dependencyOSStateKey_(),
+    JSON.stringify(state)
+  );
+}
+
+function dependencyOSLoadAuditState_() {
+  const raw = dependencyOSGetProperties_().getProperty(dependencyOSStateKey_());
+  return raw ? JSON.parse(raw) : null;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function dependencyOSClearSavedAudit_() {
+  dependencyOSGetProperties_()
+    .deleteProperty(
+      dependencyOSStateKey_()
+    );
+}
+
+function dependencyOSResetAuditProgress_() {
+  dependencyOSDeleteResumeTriggers_();
+  dependencyOSClearSavedAudit_();
+
+  const activeSS =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const engineSS =
+    dependencyOSGetEngineWorkbook_();
+
+  const config =
+    dependencyOSConfig_();
+
+  dependencyOSResetStageSheets_(
+    engineSS,
+    config
+  );
+
+  if (activeSS) {
+    activeSS.toast(
+      "DependencyOS saved progress and Engine staging data were reset.",
+      "DependencyOS",
+      6
+    );
+  }
+
+  return {
+    reset: true
+  };
+}
+
+function dependencyOSGetAuditStatus_() {
+  const state = dependencyOSLoadAuditState_();
+  if (!state) {
+    return { status: "NONE", message: "No DependencyOS audit is currently saved." };
+  }
+
+  return {
+    status: state.status,
+    phase: state.phase,
+    state: state,
+    message: [
+      "Status: " + state.status,
+      "Phase: " + state.phase,
+      "Completed sheets: " + state.completedSheets + " of " + state.sheetNames.length,
+      "Next sheet: " + (state.sheetNames[state.sheetIndex] || "Final reports"),
+      "Next row: " + state.nextRow,
+      "Last update: " + state.updatedAt,
+      "",
+      state.lastMessage || ""
+    ].join("\n")
+  };
+}
+
+/* =========================================================
+ * AUTOMATIC RESUME TRIGGER
+ * ========================================================= */
+
+function dependencyOSScheduleResume_() {
+  dependencyOSDeleteResumeTriggers_();
+  ScriptApp.newTrigger("dependencyOSResumeAuditTrigger_")
+    .timeBased()
+    .after(dependencyOSConfig_().resumable.resumeAfterMs)
+    .create();
+}
+
+function dependencyOSDeleteResumeTriggers_() {
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === "dependencyOSResumeAuditTrigger_") {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+
+
+
+/* =========================================================
+ * ENGINE STAGING SHEETS
+ * ========================================================= */
+
+function dependencyOSStageDefinitions_(
+  config
+) {
+  return {
+    formulas: {
+      name:
+        config.stagingSheets.formulas,
+      headers: [
+        "Source Sheet",
+        "Source Cell",
+        "Source Qualified",
+        "Formula",
+        "Display Value",
+        "External",
+        "Broken"
+      ]
+    },
+
+    references: {
+      name:
+        config.stagingSheets.references,
+      headers: [
+        "Source Sheet",
+        "Source Cell",
+        "Source Qualified",
+        "Target Sheet",
+        "Target Range",
+        "Target Qualified",
+        "Relationship Type",
+        "Formula"
+      ]
+    },
+
+    sheetStats: {
+      name:
+        config.stagingSheets.sheetStats,
+      headers: [
+        "Sheet",
+        "Sheet ID",
+        "Last Row",
+        "Last Column",
+        "Populated Cells",
+        "Formula Cells",
+        "Static Cells",
+        "External Formula Count",
+        "Broken Formula Count"
+      ]
+    },
+
+    external: {
+      name:
+        config.stagingSheets.external,
+      headers: [
+        "Source Sheet",
+        "Source Cell",
+        "Formula",
+        "External ID",
+        "External Range"
+      ]
+    },
+
+    broken: {
+      name:
+        config.stagingSheets.broken,
+      headers: [
+        "Sheet",
+        "Cell",
+        "Formula",
+        "Display Value"
+      ]
+    }
+  };
+}
+
+
+function dependencyOSResetStageSheets_(
+  engineSS,
+  config
+) {
+  const definitions =
+    dependencyOSStageDefinitions_(
+      config
+    );
+
+  Object.keys(definitions)
+    .forEach(function (key) {
+      const definition =
+        definitions[key];
+
+      let sheet =
+        engineSS.getSheetByName(
+          definition.name
+        );
+
+      if (!sheet) {
+        sheet =
+          engineSS.insertSheet(
+            definition.name
+          );
+      }
+
+      sheet.clear();
+
+      sheet
+        .getRange(
+          1,
+          1,
+          1,
+          definition.headers.length
+        )
+        .setValues([
+          definition.headers
+        ]);
+
+      sheet.hideSheet();
+    });
+}
+
+
+function dependencyOSGetStageSheet_(
+  engineSS,
+  sheetName
+) {
+  const sheet =
+    engineSS.getSheetByName(
+      sheetName
+    );
+
+  if (!sheet) {
+    throw new Error(
+      "DependencyOS staging sheet is missing: " +
+      sheetName +
+      ". Reset Audit Progress and start again."
+    );
+  }
+
+  return sheet;
+}
+
+
+function dependencyOSAppendStageRows_(
+  sheet,
+  rows
+) {
+  if (!rows || !rows.length) {
+    return;
+  }
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      rows.length,
+      rows[0].length
+    )
+    .setValues(
+      dependencyOSMakeReportRowsSafe_(
+        rows
+      )
+    );
+}
+
+
+function dependencyOSEnsureStageSheetStats_(
+  engineSS,
+  config,
+  sourceSheet
+) {
+  const stageSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .sheetStats
+    );
+
+  const sheetName =
+    sourceSheet.getName();
+
+  const lastRow =
+    stageSheet.getLastRow();
+
+  if (lastRow > 1) {
+    const names =
+      stageSheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues()
+        .map(function (row) {
+          return row[0];
+        });
+
+    if (
+      names.indexOf(
+        sheetName
+      ) !== -1
+    ) {
+      return;
+    }
+  }
+
+  dependencyOSAppendStageRows_(
+    stageSheet,
+    [[
+      sheetName,
+      sourceSheet.getSheetId(),
+      sourceSheet.getLastRow(),
+      sourceSheet.getLastColumn(),
+      0,
+      0,
+      0,
+      0,
+      0
+    ]]
+  );
+}
+
+
+function dependencyOSUpdateStageSheetStats_(
+  engineSS,
+  config,
+  sheetName,
+  delta
+) {
+  const stageSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .sheetStats
+    );
+
+  const lastRow =
+    stageSheet.getLastRow();
+
+  if (lastRow < 2) {
+    throw new Error(
+      "DependencyOS could not find staging stats for " +
+      sheetName +
+      "."
+    );
+  }
+
+  const rows =
+    stageSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        9
+      )
+      .getValues();
+
+  const index =
+    rows.findIndex(function (row) {
+      return row[0] === sheetName;
+    });
+
+  if (index === -1) {
+    throw new Error(
+      "DependencyOS could not find staging stats for " +
+      sheetName +
+      "."
+    );
+  }
+
+  const row =
+    rows[index];
+
+  row[4] =
+    Number(row[4] || 0) +
+    Number(delta.populatedCells || 0);
+
+  row[5] =
+    Number(row[5] || 0) +
+    Number(delta.formulaCells || 0);
+
+  row[6] =
+    Number(row[6] || 0) +
+    Number(delta.staticCells || 0);
+
+  row[7] =
+    Number(row[7] || 0) +
+    Number(delta.externalFormulaCount || 0);
+
+  row[8] =
+    Number(row[8] || 0) +
+    Number(delta.brokenFormulaCount || 0);
+
+  stageSheet
+    .getRange(
+      index + 2,
+      1,
+      1,
+      9
+    )
+    .setValues([
+      row
+    ]);
+}
+
+
+function dependencyOSScanSheetChunkToStage_(
+  sheet,
+  engineSS,
+  config,
+  startRow,
+  rowCount
+) {
+  const sheetName =
+    sheet.getName();
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+  if (
+    rowCount < 1 ||
+    lastColumn < 1
+  ) {
+    return;
+  }
+
+  const range =
+    sheet.getRange(
+      startRow,
+      1,
+      rowCount,
+      lastColumn
+    );
+
+  const formulas =
+    range.getFormulas();
+
+  const displayValues =
+    range.getDisplayValues();
+
+  const formulaRows = [];
+  const referenceRows = [];
+  const externalRows = [];
+  const brokenRows = [];
+
+  const delta = {
+    populatedCells: 0,
+    formulaCells: 0,
+    staticCells: 0,
+    externalFormulaCount: 0,
+    brokenFormulaCount: 0
+  };
+
+  for (
+    let rowOffset = 0;
+    rowOffset < rowCount;
+    rowOffset++
+  ) {
+    for (
+      let columnIndex = 0;
+      columnIndex < lastColumn;
+      columnIndex++
+    ) {
+      const formula =
+        formulas[rowOffset][
+          columnIndex
+        ];
+
+      const displayValue =
+        displayValues[rowOffset][
+          columnIndex
+        ];
+
+      if (
+        formula ||
+        displayValue !== ""
+      ) {
+        delta.populatedCells++;
+      }
+
+      if (!formula) {
+        if (displayValue !== "") {
+          delta.staticCells++;
+        }
+
+        continue;
+      }
+
+      delta.formulaCells++;
+
+      const actualRow =
+        startRow + rowOffset;
+
+      const sourceA1 =
+        dependencyOSColumnToLetter_(
+          columnIndex + 1
+        ) +
+        String(actualRow);
+
+      const sourceQualified =
+        dependencyOSQualifiedAddress_(
+          sheetName,
+          sourceA1
+        );
+
+      const isExternal =
+        dependencyOSIsExternalFormula_(
+          formula
+        );
+
+      const isBroken =
+        dependencyOSIsBrokenFormula_(
+          formula,
+          displayValue
+        );
+
+      formulaRows.push([
+        sheetName,
+        sourceA1,
+        sourceQualified,
+        formula,
+        displayValue,
+        isExternal ? "YES" : "",
+        isBroken ? "YES" : ""
+      ]);
+
+      if (isExternal) {
+        delta.externalFormulaCount++;
+
+        externalRows.push([
+          sheetName,
+          sourceA1,
+          formula,
+          dependencyOSExtractImportRangeId_(
+            formula
+          ),
+          dependencyOSExtractImportRangeRange_(
+            formula
+          )
+        ]);
+      }
+
+      if (isBroken) {
+        delta.brokenFormulaCount++;
+
+        brokenRows.push([
+          sheetName,
+          sourceA1,
+          formula,
+          displayValue
+        ]);
+      }
+
+      dependencyOSExtractFormulaReferences_(
+        formula,
+        sheetName
+      ).forEach(function (reference) {
+        referenceRows.push([
+          sheetName,
+          sourceA1,
+          sourceQualified,
+          reference.sheet,
+          reference.range,
+          dependencyOSQualifiedAddress_(
+            reference.sheet,
+            reference.range
+          ),
+          reference.relationshipType,
+          formula
+        ]);
+      });
+    }
+  }
+
+  dependencyOSAppendStageRows_(
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .formulas
+    ),
+    formulaRows
+  );
+
+  dependencyOSAppendStageRows_(
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .references
+    ),
+    referenceRows
+  );
+
+  dependencyOSAppendStageRows_(
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .external
+    ),
+    externalRows
+  );
+
+  dependencyOSAppendStageRows_(
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .broken
+    ),
+    brokenRows
+  );
+
+  dependencyOSUpdateStageSheetStats_(
+    engineSS,
+    config,
+    sheetName,
+    delta
+  );
+}
+
+
+function dependencyOSBuildScanFromStage_(
+  sourceSS,
+  engineSS,
+  config,
+  state
+) {
+  const scan =
+    dependencyOSCreateEmptyScan_(
+      sourceSS
+    );
+
+  scan.scannedAt =
+    new Date(
+      state.startedAt
+    );
+
+  const statsSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .sheetStats
+    );
+
+  if (statsSheet.getLastRow() > 1) {
+    statsSheet
+      .getRange(
+        2,
+        1,
+        statsSheet.getLastRow() - 1,
+        9
+      )
+      .getValues()
+      .forEach(function (row) {
+        const sheetName =
+          String(row[0] || "");
+
+        if (!sheetName) {
+          return;
+        }
+
+        scan.sheetStats[
+          sheetName
+        ] = {
+          sheetName: sheetName,
+          sheetId:
+            Number(row[1] || 0),
+          lastRow:
+            Number(row[2] || 0),
+          lastColumn:
+            Number(row[3] || 0),
+          populatedCells:
+            Number(row[4] || 0),
+          formulaCells:
+            Number(row[5] || 0),
+          staticCells:
+            Number(row[6] || 0),
+          incomingReferenceCount: 0,
+          outgoingReferenceCount: 0,
+          incomingSourceCells: {},
+          outgoingTargetCells: {},
+          externalFormulaCount:
+            Number(row[7] || 0),
+          brokenFormulaCount:
+            Number(row[8] || 0),
+          namedRangeCount: 0,
+          validationCount: 0,
+          formattingRuleCount: 0
+        };
+      });
+  }
+
+  const formulaBySource = {};
+
+  const formulasSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .formulas
+    );
+
+  if (formulasSheet.getLastRow() > 1) {
+    formulasSheet
+      .getRange(
+        2,
+        1,
+        formulasSheet.getLastRow() - 1,
+        7
+      )
+      .getValues()
+      .forEach(function (row) {
+        const record = {
+          sourceSheet:
+            String(row[0] || ""),
+          sourceCell:
+            String(row[1] || ""),
+          sourceQualified:
+            String(row[2] || ""),
+          formula:
+            dependencyOSRestoreStagedText_(
+              row[3]
+            ),
+          displayValue:
+            row[4],
+          isExternal:
+            String(row[5] || "") === "YES",
+          isBroken:
+            String(row[6] || "") === "YES",
+          references: []
+        };
+
+        scan.formulas.push(
+          record
+        );
+
+        formulaBySource[
+          record.sourceQualified
+        ] = record;
+      });
+  }
+
+  const referencesSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .references
+    );
+
+  if (
+    referencesSheet.getLastRow() >
+    1
+  ) {
+    referencesSheet
+      .getRange(
+        2,
+        1,
+        referencesSheet.getLastRow() - 1,
+        8
+      )
+      .getValues()
+      .forEach(function (row) {
+        const relationship = {
+          sourceSheet:
+            String(row[0] || ""),
+          sourceCell:
+            String(row[1] || ""),
+          sourceQualified:
+            String(row[2] || ""),
+          targetSheet:
+            String(row[3] || ""),
+          targetRange:
+            String(row[4] || ""),
+          targetQualified:
+            String(row[5] || ""),
+          relationshipType:
+            String(row[6] || ""),
+          formula:
+            dependencyOSRestoreStagedText_(
+              row[7]
+            )
+        };
+
+        scan.references.push(
+          relationship
+        );
+
+        dependencyOSRegisterReferenceUsage_(
+          scan,
+          relationship
+        );
+
+        if (
+          formulaBySource[
+            relationship
+              .sourceQualified
+          ]
+        ) {
+          formulaBySource[
+            relationship
+              .sourceQualified
+          ].references.push(
+            relationship
+          );
+        }
+      });
+  }
+
+  const externalSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .external
+    );
+
+  if (externalSheet.getLastRow() > 1) {
+    scan.externalLinks =
+      externalSheet
+        .getRange(
+          2,
+          1,
+          externalSheet.getLastRow() - 1,
+          5
+        )
+        .getValues()
+        .map(function (row) {
+          return {
+            sourceSheet:
+              String(row[0] || ""),
+            sourceCell:
+              String(row[1] || ""),
+            formula:
+              dependencyOSRestoreStagedText_(
+                row[2]
+              ),
+            externalId:
+              String(row[3] || ""),
+            externalRange:
+              String(row[4] || "")
+          };
+        });
+  }
+
+  const brokenSheet =
+    dependencyOSGetStageSheet_(
+      engineSS,
+      config.stagingSheets
+        .broken
+    );
+
+  if (brokenSheet.getLastRow() > 1) {
+    scan.brokenFormulas =
+      brokenSheet
+        .getRange(
+          2,
+          1,
+          brokenSheet.getLastRow() - 1,
+          4
+        )
+        .getValues()
+        .map(function (row) {
+          return {
+            sheet:
+              String(row[0] || ""),
+            cell:
+              String(row[1] || ""),
+            formula:
+              dependencyOSRestoreStagedText_(
+                row[2]
+              ),
+            displayValue:
+              row[3]
+          };
+        });
+  }
+
+  return scan;
+}
+
+
+function dependencyOSRestoreStagedText_(
+  value
+) {
+  const text =
+    String(value || "");
+
+  return text.charAt(0) === "'" &&
+    /^[=+@]/.test(
+      text.substring(1)
+    )
+      ? text.substring(1)
+      : text;
+}
+
+
+function dependencyOSForceClearAllSavedProperties() {
+  const properties =
+    PropertiesService
+      .getDocumentProperties();
+
+  const all =
+    properties.getProperties();
+
+  Object.keys(all)
+    .filter(function (key) {
+      return (
+        key.indexOf(
+          "DEPENDENCYOS_"
+        ) === 0
+      );
+    })
+    .forEach(function (key) {
+      properties.deleteProperty(
+        key
+      );
+    });
+
+  dependencyOSDeleteResumeTriggers_();
+
+  SpreadsheetApp
+    .getActiveSpreadsheet()
+    .toast(
+      "DependencyOS saved properties and resume triggers were cleared.",
+      "DependencyOS",
+      8
+    );
+}
+
+
+/* =========================================================
+ * FORMULA REFERENCE PARSING
+ * ========================================================= */
+
+function dependencyOSExtractFormulaReferences_(formula, currentSheetName) {
+  const references = [];
+  const seen = {};
+
+  if (!formula) {
+    return references;
+  }
+
+  /*
+   * Matches:
+   * 'IN/OUT'!A3
+   * 'Performance Report'!A11:G23
+   * Weekly!B3
+   * $A$3
+   * A3:G20
+   */
+  const qualifiedPattern =
+    /(?:'((?:[^']|'')+)'|([A-Za-z0-9_]+))!\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?/gi;
+
+  let qualifiedMatch;
+
+  while ((qualifiedMatch = qualifiedPattern.exec(formula)) !== null) {
+    const rawSheetName = qualifiedMatch[1] || qualifiedMatch[2];
+    const sheetName = String(rawSheetName).replace(/''/g, "'");
+
+    const startCell =
+      qualifiedMatch[3].toUpperCase() + qualifiedMatch[4];
+
+    const endCell = qualifiedMatch[5] && qualifiedMatch[6]
+      ? qualifiedMatch[5].toUpperCase() + qualifiedMatch[6]
+      : "";
+
+    const targetRange = endCell
+      ? startCell + ":" + endCell
+      : startCell;
+
+    const key = sheetName + "!" + targetRange;
+
+    if (!seen[key]) {
+      seen[key] = true;
+
+      references.push({
+        sheet: sheetName,
+        range: targetRange,
+        relationshipType:
+          sheetName === currentSheetName
+            ? "Same-sheet formula"
+            : "Cross-sheet formula"
+      });
+    }
+  }
+
+  /*
+   * Remove qualified references before looking for
+   * unqualified same-sheet references.
+   */
+  const formulaWithoutQualifiedReferences = formula.replace(
+    qualifiedPattern,
+    " "
+  );
+
+  const unqualifiedPattern =
+    /(^|[^A-Z0-9_.'"])\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?(?![A-Z0-9_])/gi;
+
+  let unqualifiedMatch;
+
+  while (
+    (unqualifiedMatch =
+      unqualifiedPattern.exec(formulaWithoutQualifiedReferences)) !== null
+  ) {
+    const startCell =
+      unqualifiedMatch[2].toUpperCase() + unqualifiedMatch[3];
+
+    const endCell = unqualifiedMatch[4] && unqualifiedMatch[5]
+      ? unqualifiedMatch[4].toUpperCase() + unqualifiedMatch[5]
+      : "";
+
+    const targetRange = endCell
+      ? startCell + ":" + endCell
+      : startCell;
+
+    const key = currentSheetName + "!" + targetRange;
+
+    if (!seen[key]) {
+      seen[key] = true;
+
+      references.push({
+        sheet: currentSheetName,
+        range: targetRange,
+        relationshipType: "Same-sheet formula"
+      });
+    }
+  }
+
+  return references;
+}
+
+
+function dependencyOSRegisterReferenceUsage_(scan, relationship) {
+  const targetKey = relationship.targetQualified;
+
+  if (!scan.usageByTarget[targetKey]) {
+    scan.usageByTarget[targetKey] = {
+      targetSheet: relationship.targetSheet,
+      targetRange: relationship.targetRange,
+      targetQualified: targetKey,
+      usages: [],
+      sourceSheets: {}
+    };
+  }
+
+  scan.usageByTarget[targetKey].usages.push({
+    sourceSheet: relationship.sourceSheet,
+    sourceCell: relationship.sourceCell,
+    sourceQualified: relationship.sourceQualified,
+    formula: relationship.formula,
+    relationshipType: relationship.relationshipType
+  });
+
+  scan.usageByTarget[targetKey].sourceSheets[
+    relationship.sourceSheet
+  ] = true;
+
+  if (!scan.incomingBySheet[relationship.targetSheet]) {
+    scan.incomingBySheet[relationship.targetSheet] = [];
+  }
+
+  scan.incomingBySheet[relationship.targetSheet].push(relationship);
+
+  if (!scan.outgoingBySheet[relationship.sourceSheet]) {
+    scan.outgoingBySheet[relationship.sourceSheet] = [];
+  }
+
+  scan.outgoingBySheet[relationship.sourceSheet].push(relationship);
+}
+
+
+/* =========================================================
+ * NAMED RANGES
+ * ========================================================= */
+
+function dependencyOSScanNamedRanges_(ss, scan) {
+  const namedRanges = ss.getNamedRanges();
+
+  namedRanges.forEach(function (namedRange) {
+    const range = namedRange.getRange();
+    const sheet = range.getSheet();
+
+    const record = {
+      name: namedRange.getName(),
+      sheet: sheet.getName(),
+      range: range.getA1Notation(),
+      qualifiedRange: dependencyOSQualifiedAddress_(
+        sheet.getName(),
+        range.getA1Notation()
+      ),
+      formulaUsages: []
+    };
+
+    scan.formulas.forEach(function (formulaRecord) {
+      if (
+        dependencyOSFormulaContainsNamedRange_(
+          formulaRecord.formula,
+          record.name
+        )
+      ) {
+        record.formulaUsages.push({
+          sourceSheet: formulaRecord.sourceSheet,
+          sourceCell: formulaRecord.sourceCell,
+          sourceQualified: formulaRecord.sourceQualified,
+          formula: formulaRecord.formula
+        });
+      }
+    });
+
+    scan.namedRanges.push(record);
+
+    if (scan.sheetStats[record.sheet]) {
+      scan.sheetStats[record.sheet].namedRangeCount++;
+    }
+  });
+}
+
+
+function dependencyOSFormulaContainsNamedRange_(formula, rangeName) {
+  if (!formula || !rangeName) {
+    return false;
+  }
+
+  const escapedName = dependencyOSEscapeRegex_(rangeName);
+  const pattern = new RegExp(
+    "(^|[^A-Za-z0-9_])" + escapedName + "([^A-Za-z0-9_]|$)",
+    "i"
+  );
+
+  return pattern.test(formula);
+}
+
+
+/* =========================================================
+ * DATA VALIDATION
+ * ========================================================= */
+
+function dependencyOSScanValidations_(sheets, scan) {
+  sheets.forEach(function (sheet) {
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+
+    if (lastRow < 1 || lastColumn < 1) {
+      return;
+    }
+
+    const range = sheet.getRange(1, 1, lastRow, lastColumn);
+    const validations = range.getDataValidations();
+
+    for (let rowIndex = 0; rowIndex < lastRow; rowIndex++) {
+      for (
+        let columnIndex = 0;
+        columnIndex < lastColumn;
+        columnIndex++
+      ) {
+        const validation = validations[rowIndex][columnIndex];
+
+        if (!validation) {
+          continue;
+        }
+
+        const criteriaType = String(validation.getCriteriaType());
+        const criteriaValues = validation.getCriteriaValues();
+
+        const destinationCell =
+          dependencyOSColumnToLetter_(columnIndex + 1) +
+          String(rowIndex + 1);
+
+        const record = {
+          destinationSheet: sheet.getName(),
+          destinationCell: destinationCell,
+          destinationQualified: dependencyOSQualifiedAddress_(
+            sheet.getName(),
+            destinationCell
+          ),
+          criteriaType: criteriaType,
+          sourceSheet: "",
+          sourceRange: "",
+          sourceQualified: "",
+          details: ""
+        };
+
+        if (
+          criteriaType.indexOf("VALUE_IN_RANGE") !== -1 &&
+          criteriaValues &&
+          criteriaValues[0] &&
+          typeof criteriaValues[0].getA1Notation === "function"
+        ) {
+          const sourceRange = criteriaValues[0];
+
+          record.sourceSheet = sourceRange.getSheet().getName();
+          record.sourceRange = sourceRange.getA1Notation();
+          record.sourceQualified = dependencyOSQualifiedAddress_(
+            record.sourceSheet,
+            record.sourceRange
+          );
+
+          record.details =
+            "Dropdown values come from " + record.sourceQualified;
+        } else {
+          record.details = dependencyOSCriteriaValuesToText_(
+            criteriaValues
+          );
+        }
+
+        scan.validations.push(record);
+
+        if (scan.sheetStats[sheet.getName()]) {
+          scan.sheetStats[sheet.getName()].validationCount++;
+        }
+      }
+    }
+  });
+}
+
+
+function dependencyOSCriteriaValuesToText_(criteriaValues) {
+  if (!criteriaValues || !criteriaValues.length) {
+    return "";
+  }
+
+  return criteriaValues
+    .map(function (value) {
+      if (value === null || value === undefined) {
+        return "";
+      }
+
+      if (
+        value &&
+        typeof value.getA1Notation === "function" &&
+        typeof value.getSheet === "function"
+      ) {
+        return dependencyOSQualifiedAddress_(
+          value.getSheet().getName(),
+          value.getA1Notation()
+        );
+      }
+
+      if (value instanceof Date) {
+        return Utilities.formatDate(
+          value,
+          Session.getScriptTimeZone(),
+          "yyyy-MM-dd HH:mm:ss"
+        );
+      }
+
+      if (Array.isArray(value)) {
+        return value.join(", ");
+      }
+
+      return String(value);
+    })
+    .join(" | ");
+}
+
+
+/* =========================================================
+ * CONDITIONAL FORMATTING
+ * ========================================================= */
+
+function dependencyOSScanConditionalFormatting_(sheets, scan) {
+  sheets.forEach(function (sheet) {
+    const rules = sheet.getConditionalFormatRules();
+
+    rules.forEach(function (rule, ruleIndex) {
+      const ranges = rule.getRanges().map(function (range) {
+        return range.getA1Notation();
+      });
+
+      const booleanCondition = rule.getBooleanCondition();
+      const gradientCondition = rule.getGradientCondition();
+
+      let criteriaType = "";
+      let criteriaValues = "";
+      let formulaReferences = [];
+
+      if (booleanCondition) {
+        criteriaType = String(booleanCondition.getCriteriaType());
+
+        const rawValues = booleanCondition.getCriteriaValues();
+
+        criteriaValues = dependencyOSCriteriaValuesToText_(rawValues);
+
+        rawValues.forEach(function (value) {
+          if (
+            typeof value === "string" &&
+            value.charAt(0) === "="
+          ) {
+            const references =
+              dependencyOSExtractFormulaReferences_(
+                value,
+                sheet.getName()
+              );
+
+            formulaReferences =
+              formulaReferences.concat(references);
+          }
+        });
+      } else if (gradientCondition) {
+        criteriaType = "GRADIENT";
+        criteriaValues = "Color scale";
+      }
+
+      const record = {
+        sheet: sheet.getName(),
+        ruleNumber: ruleIndex + 1,
+        appliesTo: ranges.join(", "),
+        criteriaType: criteriaType,
+        criteriaValues: criteriaValues,
+        referenceTargets: formulaReferences
+          .map(function (reference) {
+            return dependencyOSQualifiedAddress_(
+              reference.sheet,
+              reference.range
+            );
+          })
+          .join(", ")
+      };
+
+      scan.formattingRules.push(record);
+
+      if (scan.sheetStats[sheet.getName()]) {
+        scan.sheetStats[sheet.getName()].formattingRuleCount++;
+      }
+    });
+  });
+}
+
+
+/* =========================================================
+ * RELATIONSHIP FINALIZATION
+ * ========================================================= */
+
+function dependencyOSFinalizeSheetRelationships_(scan) {
+  Object.keys(scan.sheetStats).forEach(function (sheetName) {
+    const stats = scan.sheetStats[sheetName];
+
+    const incoming = scan.incomingBySheet[sheetName] || [];
+    const outgoing = scan.outgoingBySheet[sheetName] || [];
+
+    stats.incomingReferenceCount = incoming.length;
+    stats.outgoingReferenceCount = outgoing.length;
+
+    incoming.forEach(function (relationship) {
+      stats.incomingSourceCells[
+        relationship.sourceQualified
+      ] = true;
+    });
+
+    outgoing.forEach(function (relationship) {
+      stats.outgoingTargetCells[
+        relationship.targetQualified
+      ] = true;
+    });
+  });
+}
+
+
+/* =========================================================
+ * SUMMARY REPORT
+ * ========================================================= */
+
+function dependencyOSWriteSummary_(
+  ss,
+  config,
+  scan,
+  startedAt
+) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.summary
+  );
+
+  sheet.clear();
+
+  const elapsedSeconds =
+    ((Date.now() - startedAt) / 1000).toFixed(1);
+
+  const usageTargets = Object.keys(scan.usageByTarget);
+
+  const highImpactTargets = usageTargets.filter(function (targetKey) {
+    return (
+      scan.usageByTarget[targetKey].usages.length >=
+      config.highUsageThreshold
+    );
+  });
+
+  const crossSheetReferences = scan.references.filter(
+    function (reference) {
+      return reference.sourceSheet !== reference.targetSheet;
+    }
+  );
+
+  const data = [
+    ["DependencyOS Workbook Audit", ""],
+    ["Workbook", scan.spreadsheetName],
+    ["Version", config.version],
+    ["Scanned At", scan.scannedAt],
+    ["Run Time", elapsedSeconds + " seconds"],
+    ["", ""],
+
+    ["Workbook Totals", ""],
+    ["Sheets Scanned", Object.keys(scan.sheetStats).length],
+    ["Formula Cells", scan.formulas.length],
+    ["Formula References", scan.references.length],
+    ["Cross-Sheet References", crossSheetReferences.length],
+    ["Unique Referenced Targets", usageTargets.length],
+    ["Named Ranges", scan.namedRanges.length],
+    ["Data Validations", scan.validations.length],
+    ["Conditional Formatting Rules", scan.formattingRules.length],
+    ["External Spreadsheet Formulas", scan.externalLinks.length],
+    ["Broken Formulas", scan.brokenFormulas.length],
+    ["High-Impact Targets", highImpactTargets.length],
+    ["", ""],
+
+    ["What These Reports Mean", ""],
+    [
+      "Dependency Formula Map",
+      "Every formula and the sheet/cell or range it reads."
+    ],
+    [
+      "Source of Truth Audit",
+      "A formula-topology estimate of which tabs act as sources, processors, outputs, or mixed-use tabs."
+    ],
+    [
+      "Dependency Risk Report",
+      "High-impact ranges, broken formulas, external links, and duplicated architecture concerns."
+    ],
+    [
+      "Dependency Cell Inspector",
+      "Select a cell anywhere in the workbook and run Inspect Selected Cell."
+    ],
+    ["", ""],
+
+    ["Important Limitation", ""],
+    [
+      "Apps Script Source",
+      "Version 0.3 scans the workbook. It does not yet read the source code inside .gs or .html files."
+    ],
+    [
+      "Dynamic References",
+      "INDIRECT, OFFSET, dynamically constructed addresses, and script-generated ranges may require manual review."
+    ]
+  ];
+
+  sheet.getRange(1, 1, data.length, 2).setValues(data);
+
+  sheet.getRange("A1:B1").merge();
+  sheet.getRange("A1").setValue("DependencyOS Workbook Audit");
+
+  dependencyOSStyleTitle_(sheet.getRange("A1:B1"), config);
+
+  dependencyOSStyleSectionRow_(
+    sheet.getRange("A7:B7"),
+    config
+  );
+
+  dependencyOSStyleSectionRow_(
+    sheet.getRange("A20:B20"),
+    config
+  );
+
+  dependencyOSStyleSectionRow_(
+    sheet.getRange("A26:B26"),
+    config
+  );
+
+  sheet.setColumnWidth(1, 230);
+  sheet.setColumnWidth(2, 620);
+
+  sheet.getRange(1, 1, data.length, 2)
+    .setVerticalAlignment("top")
+    .setWrap(true);
+
+  sheet.setFrozenRows(1);
+}
+
+
+/* =========================================================
+ * FORMULA MAP REPORT
+ * ========================================================= */
+
+function dependencyOSWriteFormulaMap_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.formulas
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Source Sheet",
+    "Source Cell",
+    "Source",
+    "Target Sheet",
+    "Target Range",
+    "Target",
+    "Relationship",
+    "Formula",
+    "Current Display Value",
+    "External?",
+    "Broken?"
+  ];
+
+  const rows = [];
+
+  scan.formulas.forEach(function (formulaRecord) {
+    if (!formulaRecord.references.length) {
+      rows.push([
+        formulaRecord.sourceSheet,
+        formulaRecord.sourceCell,
+        formulaRecord.sourceQualified,
+        "",
+        "",
+        "",
+        "Formula with no static A1 reference found",
+        formulaRecord.formula,
+        formulaRecord.displayValue,
+        formulaRecord.isExternal ? "YES" : "",
+        formulaRecord.isBroken ? "YES" : ""
+      ]);
+
+      return;
+    }
+
+    formulaRecord.references.forEach(function (relationship) {
+      rows.push([
+        formulaRecord.sourceSheet,
+        formulaRecord.sourceCell,
+        formulaRecord.sourceQualified,
+        relationship.targetSheet,
+        relationship.targetRange,
+        relationship.targetQualified,
+        relationship.relationshipType,
+        formulaRecord.formula,
+        formulaRecord.displayValue,
+        formulaRecord.isExternal ? "YES" : "",
+        formulaRecord.isBroken ? "YES" : ""
+      ]);
+    });
+  });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    rows,
+    config
+  );
+
+  sheet.setColumnWidth(1, 170);
+  sheet.setColumnWidth(2, 90);
+  sheet.setColumnWidth(3, 230);
+  sheet.setColumnWidth(4, 170);
+  sheet.setColumnWidth(5, 110);
+  sheet.setColumnWidth(6, 230);
+  sheet.setColumnWidth(7, 175);
+  sheet.setColumnWidth(8, 500);
+  sheet.setColumnWidth(9, 240);
+  sheet.setColumnWidth(10, 90);
+  sheet.setColumnWidth(11, 90);
+}
+
+
+/* =========================================================
+ * SOURCE OF TRUTH AUDIT
+ * ========================================================= */
+
+function dependencyOSWriteArchitectureAudit_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.architecture
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Sheet",
+    "Likely Architecture Role",
+    "Confidence",
+    "Populated Cells",
+    "Static Cells",
+    "Formula Cells",
+    "Incoming References",
+    "Outgoing References",
+    "Unique Cells Reading This Sheet",
+    "Unique Targets This Sheet Reads",
+    "External Formulas",
+    "Named Ranges",
+    "Validations",
+    "Architecture Notes"
+  ];
+
+  const rows = Object.keys(scan.sheetStats)
+    .sort()
+    .map(function (sheetName) {
+      const stats = scan.sheetStats[sheetName];
+
+      const classification =
+        dependencyOSClassifySheetRole_(stats);
+
+      return [
+        sheetName,
+        classification.role,
+        classification.confidence,
+        stats.populatedCells,
+        stats.staticCells,
+        stats.formulaCells,
+        stats.incomingReferenceCount,
+        stats.outgoingReferenceCount,
+        Object.keys(stats.incomingSourceCells).length,
+        Object.keys(stats.outgoingTargetCells).length,
+        stats.externalFormulaCount,
+        stats.namedRangeCount,
+        stats.validationCount,
+        classification.notes
+      ];
+    });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    rows,
+    config
+  );
+
+  sheet.setColumnWidth(1, 220);
+  sheet.setColumnWidth(2, 180);
+  sheet.setColumnWidth(3, 100);
+  sheet.setColumnWidth(14, 520);
+
+  dependencyOSApplyArchitectureColors_(sheet, rows, config);
+}
+
+
+function dependencyOSClassifySheetRole_(stats) {
+  const incoming = stats.incomingReferenceCount;
+  const outgoing = stats.outgoingReferenceCount;
+  const formulas = stats.formulaCells;
+  const staticCells = stats.staticCells;
+  const populated = Math.max(stats.populatedCells, 1);
+
+  const formulaRatio = formulas / populated;
+  const staticRatio = staticCells / populated;
+
+  if (
+    incoming > 0 &&
+    outgoing === 0 &&
+    staticRatio >= 0.5
+  ) {
+    return {
+      role: "Likely Source",
+      confidence: "HIGH",
+      notes:
+        "Other tabs read this sheet, while this sheet has little or no formula dependency on other tabs."
+    };
+  }
+
+  if (
+    incoming === 0 &&
+    outgoing > 0 &&
+    formulaRatio >= 0.25
+  ) {
+    return {
+      role: "Likely Output",
+      confidence: "HIGH",
+      notes:
+        "This sheet reads from elsewhere but is not currently referenced by other formula cells."
+    };
+  }
+
+  if (
+    incoming > 0 &&
+    outgoing > 0 &&
+    formulaRatio >= 0.2
+  ) {
+    return {
+      role: "Processor / Mixed",
+      confidence: "MEDIUM",
+      notes:
+        "This sheet both consumes and supplies information. Review whether it should be a source, engine layer, or generated output."
+    };
+  }
+
+  if (
+    incoming > 0 &&
+    outgoing > 0
+  ) {
+    return {
+      role: "Mixed Use",
+      confidence: "MEDIUM",
+      notes:
+        "This sheet participates in both directions. It may contain manually entered source data alongside generated data."
+    };
+  }
+
+  if (
+    incoming === 0 &&
+    outgoing === 0 &&
+    staticCells > 0
+  ) {
+    return {
+      role: "Standalone / Manual",
+      confidence: "LOW",
+      notes:
+        "No direct formula relationships were detected. It may be used only by Apps Script, by manual workflows, or not at all."
+    };
+  }
+
+  if (
+    incoming > 0 &&
+    outgoing === 0
+  ) {
+    return {
+      role: "Likely Source",
+      confidence: "MEDIUM",
+      notes:
+        "Other formula cells depend on this sheet."
+    };
+  }
+
+  if (
+    incoming === 0 &&
+    outgoing > 0
+  ) {
+    return {
+      role: "Likely Output",
+      confidence: "MEDIUM",
+      notes:
+        "This sheet consumes formula data but does not appear to feed other formula cells."
+    };
+  }
+
+  return {
+    role: "Unclassified",
+    confidence: "LOW",
+    notes:
+      "No strong formula-based architecture pattern was detected."
+  };
+}
+
+
+/* =========================================================
+ * NAMED RANGE REPORT
+ * ========================================================= */
+
+function dependencyOSWriteNamedRangeMap_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.namedRanges
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Named Range",
+    "Sheet",
+    "Range",
+    "Qualified Range",
+    "Formula Usage Count",
+    "Used By"
+  ];
+
+  const rows = scan.namedRanges.map(function (record) {
+    return [
+      record.name,
+      record.sheet,
+      record.range,
+      record.qualifiedRange,
+      record.formulaUsages.length,
+      record.formulaUsages
+        .map(function (usage) {
+          return usage.sourceQualified;
+        })
+        .join(", ")
+    ];
+  });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    rows,
+    config
+  );
+
+  sheet.setColumnWidth(1, 230);
+  sheet.setColumnWidth(2, 200);
+  sheet.setColumnWidth(3, 120);
+  sheet.setColumnWidth(4, 260);
+  sheet.setColumnWidth(5, 140);
+  sheet.setColumnWidth(6, 520);
+}
+
+
+/* =========================================================
+ * VALIDATION REPORT
+ * ========================================================= */
+
+function dependencyOSWriteValidationMap_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.validations
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Destination Sheet",
+    "Destination Cell",
+    "Destination",
+    "Validation Type",
+    "Source Sheet",
+    "Source Range",
+    "Source",
+    "Details"
+  ];
+
+  const rows = scan.validations.map(function (record) {
+    return [
+      record.destinationSheet,
+      record.destinationCell,
+      record.destinationQualified,
+      record.criteriaType,
+      record.sourceSheet,
+      record.sourceRange,
+      record.sourceQualified,
+      record.details
+    ];
+  });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    rows,
+    config
+  );
+
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 110);
+  sheet.setColumnWidth(3, 260);
+  sheet.setColumnWidth(4, 260);
+  sheet.setColumnWidth(5, 200);
+  sheet.setColumnWidth(6, 130);
+  sheet.setColumnWidth(7, 260);
+  sheet.setColumnWidth(8, 520);
+}
+
+
+/* =========================================================
+ * CONDITIONAL FORMATTING REPORT
+ * ========================================================= */
+
+function dependencyOSWriteFormattingMap_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.formatting
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Sheet",
+    "Rule Number",
+    "Applies To",
+    "Criteria Type",
+    "Criteria Values / Formula",
+    "Referenced Targets"
+  ];
+
+  const rows = scan.formattingRules.map(function (record) {
+    return [
+      record.sheet,
+      record.ruleNumber,
+      record.appliesTo,
+      record.criteriaType,
+      record.criteriaValues,
+      record.referenceTargets
+    ];
+  });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    rows,
+    config
+  );
+
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 110);
+  sheet.setColumnWidth(3, 260);
+  sheet.setColumnWidth(4, 230);
+  sheet.setColumnWidth(5, 520);
+  sheet.setColumnWidth(6, 420);
+}
+
+
+/* =========================================================
+ * RISK REPORT
+ * ========================================================= */
+
+function dependencyOSWriteRiskReport_(ss, config, scan) {
+  const sheet = dependencyOSGetOrCreateReportSheet_(
+    ss,
+    config.reportSheets.risks
+  );
+
+  sheet.clear();
+
+  const headers = [
+    "Severity",
+    "Risk Type",
+    "Location",
+    "Usage Count",
+    "Affected Sheets",
+    "Explanation",
+    "Recommended Action"
+  ];
+
+  const risks = [];
+
+  Object.keys(scan.usageByTarget).forEach(function (targetKey) {
+    const target = scan.usageByTarget[targetKey];
+    const usageCount = target.usages.length;
+    const affectedSheets =
+      Object.keys(target.sourceSheets).sort();
+
+    if (usageCount >= config.highUsageThreshold) {
+      risks.push([
+        "HIGH",
+        "High-impact dependency",
+        target.targetQualified,
+        usageCount,
+        affectedSheets.join(", "),
+        "This cell or range is referenced by many formula relationships.",
+        "Treat this location as critical. Inspect all dependents before moving, deleting, or changing its meaning."
+      ]);
+    } else if (usageCount >= config.mediumUsageThreshold) {
+      risks.push([
+        "MEDIUM",
+        "Shared dependency",
+        target.targetQualified,
+        usageCount,
+        affectedSheets.join(", "),
+        "Several formula locations depend on this cell or range.",
+        "Review dependents before restructuring this area."
+      ]);
+    }
+  });
+
+  scan.brokenFormulas.forEach(function (record) {
+    risks.push([
+      "HIGH",
+      "Broken formula",
+      dependencyOSQualifiedAddress_(
+        record.sheet,
+        record.cell
+      ),
+      1,
+      record.sheet,
+      record.formula + " currently displays " +
+        record.displayValue,
+      "Repair or intentionally retire this formula."
+    ]);
+  });
+
+  scan.externalLinks.forEach(function (record) {
+    risks.push([
+      "MEDIUM",
+      "External spreadsheet dependency",
+      dependencyOSQualifiedAddress_(
+        record.sourceSheet,
+        record.sourceCell
+      ),
+      1,
+      record.sourceSheet,
+      "This formula imports data from another spreadsheet.",
+      "Document the external workbook as an approved source of truth and confirm access permissions."
+    ]);
+  });
+
+  Object.keys(scan.sheetStats).forEach(function (sheetName) {
+    const stats = scan.sheetStats[sheetName];
+
+    if (
+      stats.incomingReferenceCount > 0 &&
+      stats.outgoingReferenceCount > 0
+    ) {
+      risks.push([
+        "MEDIUM",
+        "Mixed source/output architecture",
+        sheetName,
+        stats.incomingReferenceCount +
+          stats.outgoingReferenceCount,
+        sheetName,
+        "This sheet both reads from other sheets and supplies data to other sheets.",
+        "Review whether manual inputs, engine calculations, and generated outputs can be separated."
+      ]);
+    }
+
+    if (
+      stats.formulaCells === 0 &&
+      stats.incomingReferenceCount === 0 &&
+      stats.outgoingReferenceCount === 0 &&
+      stats.staticCells > 0
+    ) {
+      risks.push([
+        "LOW",
+        "No formula relationships detected",
+        sheetName,
+        0,
+        sheetName,
+        "DependencyOS found no formula connections for this populated sheet.",
+        "Check whether this sheet is used only by Apps Script, is manually maintained, or may be retired."
+      ]);
+    }
+  });
+
+  risks.sort(function (a, b) {
+    return (
+      dependencyOSSeverityRank_(a[0]) -
+      dependencyOSSeverityRank_(b[0])
+    );
+  });
+
+  dependencyOSWriteTable_(
+    sheet,
+    headers,
+    risks,
+    config
+  );
+
+  sheet.setColumnWidth(1, 100);
+  sheet.setColumnWidth(2, 240);
+  sheet.setColumnWidth(3, 280);
+  sheet.setColumnWidth(4, 110);
+  sheet.setColumnWidth(5, 320);
+  sheet.setColumnWidth(6, 560);
+  sheet.setColumnWidth(7, 560);
+
+  dependencyOSApplyRiskColors_(sheet, risks, config);
+}
+
+
+/* =========================================================
+ * ACTIVE CELL INSPECTOR
+ * ========================================================= */
+
+function dependencyOSInspectActiveCell_() {
+  const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+  const engineSS = dependencyOSGetEngineWorkbook_();
+  const config = dependencyOSConfig_();
+
+  const activeSheet = sourceSS.getActiveSheet();
+  const activeRange = sourceSS.getActiveRange();
+
+  if (!activeSheet || !activeRange) {
+    throw new Error("Select a cell or range before running the inspector.");
+  }
+
+  if (
+    config.excludedSheets.indexOf(activeSheet.getName()) !== -1
+  ) {
+    throw new Error(
+      "Select a cell on a StageOS working tab, not a DependencyOS report tab."
+    );
+  }
+
+  const inspectedSheetName = activeSheet.getName();
+  const inspectedRangeA1 = activeRange.getA1Notation();
+
+  const scan = dependencyOSScanWorkbook_(sourceSS, config);
+
+  const dependents = scan.references.filter(function (reference) {
+    if (reference.targetSheet !== inspectedSheetName) {
+      return false;
+    }
+
+    return dependencyOSRangesOverlap_(
+      activeSheet,
+      inspectedRangeA1,
+      reference.targetRange
+    );
+  });
+
+  const validations = scan.validations.filter(function (record) {
+    if (record.sourceSheet !== inspectedSheetName) {
+      return false;
+    }
+
+    return dependencyOSRangesOverlap_(
+      activeSheet,
+      inspectedRangeA1,
+      record.sourceRange
+    );
+  });
+
+  const namedRanges = scan.namedRanges.filter(function (record) {
+    if (record.sheet !== inspectedSheetName) {
+      return false;
+    }
+
+    return dependencyOSRangesOverlap_(
+      activeSheet,
+      inspectedRangeA1,
+      record.range
+    );
+  });
+
+  const inspectorSheet = dependencyOSGetOrCreateReportSheet_(
+    engineSS,
+    config.reportSheets.inspector
+  );
+
+  inspectorSheet.clear();
+
+  const inspectedQualified =
+    dependencyOSQualifiedAddress_(
+      inspectedSheetName,
+      inspectedRangeA1
+    );
+
+  const summary = [
+    ["DependencyOS Cell Inspector", ""],
+    ["Inspected Location", inspectedQualified],
+    ["Current Display Value", activeRange.getDisplayValue()],
+    ["Formula", activeRange.getFormula()],
+    ["Formula Dependents", dependents.length],
+    ["Validation Dependents", validations.length],
+    ["Named Ranges Containing Selection", namedRanges.length],
+    ["", ""],
+    [
+      "Safety Assessment",
+      dependencyOSBuildCellSafetyAssessment_(
+        dependents,
+        validations,
+        namedRanges
+      )
+    ]
+  ];
+
+  inspectorSheet
+    .getRange(1, 1, summary.length, 2)
+    .setValues(
+      dependencyOSMakeReportRowsSafe_(summary)
+    );
+
+  inspectorSheet.getRange("A1:B1").merge();
+  inspectorSheet
+    .getRange("A1")
+    .setValue("DependencyOS Cell Inspector");
+
+  dependencyOSStyleTitle_(
+    inspectorSheet.getRange("A1:B1"),
+    config
+  );
+
+  let nextRow = summary.length + 2;
+
+  nextRow = dependencyOSWriteInspectorSection_(
+    inspectorSheet,
+    nextRow,
+    "Formula Cells Reading This Selection",
+    [
+      "Source Sheet",
+      "Source Cell",
+      "Source",
+      "Target Reference",
+      "Relationship",
+      "Formula"
+    ],
+    dependents.map(function (reference) {
+      return [
+        reference.sourceSheet,
+        reference.sourceCell,
+        reference.sourceQualified,
+        reference.targetQualified,
+        reference.relationshipType,
+        reference.formula
+      ];
+    }),
+    config
+  );
+
+  nextRow++;
+
+  nextRow = dependencyOSWriteInspectorSection_(
+    inspectorSheet,
+    nextRow,
+    "Dropdowns / Validations Reading This Selection",
+    [
+      "Destination",
+      "Validation Type",
+      "Source",
+      "Details"
+    ],
+    validations.map(function (record) {
+      return [
+        record.destinationQualified,
+        record.criteriaType,
+        record.sourceQualified,
+        record.details
+      ];
+    }),
+    config
+  );
+
+  nextRow++;
+
+  dependencyOSWriteInspectorSection_(
+    inspectorSheet,
+    nextRow,
+    "Named Ranges Containing This Selection",
+    [
+      "Named Range",
+      "Qualified Range",
+      "Formula Usage Count",
+      "Used By"
+    ],
+    namedRanges.map(function (record) {
+      return [
+        record.name,
+        record.qualifiedRange,
+        record.formulaUsages.length,
+        record.formulaUsages
+          .map(function (usage) {
+            return usage.sourceQualified;
+          })
+          .join(", ")
+      ];
+    }),
+    config
+  );
+
+  inspectorSheet.setColumnWidth(1, 240);
+  inspectorSheet.setColumnWidth(2, 260);
+  inspectorSheet.setColumnWidth(3, 280);
+  inspectorSheet.setColumnWidth(4, 300);
+  inspectorSheet.setColumnWidth(5, 220);
+  inspectorSheet.setColumnWidth(6, 560);
+
+  inspectorSheet.getDataRange()
+    .setVerticalAlignment("top")
+    .setWrap(true);
+
+  engineSS.setActiveSheet(inspectorSheet);
+  inspectorSheet.setActiveSelection("A1");
+
+  sourceSS.toast(
+    "Inspection for " +
+      inspectedQualified +
+      " was written to the Engine workbook.",
+    "DependencyOS",
+    6
+  );
+
+  return {
+    location: inspectedQualified,
+    dependents: dependents,
+    validations: validations,
+    namedRanges: namedRanges
+  };
+}
+
+
+function dependencyOSBuildCellSafetyAssessment_(
+  dependents,
+  validations,
+  namedRanges
+) {
+  const total =
+    dependents.length +
+    validations.length +
+    namedRanges.length;
+
+  if (total === 0) {
+    return (
+      "No formula, validation, or named-range dependencies were detected. " +
+      "Apps Script usage is not included yet, so do not treat this as confirmation that the location is completely unused."
+    );
+  }
+
+  if (dependents.length >= 10 || total >= 15) {
+    return (
+      "HIGH IMPACT — Do not move or change this location until all listed dependencies have been reviewed."
+    );
+  }
+
+  if (dependents.length >= 4 || total >= 6) {
+    return (
+      "MEDIUM IMPACT — Several workbook features depend on this location. Review the listed references before changing it."
+    );
+  }
+
+  return (
+    "LOW TO MODERATE IMPACT — A small number of workbook dependencies were detected. Review them before changing the location."
+  );
+}
+
+
+/* =========================================================
+ * CLEAR REPORTS
+ * ========================================================= */
+
+function dependencyOSClearReports_() {
+  const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+  const engineSS = dependencyOSGetEngineWorkbook_();
+  const config = dependencyOSConfig_();
+
+  Object.keys(config.reportSheets).forEach(function (key) {
+    const sheetName = config.reportSheets[key];
+    const sheet = engineSS.getSheetByName(sheetName);
+
+    if (sheet) {
+      sheet.clear();
+    }
+  });
+
+  sourceSS.toast(
+    "DependencyOS reports cleared from the Engine workbook.",
+    "DependencyOS",
+    5
+  );
+}
+
+/* =========================================================
+ * TABLE WRITERS
+ * ========================================================= */
+
+function dependencyOSWriteTable_(
+  sheet,
+  headers,
+  rows,
+  config
+) {
+  sheet.clear();
+
+  const safeHeaders =
+    dependencyOSMakeReportRowsSafe_([headers]);
+
+  const safeRows =
+    dependencyOSMakeReportRowsSafe_(rows);
+
+  sheet.getRange(1, 1, 1, headers.length)
+    .setValues(safeHeaders);
+
+  dependencyOSStyleHeader_(
+    sheet.getRange(1, 1, 1, headers.length),
+    config
+  );
+
+  if (safeRows.length) {
+    sheet.getRange(
+      2,
+      1,
+      safeRows.length,
+      headers.length
+    )
+      .setValues(safeRows)
+      .setVerticalAlignment("top")
+      .setWrap(true);
+  } else {
+    sheet.getRange(2, 1)
+      .setValue("No matching dependencies were found.");
+  }
+
+  sheet.setFrozenRows(1);
+
+  if (sheet.getFilter()) {
+    sheet.getFilter().remove();
+  }
+
+  if (safeRows.length) {
+    sheet.getRange(
+      1,
+      1,
+      safeRows.length + 1,
+      headers.length
+    ).createFilter();
+  }
+}
+
+
+function dependencyOSWriteInspectorSection_(
+  sheet,
+  startRow,
+  title,
+  headers,
+  rows,
+  config
+) {
+  sheet.getRange(
+    startRow,
+    1,
+    1,
+    headers.length
+  ).merge();
+
+  sheet.getRange(startRow, 1)
+    .setValue(title);
+
+  dependencyOSStyleSectionRow_(
+    sheet.getRange(
+      startRow,
+      1,
+      1,
+      headers.length
+    ),
+    config
+  );
+
+  const safeHeaders =
+    dependencyOSMakeReportRowsSafe_([headers]);
+
+  const safeRows =
+    dependencyOSMakeReportRowsSafe_(rows);
+
+  sheet.getRange(
+    startRow + 1,
+    1,
+    1,
+    headers.length
+  ).setValues(safeHeaders);
+
+  dependencyOSStyleHeader_(
+    sheet.getRange(
+      startRow + 1,
+      1,
+      1,
+      headers.length
+    ),
+    config
+  );
+
+  if (safeRows.length) {
+    sheet.getRange(
+      startRow + 2,
+      1,
+      safeRows.length,
+      headers.length
+    ).setValues(safeRows);
+  } else {
+    sheet.getRange(startRow + 2, 1)
+      .setValue("None detected.");
+  }
+
+  return startRow + 2 + Math.max(safeRows.length, 1);
+}
+
+
+/* =========================================================
+ * REPORT STYLING
+ * ========================================================= */
+
+function dependencyOSStyleTitle_(range, config) {
+  range
+    .setBackground(config.headerBackground)
+    .setFontColor(config.headerFontColor)
+    .setFontWeight("bold")
+    .setFontSize(16)
+    .setHorizontalAlignment("left")
+    .setVerticalAlignment("middle");
+
+  range.setBorder(
+    true,
+    true,
+    true,
+    true,
+    false,
+    false,
+    config.headerBackground,
+    SpreadsheetApp.BorderStyle.SOLID_THICK
+  );
+}
+
+
+function dependencyOSStyleHeader_(range, config) {
+  range
+    .setBackground(config.headerBackground)
+    .setFontColor(config.headerFontColor)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("left")
+    .setVerticalAlignment("middle")
+    .setWrap(true);
+
+  range.setBorder(
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    "#b7b7b7",
+    SpreadsheetApp.BorderStyle.SOLID
+  );
+}
+
+
+function dependencyOSStyleSectionRow_(range, config) {
+  range
+    .setBackground(config.sectionBackground)
+    .setFontWeight("bold")
+    .setFontSize(12)
+    .setVerticalAlignment("middle");
+}
+
+
+function dependencyOSApplyRiskColors_(
+  sheet,
+  rows,
+  config
+) {
+  rows.forEach(function (row, index) {
+    const severity = row[0];
+    const spreadsheetRow = index + 2;
+
+    let background = config.lowRiskBackground;
+
+    if (severity === "HIGH") {
+      background = config.highRiskBackground;
+    } else if (severity === "MEDIUM") {
+      background = config.mediumRiskBackground;
+    }
+
+    sheet.getRange(spreadsheetRow, 1)
+      .setBackground(background)
+      .setFontWeight("bold");
+  });
+}
+
+
+function dependencyOSApplyArchitectureColors_(
+  sheet,
+  rows,
+  config
+) {
+  rows.forEach(function (row, index) {
+    const role = row[1];
+    const spreadsheetRow = index + 2;
+
+    let background = "";
+
+    if (role === "Likely Source") {
+      background = config.lowRiskBackground;
+    } else if (role === "Likely Output") {
+      background = config.sectionBackground;
+    } else if (
+      role === "Processor / Mixed" ||
+      role === "Mixed Use"
+    ) {
+      background = config.warningBackground;
+    }
+
+    if (background) {
+      sheet.getRange(spreadsheetRow, 2)
+        .setBackground(background)
+        .setFontWeight("bold");
+    }
+  });
+}
+
+
+/* =========================================================
+ * REPORT SHEET HELPERS
+ * ========================================================= */
+
+function dependencyOSGetOrCreateReportSheet_(
+  ss,
+  sheetName
+) {
+  let sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  sheet.showSheet();
+
+  return sheet;
+}
+
+
+/* =========================================================
+ * FORMULA / ADDRESS HELPERS
+ * ========================================================= */
+
+function dependencyOSIsExternalFormula_(formula) {
+  return /(?:IMPORTRANGE|IMPORTHTML|IMPORTXML|IMPORTDATA|IMPORTFEED)\s*\(/i
+    .test(formula || "");
+}
+
+
+function dependencyOSIsBrokenFormula_(
+  formula,
+  displayValue
+) {
+  if (!formula) {
+    return false;
+  }
+
+  return /#REF!|#NAME\?|#VALUE!|#N\/A|#ERROR!|#DIV\/0!/i
+    .test(String(displayValue || ""));
+}
+
+
+function dependencyOSExtractImportRangeId_(formula) {
+  const match = String(formula || "").match(
+    /IMPORTRANGE\s*\(\s*"([^"]+)"/i
+  );
+
+  return match ? match[1] : "";
+}
+
+
+function dependencyOSExtractImportRangeRange_(formula) {
+  const match = String(formula || "").match(
+    /IMPORTRANGE\s*\(\s*"[^"]+"\s*,\s*"([^"]+)"/i
+  );
+
+  return match ? match[1] : "";
+}
+
+
+function dependencyOSQualifiedAddress_(
+  sheetName,
+  rangeA1
+) {
+  return "'" +
+    String(sheetName).replace(/'/g, "''") +
+    "'!" +
+    rangeA1;
+}
+
+
+function dependencyOSColumnToLetter_(column) {
+  let result = "";
+  let current = column;
+
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+
+    result =
+      String.fromCharCode(65 + remainder) +
+      result;
+
+    current = Math.floor((current - 1) / 26);
+  }
+
+  return result;
+}
+
+
+function dependencyOSEscapeRegex_(value) {
+  return String(value).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
+}
+
+
+/* =========================================================
+ * RANGE OVERLAP
+ * ========================================================= */
+
+function dependencyOSRangesOverlap_(
+  sheet,
+  firstA1,
+  secondA1
+) {
+  if (!firstA1 || !secondA1) {
+    return false;
+  }
+
+  try {
+    const first = sheet.getRange(firstA1);
+    const second = sheet.getRange(secondA1);
+
+    const firstStartRow = first.getRow();
+    const firstEndRow =
+      firstStartRow + first.getNumRows() - 1;
+
+    const firstStartColumn = first.getColumn();
+    const firstEndColumn =
+      firstStartColumn + first.getNumColumns() - 1;
+
+    const secondStartRow = second.getRow();
+    const secondEndRow =
+      secondStartRow + second.getNumRows() - 1;
+
+    const secondStartColumn = second.getColumn();
+    const secondEndColumn =
+      secondStartColumn + second.getNumColumns() - 1;
+
+    const rowsOverlap =
+      firstStartRow <= secondEndRow &&
+      firstEndRow >= secondStartRow;
+
+    const columnsOverlap =
+      firstStartColumn <= secondEndColumn &&
+      firstEndColumn >= secondStartColumn;
+
+    return rowsOverlap && columnsOverlap;
+  } catch (error) {
+    return firstA1 === secondA1;
+  }
+}
+
+
+/* =========================================================
+ * MISC HELPERS
+ * ========================================================= */
+
+function dependencyOSSeverityRank_(severity) {
+  if (severity === "HIGH") {
+    return 1;
+  }
+
+  if (severity === "MEDIUM") {
+    return 2;
+  }
+
+  return 3;
+}
+
+
+function dependencyOSShowError_(title, error) {
+  const message =
+    error && error.message
+      ? error.message
+      : String(error);
+
+  SpreadsheetApp.getUi().alert(
+    title,
+    message,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+/* =========================================================
+ * SAFE REPORT VALUES
+ *
+ * Prevent formulas from executing when they are written
+ * into the Engine workbook as audit text.
+ * ========================================================= */
+
+function dependencyOSMakeReportValueSafe_(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  /*
+   * A leading apostrophe tells Google Sheets to preserve
+   * formula-like content as plain text. The apostrophe
+   * will not appear visibly in the cell.
+   */
+  if (/^[=+@]/.test(value)) {
+    return "'" + value;
+  }
+
+  return value;
+}
+
+
+function dependencyOSMakeReportRowsSafe_(rows) {
+  return rows.map(function (row) {
+    return row.map(function (value) {
+      return dependencyOSMakeReportValueSafe_(value);
+    });
+  });
+}

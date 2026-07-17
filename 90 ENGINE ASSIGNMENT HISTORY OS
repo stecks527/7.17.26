@@ -1,0 +1,659 @@
+/*************************************************
+ * 90 ENGINE ASSIGNMENT HISTORY OS
+ * Version: 1.1.0
+ * Status: ACTIVE
+ *
+ * Structured assignment history for Engine Workbook.
+ *
+ * Performance improvements:
+ * - Build rows before opening Engine Workbook
+ * - Use payload date instead of rereading IN/OUT
+ * - Cache successful header initialization
+ * - Write all rows in one setValues() call
+ * - Avoid duplicate Engine logging writes during Prep
+ *************************************************/
+
+
+const ENGINE_ASSIGNMENT_HISTORY_HEADERS = [
+  "Timestamp",
+  "Performance Date",
+  "Performance Label",
+  "Performance Number",
+  "Performance Type",
+  "Department",
+  "Track ID",
+  "Track Label",
+  "Assigned Person",
+  "Person Title",
+  "Status",
+  "Details",
+  "Source",
+  "Payload JSON"
+];
+
+
+const ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_KEY_ =
+  "ENGINE_ASSIGNMENT_HISTORY_HEADERS_READY_V1";
+
+const ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_SECONDS_ =
+  21600; // 6 hours
+
+
+/* =========================================================
+ * PUBLIC API
+ * ========================================================= */
+
+function EngineAssignmentHistoryOS() {
+  return {
+    recordFromPrep:
+      engineAssignmentHistoryOSRecordFromPrep_,
+
+    clearHeaderCache:
+      engineAssignmentHistoryOSClearHeaderCache_
+  };
+}
+
+
+/* =========================================================
+ * RECORD FROM PREP
+ * ========================================================= */
+
+function engineAssignmentHistoryOSRecordFromPrep_(
+  payload
+) {
+  if (!payload) {
+    return 0;
+  }
+
+  const timer =
+    typeof TimerOS === "function"
+      ? TimerOS(
+          "Engine Assignment History"
+        )
+      : null;
+
+  const capturedAt =
+    new Date();
+
+  /*
+   * Build everything in memory before opening the
+   * separate Engine workbook.
+   */
+  const rows =
+    engineAssignmentHistoryOSBuildRowsFromPrep_(
+      payload,
+      capturedAt
+    );
+
+  if (timer) {
+    timer.mark(
+      "Build assignment rows",
+      {
+        rows:
+          rows.length
+      }
+    );
+  }
+
+  if (!rows.length) {
+    if (timer) {
+      timer.finish({
+        success:
+          true,
+
+        rows:
+          0,
+
+        skipped:
+          true
+      });
+    }
+
+    return 0;
+  }
+
+  /*
+   * Open the Engine destination once.
+   */
+  const api =
+    EngineOS()
+      .sheet(
+        "assignments"
+      );
+
+  const sheet =
+    api.sheet();
+
+  if (timer) {
+    timer.mark(
+      "Open Engine assignment sheet"
+    );
+  }
+
+  /*
+   * Header validation is expensive across workbooks.
+   * Only repeat it after the short-lived cache expires
+   * or when manually cleared.
+   */
+  if (
+    !engineAssignmentHistoryOSHeadersReady_()
+  ) {
+    api.ensureHeaders(
+      ENGINE_ASSIGNMENT_HISTORY_HEADERS
+    );
+
+    engineAssignmentHistoryOSMarkHeadersReady_();
+
+    if (timer) {
+      timer.mark(
+        "Ensure assignment headers",
+        {
+          source:
+            "verified"
+        }
+      );
+    }
+
+  } else if (timer) {
+    timer.mark(
+      "Ensure assignment headers",
+      {
+        source:
+          "cache"
+      }
+    );
+  }
+
+  const startRow =
+    sheet.getLastRow() + 1;
+
+  sheet
+    .getRange(
+      startRow,
+      1,
+      rows.length,
+      ENGINE_ASSIGNMENT_HISTORY_HEADERS.length
+    )
+    .setValues(
+      rows
+    );
+
+  if (timer) {
+    timer.mark(
+      "Write assignment history",
+      {
+        startRow:
+          startRow,
+
+        rows:
+          rows.length
+      }
+    );
+  }
+
+  /*
+   * Do not call EngineRouterOS and EngineAnalyticsOS
+   * here. Both can create additional cross-workbook
+   * writes during the user-facing Prep Apply action.
+   *
+   * The assignment-history rows themselves already
+   * provide the durable Engine record.
+   */
+  Logger.log(
+    "EngineAssignmentHistoryOS wrote " +
+    rows.length +
+    " row(s) for " +
+    String(
+      payload.performance || ""
+    )
+  );
+
+  if (timer) {
+    timer.finish({
+      success:
+        true,
+
+      rows:
+        rows.length,
+
+      performance:
+        payload.performance || ""
+    });
+  }
+
+  return rows.length;
+}
+
+
+/* =========================================================
+ * BUILD ROWS
+ * ========================================================= */
+
+function engineAssignmentHistoryOSBuildRowsFromPrep_(
+  payload,
+  capturedAt
+) {
+  payload =
+    payload || {};
+
+  const assignments =
+    payload.assignments || {};
+
+  const tracks =
+    assignments.tracks || [];
+
+  const values =
+    assignments.values || {};
+
+  const training =
+    assignments.training || {};
+
+  /*
+   * The Prep payload already contains the active date.
+   * Avoid another Spreadsheet read through SnapshotOS.
+   */
+  const dateText =
+    String(
+      payload.date || ""
+    ).trim() ||
+    (
+      typeof snapshotOSv2GetInOutDate_ ===
+        "function"
+        ? snapshotOSv2GetInOutDate_()
+        : ""
+    );
+
+  const performanceLabel =
+    payload.performance || "";
+
+  const performanceNumber =
+    typeof snapshotOSv2ExtractPerformanceNumber_ ===
+      "function"
+      ? snapshotOSv2ExtractPerformanceNumber_(
+          performanceLabel
+        )
+      : engineAssignmentHistoryOSExtractPerformanceNumber_(
+          performanceLabel
+        );
+
+  const performanceType =
+    typeof snapshotOSv2ExtractPerformanceType_ ===
+      "function"
+      ? snapshotOSv2ExtractPerformanceType_(
+          performanceLabel
+        )
+      : engineAssignmentHistoryOSExtractPerformanceType_(
+          performanceLabel
+        );
+
+  const rows = [];
+
+  tracks.forEach(function (track) {
+    track =
+      track || {};
+
+    const trackId =
+      track.id || "";
+
+    const personName =
+      values[trackId] || "";
+
+    const person =
+      engineAssignmentHistoryOSFindPerson_(
+        payload,
+        trackId,
+        personName
+      );
+
+    rows.push([
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      track.departmentGroup || "",
+      trackId,
+      track.label || "",
+      personName,
+      person.title || "",
+      assignments.officeShow &&
+      track.departmentGroup ===
+        "stageManagement"
+        ? "OFFICE_SHOW_CONTEXT"
+        : "ASSIGNED",
+      "",
+      "Prep IN/OUT",
+      JSON.stringify({
+        track:
+          track,
+
+        person:
+          person
+      })
+    ]);
+  });
+
+  Object.keys(
+    training
+  ).forEach(function (groupId) {
+    const item =
+      training[groupId];
+
+    if (
+      !item ||
+      !item.enabled
+    ) {
+      return;
+    }
+
+    const track =
+      tracks.find(function (candidate) {
+        return (
+          candidate &&
+          candidate.id ===
+            item.trackId
+        );
+      });
+
+    const trainer =
+      item.trainer || "";
+
+    const trainee =
+      item.trainee || "";
+
+    const details = [
+      trainee
+        ? "Trainee: " + trainee
+        : "",
+
+      trainer
+        ? "Trainer: " + trainer
+        : "",
+
+      item.note
+        ? "Note: " + item.note
+        : ""
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    rows.push([
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      groupId,
+      item.trackId || "",
+      track
+        ? track.label || ""
+        : "",
+      trainee || trainer || "",
+      "",
+      "TRAINING",
+      details,
+      "Prep IN/OUT",
+      JSON.stringify(
+        item
+      )
+    ]);
+  });
+
+  if (
+    assignments.officeShow
+  ) {
+    rows.push([
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      "stageManagement",
+      "officeShow",
+      "Office Show",
+      "",
+      "",
+      "OFFICE_SHOW",
+      "Office Show checked during Prep IN/OUT.",
+      "Prep IN/OUT",
+      JSON.stringify({
+        officeShow:
+          true
+      })
+    ]);
+  }
+
+  return rows;
+}
+
+
+/* =========================================================
+ * PERSON LOOKUP
+ * ========================================================= */
+
+function engineAssignmentHistoryOSFindPerson_(
+  payload,
+  trackId,
+  personName
+) {
+  const assignments =
+    payload.assignments || {};
+
+  const dropdowns =
+    assignments.dropdowns || {};
+
+  const peopleByTrack =
+    dropdowns.peopleByTrack || {};
+
+  const people =
+    peopleByTrack[trackId] || [];
+
+  const found =
+    people.find(function (person) {
+      const name =
+        typeof person === "string"
+          ? person
+          : person.name || "";
+
+      return (
+        name === personName
+      );
+    });
+
+  if (!found) {
+    return {
+      name:
+        personName,
+
+      title:
+        ""
+    };
+  }
+
+  if (
+    typeof found ===
+      "string"
+  ) {
+    return {
+      name:
+        found,
+
+      title:
+        ""
+    };
+  }
+
+  return found;
+}
+
+
+/* =========================================================
+ * HEADER CACHE
+ * ========================================================= */
+
+function engineAssignmentHistoryOSHeadersReady_() {
+  try {
+    return (
+      CacheService
+        .getDocumentCache()
+        .get(
+          ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_KEY_
+        ) === "TRUE"
+    );
+
+  } catch (err) {
+    Logger.log(
+      "Assignment history header-cache read skipped: " +
+      String(err)
+    );
+
+    return false;
+  }
+}
+
+
+function engineAssignmentHistoryOSMarkHeadersReady_() {
+  try {
+    CacheService
+      .getDocumentCache()
+      .put(
+        ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_KEY_,
+        "TRUE",
+        ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_SECONDS_
+      );
+
+    return true;
+
+  } catch (err) {
+    Logger.log(
+      "Assignment history header-cache write skipped: " +
+      String(err)
+    );
+
+    return false;
+  }
+}
+
+
+function engineAssignmentHistoryOSClearHeaderCache_() {
+  CacheService
+    .getDocumentCache()
+    .remove(
+      ENGINE_ASSIGNMENT_HISTORY_HEADER_CACHE_KEY_
+    );
+
+  Logger.log(
+    "Engine assignment-history header cache cleared."
+  );
+
+  return true;
+}
+
+
+/* =========================================================
+ * FALLBACK PARSERS
+ * ========================================================= */
+
+function engineAssignmentHistoryOSExtractPerformanceNumber_(
+  text
+) {
+  const match =
+    String(
+      text || ""
+    ).match(
+      /PERFORMANCE\s*#?\s*(\d+)/i
+    );
+
+  return match
+    ? match[1]
+    : "";
+}
+
+
+function engineAssignmentHistoryOSExtractPerformanceType_(
+  text
+) {
+  const upper =
+    String(
+      text || ""
+    ).toUpperCase();
+
+  if (
+    upper.includes("MAT")
+  ) {
+    return "MAT";
+  }
+
+  if (
+    upper.includes("EVE")
+  ) {
+    return "EVE";
+  }
+
+  const timeMatch =
+    upper.match(
+      /(\d{1,2}):(\d{2})\s*(AM|PM)/
+    );
+
+  if (
+    timeMatch &&
+    timeMatch[3] === "PM"
+  ) {
+    const hour =
+      Number(
+        timeMatch[1]
+      );
+
+    return hour < 5
+      ? "MAT"
+      : "EVE";
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * TEST
+ * ========================================================= */
+
+function testEngineAssignmentHistoryOS() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  const json =
+    props.getProperty(
+      "SNAPSHOT_OS_V2_PENDING_PREP_PAYLOAD"
+    );
+
+  if (!json) {
+    SpreadsheetApp
+      .getUi()
+      .alert(
+        "No queued Prep payload found.\n\n" +
+        "Run Prep IN/OUT and Apply first."
+      );
+
+    return;
+  }
+
+  const payload =
+    JSON.parse(
+      json
+    );
+
+  const count =
+    EngineAssignmentHistoryOS()
+      .recordFromPrep(
+        payload
+      );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "EngineAssignmentHistoryOS test complete.\n\n" +
+      "Rows written: " +
+      count
+    );
+}

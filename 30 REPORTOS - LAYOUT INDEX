@@ -1,0 +1,624 @@
+/*************************************************
+ * 30 REPORTOS - LAYOUT INDEX
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Reads the Performance Report layout once per
+ * execution and gives every ReportOS module the
+ * same header and destination map.
+ *************************************************/
+
+
+let REPORT_OS_LAYOUT_INDEX_MEMORY_ = null;
+
+
+/* =========================================================
+ * PUBLIC INDEX
+ * ========================================================= */
+
+function reportOSGetLayoutIndex_(
+  report,
+  forceRefresh
+) {
+  if (
+    !forceRefresh &&
+    REPORT_OS_LAYOUT_INDEX_MEMORY_ &&
+    REPORT_OS_LAYOUT_INDEX_MEMORY_.sheetId ===
+      report.getSheetId()
+  ) {
+    return REPORT_OS_LAYOUT_INDEX_MEMORY_;
+  }
+
+  const index =
+    reportOSBuildLayoutIndex_(
+      report
+    );
+
+  REPORT_OS_LAYOUT_INDEX_MEMORY_ =
+    index;
+
+  return index;
+}
+
+
+function reportOSClearLayoutIndexMemory_() {
+  REPORT_OS_LAYOUT_INDEX_MEMORY_ =
+    null;
+}
+
+
+/* =========================================================
+ * BUILD INDEX
+ *
+ * Reads columns A:E once. This covers:
+ * - Report section headers in column A
+ * - DAILY SCHEDULE in column E
+ *************************************************/
+
+function reportOSBuildLayoutIndex_(
+  report
+) {
+  if (!report) {
+    throw new Error(
+      "ReportOS layout index requires a report sheet."
+    );
+  }
+
+  const startedAt =
+    Date.now();
+
+  const lastRow =
+    Math.max(
+      report.getLastRow(),
+      1
+    );
+
+  const values =
+    report
+      .getRange(
+        1,
+        1,
+        lastRow,
+        5
+      )
+      .getDisplayValues();
+
+  const headers = {};
+  const headersByColumn = {};
+
+  values.forEach(
+    function (
+      row,
+      rowIndex
+    ) {
+      row.forEach(
+        function (
+          value,
+          columnIndex
+        ) {
+          const normalized =
+            reportOSNormalizeLayoutHeader_(
+              value
+            );
+
+          /*
+           * Only recognized layout headers belong
+           * in the header index.
+           */
+          if (
+            !normalized ||
+            !reportOSIsRecognizedLayoutHeader_(
+              normalized
+            )
+          ) {
+            return;
+          }
+
+          const rowNumber =
+            rowIndex + 1;
+
+          const columnNumber =
+            columnIndex + 1;
+
+          if (
+            !headersByColumn[
+              columnNumber
+            ]
+          ) {
+            headersByColumn[
+              columnNumber
+            ] = {};
+          }
+
+          headersByColumn[
+            columnNumber
+          ][normalized] =
+            rowNumber;
+
+          if (!headers[normalized]) {
+            headers[normalized] = {
+              row:
+                rowNumber,
+
+              column:
+                columnNumber,
+
+              value:
+                String(
+                  value || ""
+                ).trim()
+            };
+          }
+        }
+      );
+    }
+  );
+
+  const result = {
+    system:
+      "ReportLayoutIndex",
+
+    version:
+      "1.0.1",
+
+    sheetId:
+      report.getSheetId(),
+
+    sheetName:
+      report.getName(),
+
+    lastRow:
+      lastRow,
+
+    values:
+      values,
+
+    headers:
+      headers,
+
+    headersByColumn:
+      headersByColumn,
+
+    builtAt:
+      new Date()
+        .toISOString(),
+
+    durationMs:
+      Date.now() -
+      startedAt
+  };
+
+  Logger.log(
+    "ReportOS layout index built: " +
+    result.durationMs +
+    "ms"
+  );
+
+  return result;
+}
+
+function reportOSIsRecognizedLayoutHeader_(
+  value
+) {
+  const normalized =
+    reportOSNormalizeLayoutHeader_(
+      value
+    );
+
+  const headers = [
+    "DAILY SCHEDULE:",
+    "TECHNICAL NOTES:",
+    "SCENIC:",
+    "PROPS:",
+    "COSTUMES:",
+    "WIGS/HAIR:",
+    "SOUND:",
+    "LIGHTING:",
+    "SCRIPT:",
+    "MUSIC:",
+    "CHOREO:",
+    "GENERAL/COMPANY MANAGEMENT:",
+    "PRODUCTION MANAGEMENT:",
+    "PRODUCING:",
+    "FACILITIES:",
+    "UPCOMING:",
+    "GENERAL NOTES:",
+    "REHEARSAL NOTES:",
+    "PERFORMANCE NOTES:",
+    "WORDS USED:",
+    "IMPROV HIGHLIGHTS:"
+  ];
+
+  return (
+    headers.indexOf(
+      normalized
+    ) !== -1
+  );
+}
+
+
+/* =========================================================
+ * HEADER LOOKUPS
+ * ========================================================= */
+
+function reportOSFindIndexedHeader_(
+  index,
+  headerText,
+  expectedColumn
+) {
+  const wanted =
+    reportOSNormalizeLayoutHeader_(
+      headerText
+    );
+
+  if (!wanted) {
+    return null;
+  }
+
+  if (expectedColumn) {
+    const columnHeaders =
+      index.headersByColumn[
+        expectedColumn
+      ] ||
+      {};
+
+    const row =
+      Number(
+        columnHeaders[wanted] ||
+        0
+      );
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      row:
+        row,
+
+      column:
+        expectedColumn,
+
+      value:
+        wanted
+    };
+  }
+
+  return (
+    index.headers[wanted] ||
+    null
+  );
+}
+
+
+function reportOSRequireIndexedHeader_(
+  index,
+  headerText,
+  expectedColumn
+) {
+  const found =
+    reportOSFindIndexedHeader_(
+      index,
+      headerText,
+      expectedColumn
+    );
+
+  if (!found) {
+    throw new Error(
+      "ReportOS stopped for safety.\n\n" +
+      'Could not find "' +
+      headerText +
+      '"' +
+      (
+        expectedColumn
+          ? (
+              " in column " +
+              reportOSColumnLetter_(
+                expectedColumn
+              )
+            )
+          : ""
+      ) +
+      "."
+    );
+  }
+
+  return found;
+}
+
+
+/* =========================================================
+ * CONTENT DESTINATIONS
+ * ========================================================= */
+
+function reportOSRequireContentCell_(
+  report,
+  index,
+  headerText,
+  expectedColumn,
+  rowOffset
+) {
+  const header =
+    reportOSRequireIndexedHeader_(
+      index,
+      headerText,
+      expectedColumn
+    );
+
+  const offset =
+    Number(
+      rowOffset == null
+        ? 1
+        : rowOffset
+    );
+
+  const targetRow =
+    header.row +
+    offset;
+
+  const targetColumn =
+    expectedColumn ||
+    header.column;
+
+  /*
+   * Safety rule:
+   * Never return a destination that is itself one
+   * of the indexed report-header locations.
+   *
+   * This compares row and column positions rather
+   * than trying to classify the cell's text.
+   */
+  const isHeaderCell =
+    Object.keys(
+      index.headers || {}
+    ).some(function (key) {
+      const indexedHeader =
+        index.headers[key];
+
+      return (
+        Number(
+          indexedHeader.row
+        ) ===
+          targetRow &&
+        Number(
+          indexedHeader.column
+        ) ===
+          targetColumn
+      );
+    });
+
+  if (isHeaderCell) {
+    const targetNotation =
+      report
+        .getRange(
+          targetRow,
+          targetColumn
+        )
+        .getA1Notation();
+
+    throw new Error(
+      "ReportOS stopped for safety.\n\n" +
+      targetNotation +
+      " is a recognized report-header cell.\n\n" +
+      "No header was overwritten."
+    );
+  }
+
+  return report.getRange(
+    targetRow,
+    targetColumn
+  );
+}
+
+function reportOSFindOptionalContentCell_(
+  report,
+  index,
+  headerText,
+  expectedColumn,
+  rowOffset
+) {
+  const header =
+    reportOSFindIndexedHeader_(
+      index,
+      headerText,
+      expectedColumn
+    );
+
+  if (!header) {
+    return null;
+  }
+
+  return reportOSRequireContentCell_(
+    report,
+    index,
+    headerText,
+    expectedColumn,
+    rowOffset
+  );
+}
+
+
+/* =========================================================
+ * SAFETY / NORMALIZATION
+ * ========================================================= */
+
+function reportOSIsIndexedHeaderValue_(
+  index,
+  value
+) {
+  const normalized =
+    reportOSNormalizeLayoutHeader_(
+      value
+    );
+
+  return Boolean(
+    normalized &&
+    index.headers[
+      normalized
+    ]
+  );
+}
+
+
+function reportOSNormalizeLayoutHeader_(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+
+function reportOSColumnLetter_(
+  column
+) {
+  let number =
+    Number(
+      column || 0
+    );
+
+  let output =
+    "";
+
+  while (number > 0) {
+    const remainder =
+      (
+        number - 1
+      ) %
+      26;
+
+    output =
+      String.fromCharCode(
+        65 + remainder
+      ) +
+      output;
+
+    number =
+      Math.floor(
+        (
+          number - 1
+        ) /
+        26
+      );
+  }
+
+  return output || "?";
+}
+
+
+/* =========================================================
+ * READ-ONLY TEST
+ * ========================================================= */
+
+function testReportOSLayoutIndex() {
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report".'
+    );
+  }
+
+  reportOSClearLayoutIndexMemory_();
+
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      true
+    );
+
+  const checks = {
+    dailySchedule:
+      reportOSRequireIndexedHeader_(
+        index,
+        "DAILY SCHEDULE:",
+        5
+      ),
+
+    upcoming:
+      reportOSRequireIndexedHeader_(
+        index,
+        "UPCOMING:",
+        1
+      ),
+
+    scenic:
+      reportOSRequireIndexedHeader_(
+        index,
+        "SCENIC:",
+        1
+      ),
+
+    generalNotes:
+      reportOSRequireIndexedHeader_(
+        index,
+        "GENERAL NOTES:",
+        1
+      ),
+
+    improvHighlights:
+      reportOSRequireIndexedHeader_(
+        index,
+        "IMPROV HIGHLIGHTS:",
+        1
+      )
+  };
+
+  Logger.log(
+    "REPORTOS LAYOUT INDEX TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      {
+        durationMs:
+          index.durationMs,
+
+        checks:
+          checks
+      },
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "ReportOS layout index test passed.\n\n" +
+      "Daily Schedule header: E" +
+      checks.dailySchedule.row +
+      "\n" +
+      "Upcoming header: A" +
+      checks.upcoming.row +
+      "\n" +
+      "Scenic header: A" +
+      checks.scenic.row +
+      "\n" +
+      "General Notes header: A" +
+      checks.generalNotes.row +
+      "\n" +
+      "Improv Highlights header: A" +
+      checks.improvHighlights.row +
+      "\n\n" +
+      "Index build: " +
+      index.durationMs +
+      " ms"
+    );
+
+  return {
+    index:
+      index,
+
+    checks:
+      checks
+  };
+}

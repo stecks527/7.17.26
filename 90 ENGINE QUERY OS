@@ -1,0 +1,466 @@
+/*************************************************
+ * 90 ENGINE QUERY OS
+ * Version: 2.0.0
+ * Status: ACTIVE
+ * Read-side API + Performance Objects
+ *************************************************/
+
+function EngineQueryOS() {
+  return {
+    latestShowState: function () {
+      return engineQueryOSLatestShowState_();
+    },
+
+    latestPerformance: function () {
+      return engineQueryOSLatestPerformance_();
+    },
+
+    performancesByDate: function (dateText) {
+      return engineQueryOSPerformancesByDate_(dateText);
+    },
+
+    performanceBySnapshotId: function (snapshotId) {
+      return engineQueryOSPerformanceBySnapshotId_(snapshotId);
+    },
+
+    latestAssignments: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.assignments : [];
+    },
+
+    latestResolvedCast: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.resolvedCast : [];
+    },
+
+    latestShowStateHistory: function () {
+      return engineQueryOSLatestRow_("SnapshotOS v2 - Show State History");
+    },
+
+    showStateBySnapshotId: function (snapshotId) {
+      return engineQueryOSFindRows_("SnapshotOS v2 - Show State", "Snapshot ID", snapshotId);
+    },
+
+    showStateHistoryBySnapshotId: function (snapshotId) {
+      return engineQueryOSFindRows_("SnapshotOS v2 - Show State History", "Snapshot ID", snapshotId);
+    },
+
+    assignmentsByPerformance: function (performanceLabel) {
+      return engineQueryOSFindRows_("Assignment History", "Performance Label", performanceLabel);
+    },
+
+    resolverByPerformance: function (performanceLabel) {
+      return engineQueryOSFindRows_("Resolver Decision History", "Performance Label", performanceLabel);
+    },
+
+    resolverByRole: function (role) {
+      return engineQueryOSFindRows_("Resolver Decision History", "Role", role);
+    },
+
+    assignmentByTrack: function (trackId) {
+      return engineQueryOSFindRows_("Assignment History", "Track ID", trackId);
+    },
+
+    analyticsSummary: function () {
+      return engineQueryOSReadObjects_("Analytics Summary");
+    },
+
+    engineHealth: function () {
+      return engineQueryOSEngineHealth_();
+    },
+
+    performance: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.performanceLabel : "";
+    },
+
+    performanceNumber: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.performanceNumber : "";
+    },
+
+    showDate: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.date : "";
+    },
+
+    conductor: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.conductor : "";
+    },
+
+    guestSpeller: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.guestSpeller : "";
+    },
+
+    callingSM: function () {
+      return engineQueryOSFindCurrentAssignmentByTrack_("calling");
+    },
+
+    deckSM: function () {
+      return engineQueryOSFindCurrentAssignmentByTrack_("deck");
+    },
+
+    audio: function () {
+      return engineQueryOSFindCurrentAssignmentByTrack_("audio");
+    },
+
+    resolvedCast: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.resolvedCast : [];
+    },
+
+    coveredRoles: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.coveredRoles : [];
+    },
+
+    outs: function () {
+      const perf = engineQueryOSLatestPerformance_();
+      return perf ? perf.outs : [];
+    }
+  };
+}
+
+/*************************************************
+ * PERFORMANCE OBJECTS
+ *************************************************/
+
+function engineQueryOSLatestPerformance_() {
+  const showState = engineQueryOSLatestShowState_();
+  if (!showState) return null;
+
+  return engineQueryOSBuildPerformanceObject_(showState);
+}
+
+function engineQueryOSPerformanceBySnapshotId_(snapshotId) {
+  const rows = engineQueryOSFindRows_("SnapshotOS v2 - Show State", "Snapshot ID", snapshotId);
+  if (!rows.length) return null;
+
+  return engineQueryOSBuildPerformanceObject_(rows[rows.length - 1]);
+}
+
+function engineQueryOSBuildPerformanceObject_(showState) {
+  const snapshotId = showState["Snapshot ID"] || "";
+  const performanceLabel = showState["Performance Label"] || "";
+  const performanceNumber = showState["Performance Number"] || "";
+  const showType = showState["Show Type"] || "";
+
+  const assignments = engineQueryOSRowsForPerformance_(
+    "Assignment History",
+    snapshotId,
+    performanceLabel,
+    performanceNumber,
+    showType
+  );
+
+  const resolvedCast = engineQueryOSRowsForPerformance_(
+    "Resolver Decision History",
+    snapshotId,
+    performanceLabel,
+    performanceNumber,
+    showType
+  );
+
+  const history = snapshotId
+    ? engineQueryOSFindRows_("SnapshotOS v2 - Show State History", "Snapshot ID", snapshotId)
+    : [];
+
+  const coveredRoles = resolvedCast.filter(r =>
+    String(r.Status || "").toUpperCase() === "COVERED"
+  );
+
+  const outs = resolvedCast.filter(r =>
+    String(r.Status || "").toUpperCase() === "OUT_UNCOVERED"
+  );
+
+  return {
+    snapshotId: snapshotId,
+    date: showState["Date"] || "",
+    performanceLabel: performanceLabel,
+    performanceNumber: performanceNumber,
+    performanceTime: showState["Performance Time"] || "",
+    showType: showType,
+    conductor: showState["Conductor"] || "",
+    guestSpeller: showState["Guest Speller"] || "",
+    notes: showState["Notes"] || "",
+    showState: showState,
+    showStateHistory: history,
+    assignments: assignments,
+    resolvedCast: resolvedCast,
+    coveredRoles: coveredRoles,
+    outs: outs,
+    counts: {
+      assignments: assignments.length,
+      resolvedCast: resolvedCast.length,
+      coveredRoles: coveredRoles.length,
+      outs: outs.length,
+      historyRevisions: history.length
+    }
+  };
+}
+
+function engineQueryOSRowsForPerformance_(sheetName, snapshotId, performanceLabel, performanceNumber, showType) {
+  const rows = engineQueryOSReadObjects_(sheetName);
+  if (!rows.length) return [];
+
+  const snapshotTarget = engineQueryOSNormalize_(snapshotId);
+  const labelTarget = engineQueryOSNormalize_(performanceLabel);
+  const numberTarget = engineQueryOSNormalize_(performanceNumber);
+  const typeTarget = engineQueryOSNormalize_(showType);
+
+  let matched = rows.filter(row =>
+    snapshotTarget &&
+    engineQueryOSNormalize_(row["Snapshot ID"]) === snapshotTarget
+  );
+
+  if (!matched.length) {
+    matched = rows.filter(row =>
+      labelTarget &&
+      engineQueryOSNormalize_(row["Performance Label"]) === labelTarget
+    );
+  }
+
+  if (!matched.length) {
+    matched = rows.filter(row => {
+      const rowNumber = engineQueryOSNormalize_(row["Performance Number"]);
+      const rowType = engineQueryOSNormalize_(
+        row["Performance Type"] ||
+        row["Show Type"]
+      );
+
+      return numberTarget &&
+        rowNumber === numberTarget &&
+        (!typeTarget || rowType === typeTarget);
+    });
+  }
+
+  if (sheetName === "Assignment History") {
+    return engineQueryOSDedupeLatestAssignments_(matched);
+  }
+
+  if (sheetName === "Resolver Decision History") {
+    return engineQueryOSDedupeLatestResolverRows_(matched);
+  }
+
+  return matched;
+}
+
+function engineQueryOSDedupeLatestAssignments_(rows) {
+  const byTrack = {};
+
+  rows.forEach(row => {
+    const key = engineQueryOSNormalize_(
+      row["Track ID"] ||
+      row["Track Label"] ||
+      JSON.stringify(row)
+    );
+
+    if (!key) return;
+
+    byTrack[key] = row;
+  });
+
+  return Object.keys(byTrack).map(key => byTrack[key]);
+}
+
+function engineQueryOSDedupeLatestResolverRows_(rows) {
+  const byPersonTrack = {};
+
+  rows.forEach(row => {
+    const key = [
+      row["Role"] || "",
+      row["Default Actor"] || "",
+      row["Resolved Actor"] || ""
+    ]
+      .map(engineQueryOSNormalize_)
+      .join(" | ");
+
+    if (!key.trim()) return;
+
+    byPersonTrack[key] = row;
+  });
+
+  return Object.keys(byPersonTrack).map(key => byPersonTrack[key]);
+}
+/*************************************************
+ * CORE READERS
+ *************************************************/
+
+function engineQueryOSReadObjects_(sheetName) {
+  const values = engineQueryOSReadValues_(sheetName);
+  if (values.length < 2) return [];
+
+  const headers = values[0].map(h => String(h || "").trim());
+
+  return values.slice(1).filter(row => row.some(Boolean)).map(row => {
+    const obj = {};
+    headers.forEach((header, i) => {
+      obj[header] = row[i];
+    });
+    return obj;
+  });
+}
+
+function engineQueryOSReadValues_(sheetName) {
+  try {
+    return EngineOS().sheet(sheetName, { create: false }).values();
+  } catch (err) {
+    return [];
+  }
+}
+
+function engineQueryOSLatestRow_(sheetName) {
+  const rows = engineQueryOSReadObjects_(sheetName);
+  return rows.length ? rows[rows.length - 1] : null;
+}
+
+function engineQueryOSFindRows_(sheetName, headerName, value) {
+  const rows = engineQueryOSReadObjects_(sheetName);
+  const target = engineQueryOSNormalize_(value);
+
+  return rows.filter(row =>
+    engineQueryOSNormalize_(row[headerName]) === target
+  );
+}
+
+function engineQueryOSLatestGroup_(sheetName, groupHeader) {
+  const rows = engineQueryOSReadObjects_(sheetName);
+  if (!rows.length) return [];
+
+  const latestValue = rows[rows.length - 1][groupHeader];
+  if (!latestValue) return [rows[rows.length - 1]];
+
+  const target = engineQueryOSNormalize_(latestValue);
+
+  return rows.filter(row =>
+    engineQueryOSNormalize_(row[groupHeader]) === target
+  );
+}
+
+/*************************************************
+ * SPECIFIC QUERIES
+ *************************************************/
+
+function engineQueryOSLatestShowState_() {
+  return engineQueryOSLatestRow_("SnapshotOS v2 - Show State");
+}
+
+function engineQueryOSFindCurrentAssignmentByTrack_(trackId) {
+  const perf = engineQueryOSLatestPerformance_();
+  const assignments = perf ? perf.assignments : [];
+  const target = engineQueryOSNormalize_(trackId);
+
+  return assignments.find(r =>
+    engineQueryOSNormalize_(r["Track ID"]) === target
+  ) || null;
+}
+
+function engineQueryOSEngineHealth_() {
+  const status = EngineOS().status();
+
+  const analytics = engineQueryOSReadObjects_("Analytics Summary");
+  const dependency = engineQueryOSReadObjects_("Dependency Audit");
+  const migration = engineQueryOSReadObjects_("Migration Audit");
+
+  return {
+    connected: status.connected,
+    workbookName: status.name || "",
+    workbookId: status.workbookId || "",
+    sheetCount: status.sheets.length,
+    analyticsMetrics: analytics.length,
+    dependenciesReady: dependency.filter(row => row.Status === "READY").length,
+    dependenciesTotal: dependency.length,
+    migrationItems: migration.length
+  };
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function engineQueryOSNormalize_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testEngineQueryOS() {
+  const q = EngineQueryOS();
+
+  const latestShowState = q.latestShowState();
+  const perf = q.latestPerformance();
+  const health = q.engineHealth();
+
+  Logger.log("Latest Performance Object:");
+  Logger.log(JSON.stringify(perf, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "EngineQueryOS test complete.\n\n" +
+    "Latest Show State: " + (latestShowState ? "Found" : "None") + "\n" +
+    "Performance Object: " + (perf ? "Found" : "None") + "\n" +
+    "Assignments: " + (perf ? perf.assignments.length : 0) + "\n" +
+    "Resolved Cast: " + (perf ? perf.resolvedCast.length : 0) + "\n" +
+    "Engine Connected: " + health.connected
+  );
+}
+
+function testEngineBusinessQueries() {
+  const q = EngineQueryOS();
+  const perf = q.latestPerformance();
+
+  Logger.log("Performance Object:");
+  Logger.log(JSON.stringify(perf, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Business Query test complete.\n\n" +
+    "Performance: " + q.performance() + "\n" +
+    "Date: " + q.showDate() + "\n" +
+    "Conductor: " + q.conductor() + "\n" +
+    "Guest Speller: " + q.guestSpeller() + "\n" +
+    "Assignments: " + (perf ? perf.assignments.length : 0) + "\n" +
+    "Resolved Cast Rows: " + (perf ? perf.resolvedCast.length : 0) + "\n" +
+    "Covered Roles: " + q.coveredRoles().length + "\n" +
+    "Uncovered Outs: " + q.outs().length
+  );
+}
+
+function engineQueryOSPerformancesByDate_(dateText) {
+  const rows = engineQueryOSReadObjects_("SnapshotOS v2 - Show State");
+  if (!rows.length) return [];
+
+  const targetDate = engineQueryOSNormalize_(dateText);
+  if (!targetDate) return [];
+
+  const byPerformance = {};
+
+  rows.forEach(row => {
+    const rowDate = engineQueryOSNormalize_(row["Date"]);
+    if (rowDate !== targetDate) return;
+
+    const key = engineQueryOSNormalize_(
+      row["Performance Label"] ||
+      row["Performance Number"] ||
+      JSON.stringify(row)
+    );
+
+    if (!key) return;
+
+    // Last row wins, so newer snapshots replace older ones.
+    byPerformance[key] = row;
+  });
+
+  return Object.keys(byPerformance)
+    .map(key => engineQueryOSBuildPerformanceObject_(byPerformance[key]))
+    .sort((a, b) => {
+      const aNum = Number(a.performanceNumber || 0);
+      const bNum = Number(b.performanceNumber || 0);
+      return aNum - bNum;
+    });
+}

@@ -1,0 +1,72 @@
+/*************************************************
+ * 75 ALERTOS
+ * Version: 1.0.0
+ *************************************************/
+
+function AlertOS() {
+  return {
+    show: alertOSShow_,
+    call: alertOSShowCall_
+  };
+}
+
+function alertOSShow_(payload) {
+  payload = payload || {};
+
+  const template = HtmlService.createTemplateFromFile("AlertOS");
+  template.dataJson = JSON.stringify({
+    category: payload.category || "STAGEOS",
+    title: payload.title || "",
+    subtitle: payload.subtitle || "",
+    detail: payload.detail || "",
+    durationMs: payload.durationMs || 5000
+  });
+
+  const html = template.evaluate()
+    .setWidth(320)
+    .setHeight(170);
+
+  SpreadsheetApp.getUi().showModelessDialog(html, "StageOS Alert");
+}
+
+function alertOSShowCall_(callLabel) {
+  const showState = buildShowState();
+  const perf = (showState.performances || [])[0] || {};
+
+  return alertOSShow_({
+    category: "CALL",
+    title: callLabel,
+    subtitle: perf.inOutText || perf.label || "Current Performance",
+    detail: perf.time || "",
+    durationMs: 5000
+  });
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testAlertOS30() {
+  AlertOS().call("30 TIL SHOW");
+}
+
+function testAlertOS15() {
+  AlertOS().call("15 TIL SHOW");
+}
+
+function testAlertOS5() {
+  AlertOS().call("5 TIL SHOW");
+}
+
+function testAlertOSPlaces() {
+  AlertOS().call("PLACES");
+}
+
+function testAlertOSReport() {
+  AlertOS().show({
+    category: "REPORT",
+    title: "Draft Ready",
+    subtitle: "Performance Report",
+    durationMs: 5000
+  });
+}

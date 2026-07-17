@@ -1,0 +1,84 @@
+/*************************************************
+ * 85 INSERT UPDATE
+ *************************************************/
+
+function updateInsertFromInOut() {
+  const ss = SpreadsheetApp.getActive();
+
+  const inOut = ss.getSheetByName("IN/OUT");
+  const insert = ss.getSheetByName("Insert");
+  const castList = ss.getSheetByName("Cast List");
+
+  if (!inOut || !insert || !castList) {
+    throw new Error('Missing "IN/OUT", "Insert", or "Cast List" sheet.');
+  }
+
+  const MASTER_START_ROW = 3;
+  const MASTER_END_ROW = 11;
+  const INOUT_START_ROW = 6;
+
+  const inOutLastRow = inOut.getLastRow();
+  if (inOutLastRow < INOUT_START_ROW) return;
+
+  const inOutData = inOut
+    .getRange(INOUT_START_ROW, 1, inOutLastRow - INOUT_START_ROW + 1, 7)
+    .getDisplayValues();
+
+  const castListData = castList.getDataRange().getDisplayValues();
+
+  const normalCastByCharacter = {};
+  const fullCharacterByRole = {};
+
+  for (let i = 2; i < castListData.length; i++) {
+    const role = clean_(castListData[i][0]);
+    const fullName = clean_(castListData[i][1]);
+    const fullCharacter = clean_(castListData[i][3]);
+
+    if (fullName && fullCharacter) {
+      normalCastByCharacter[cleanKey_(fullCharacter)] = fullName;
+    }
+
+    if (role && fullCharacter) {
+      fullCharacterByRole[cleanKey_(role)] = fullCharacter;
+    }
+  }
+
+  const masterRowsByCharacter = {};
+
+  for (let row = MASTER_START_ROW; row <= MASTER_END_ROW; row++) {
+    const characterText = insert.getRange(row, 1).getDisplayValue();
+    const character = getCharacterBeforeDots_(characterText);
+
+    if (character) {
+      masterRowsByCharacter[cleanKey_(character)] = row;
+    }
+  }
+
+  // Reset master Insert block to normal cast
+  for (const characterKey in masterRowsByCharacter) {
+    const row = masterRowsByCharacter[characterKey];
+    const normalActor = normalCastByCharacter[characterKey];
+
+    if (normalActor) {
+      setActorInInsert_(insert, row, normalActor);
+    }
+  }
+
+  // Apply IN/OUT substitutions
+  for (let i = 0; i < inOutData.length; i++) {
+    const row = inOutData[i];
+
+    const outActor = clean_(row[0]);
+    const inActor = firstFilled_([row[2], row[3], row[4]]);
+    const role = firstFilled_([row[5], row[6]]);
+
+    if (!outActor || !inActor || !role) continue;
+
+    const fullCharacter = fullCharacterByRole[cleanKey_(role)] || role;
+    const insertRow = masterRowsByCharacter[cleanKey_(fullCharacter)];
+
+    if (insertRow) {
+      setActorInInsert_(insert, insertRow, inActor);
+    }
+  }
+}

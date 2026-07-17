@@ -1,0 +1,320 @@
+/*************************************************
+ * 90 ENGINE OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Central API for StageOS Engine Workbook
+ *************************************************/
+
+const ENGINE_OS = {
+  SETTINGS: {
+    enabled: ["Engine Enabled", "Use Engine Workbook"],
+    workbookId: ["Engine Workbook ID", "Engine Workbook", "StageOS Engine ID"]
+  },
+
+  SHEETS: {
+    logs: "Engine Logs",
+    diagnostics: "Diagnostics",
+    snapshots: "Snapshot History",
+    resolver: "Resolver History",
+    assignments: "Assignment History",
+    cacheRegistry: "Cache Registry",
+    weeklyCache: "Weekly Cache",
+    analytics: "Analytics",
+    performanceTimeline: "Performance Timeline",
+    decisionHistory: "Decision History"
+  }
+};
+
+function EngineOS() {
+  return {
+    enabled: function () {
+      return engineOSIsEnabled_();
+    },
+
+    id: function () {
+      return engineOSGetWorkbookId_();
+    },
+
+    workbook: function () {
+      return engineOSGetWorkbook_();
+    },
+
+    sheet: function (keyOrName, options) {
+      return engineOSSheetAPI_(keyOrName, options);
+    },
+
+    rawSheet: function (keyOrName, options) {
+      return engineOSGetSheet_(keyOrName, options);
+    },
+
+    ensureCore: function () {
+      return engineOSEnsureCoreSheets_();
+    },
+
+    status: function () {
+      return engineOSStatus_();
+    }
+  };
+}
+
+/*************************************************
+ * SETTINGS
+ *************************************************/
+
+function engineOSIsEnabled_() {
+  return engineOSGetFirstBoolSetting_(ENGINE_OS.SETTINGS.enabled, false);
+}
+
+function engineOSGetWorkbookId_() {
+  const value = engineOSGetFirstSetting_(ENGINE_OS.SETTINGS.workbookId, "");
+  return value ? extractStageOSDriveId_(value) : "";
+}
+
+function engineOSGetFirstSetting_(labels, fallback) {
+  for (let i = 0; i < labels.length; i++) {
+    const label = labels[i];
+
+    if (typeof SettingsCacheOS === "function") {
+      const cached = SettingsCacheOS().get(label);
+      if (cached !== undefined && cached !== "") return cached;
+    }
+
+    if (typeof getStageOSSetting === "function") {
+      const value = getStageOSSetting(label, "");
+      if (value !== undefined && value !== "") return value;
+    }
+  }
+
+  return fallback;
+}
+
+function engineOSGetFirstBoolSetting_(labels, fallback) {
+  const value = engineOSGetFirstSetting_(labels, "");
+
+  if (value === "") return Boolean(fallback);
+  if (typeof value === "boolean") return value;
+
+  const text = String(value || "").trim().toUpperCase();
+
+  if (["TRUE", "YES", "Y", "1", "CHECKED"].includes(text)) return true;
+  if (["FALSE", "NO", "N", "0", "UNCHECKED"].includes(text)) return false;
+
+  return Boolean(fallback);
+}
+
+/*************************************************
+ * WORKBOOK
+ *************************************************/
+
+let ENGINE_OS_WORKBOOK_CACHE_ = null;
+
+function engineOSGetWorkbook_() {
+  if (ENGINE_OS_WORKBOOK_CACHE_) return ENGINE_OS_WORKBOOK_CACHE_;
+
+  const id = engineOSGetWorkbookId_();
+
+  if (!id) {
+    throw new Error(
+      'Engine workbook ID missing. Add "Engine Workbook ID" to Production Settings.'
+    );
+  }
+
+  ENGINE_OS_WORKBOOK_CACHE_ = SpreadsheetApp.openById(id);
+  return ENGINE_OS_WORKBOOK_CACHE_;
+}
+
+/*************************************************
+ * SHEETS
+ *************************************************/
+
+function engineOSResolveSheetName_(keyOrName) {
+  const key = String(keyOrName || "").trim();
+
+  if (ENGINE_OS.SHEETS[key]) return ENGINE_OS.SHEETS[key];
+
+  const normalized = key.toLowerCase().replace(/\s+/g, "");
+  const matchedKey = Object.keys(ENGINE_OS.SHEETS).find(k =>
+    k.toLowerCase() === normalized
+  );
+
+  return matchedKey ? ENGINE_OS.SHEETS[matchedKey] : key;
+}
+
+function engineOSGetSheet_(keyOrName, options) {
+  const opts = options || {};
+  const create = opts.create !== false;
+  const sheetName = engineOSResolveSheetName_(keyOrName);
+
+  const wb = engineOSGetWorkbook_();
+  let sh = wb.getSheetByName(sheetName);
+
+  if (!sh && create) {
+    sh = wb.insertSheet(sheetName);
+  }
+
+  if (!sh) {
+    throw new Error('Could not find Engine sheet "' + sheetName + '".');
+  }
+
+  return sh;
+}
+
+function engineOSSheetAPI_(keyOrName, options) {
+  const sh = engineOSGetSheet_(keyOrName, options);
+
+  return {
+    name: function () {
+      return sh.getName();
+    },
+
+    sheet: function () {
+      return sh;
+    },
+
+    clear: function () {
+      sh.clear();
+      return sh;
+    },
+
+    values: function () {
+      const lastRow = sh.getLastRow();
+      const lastCol = sh.getLastColumn();
+      if (!lastRow || !lastCol) return [];
+      return sh.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+    },
+
+    ensureHeaders: function (headers) {
+      return engineOSEnsureHeaders_(sh, headers);
+    },
+
+    append: function (row) {
+      sh.appendRow(row);
+      return row;
+    },
+
+    appendObject: function (obj, headers) {
+      return engineOSAppendObject_(sh, obj, headers);
+    },
+
+    writeObjects: function (objects, headers, clearFirst) {
+      return engineOSWriteObjects_(sh, objects, headers, clearFirst);
+    }
+  };
+}
+
+function engineOSEnsureHeaders_(sh, headers) {
+  if (!headers || !headers.length) return;
+
+  const current = sh.getLastColumn()
+    ? sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), headers.length)).getDisplayValues()[0]
+    : [];
+
+  const needsHeaders = headers.some((h, i) => String(current[i] || "") !== String(h || ""));
+
+  if (needsHeaders) {
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
+  }
+}
+
+function engineOSAppendObject_(sh, obj, headers) {
+  const finalHeaders = headers && headers.length
+    ? headers
+    : Object.keys(obj || {});
+
+  engineOSEnsureHeaders_(sh, finalHeaders);
+
+  const row = finalHeaders.map(h => obj[h] !== undefined ? obj[h] : "");
+  sh.appendRow(row);
+
+  return row;
+}
+
+function engineOSWriteObjects_(sh, objects, headers, clearFirst) {
+  const rows = objects || [];
+  const finalHeaders = headers && headers.length
+    ? headers
+    : rows.length
+      ? Object.keys(rows[0])
+      : [];
+
+  if (clearFirst) sh.clear();
+
+  if (!finalHeaders.length) return 0;
+
+  engineOSEnsureHeaders_(sh, finalHeaders);
+
+  if (!rows.length) return 0;
+
+  const output = rows.map(obj =>
+    finalHeaders.map(h => obj[h] !== undefined ? obj[h] : "")
+  );
+
+  sh.getRange(2, 1, output.length, finalHeaders.length).setValues(output);
+
+  return output.length;
+}
+
+/*************************************************
+ * CORE SETUP
+ *************************************************/
+
+function engineOSEnsureCoreSheets_() {
+  const core = [
+    { key: "logs", headers: ["Timestamp", "Level", "System", "Action", "Message", "Data"] },
+    { key: "diagnostics", headers: ["Timestamp", "System", "Metric", "Value", "Notes"] },
+    { key: "snapshots", headers: ["Snapshot ID", "Revision", "Captured At", "System", "Data"] },
+    { key: "resolver", headers: ["Timestamp", "Action", "Role", "Actor", "Data"] },
+    { key: "assignments", headers: ["Timestamp", "Action", "Data"] },
+    { key: "cacheRegistry", headers: ["Cache Key", "Cached At", "Size", "Status"] },
+    { key: "weeklyCache", headers: ["Date Key", "Sheet Name", "Cached At", "Data"] },
+    { key: "analytics", headers: ["Timestamp", "System", "Metric", "Value", "Data"] },
+    { key: "performanceTimeline", headers: ["Timestamp", "System", "Event", "Data"] },
+    { key: "decisionHistory", headers: ["Timestamp", "System", "Decision", "Data"] }
+  ];
+
+  const touched = [];
+
+  core.forEach(item => {
+    const api = EngineOS().sheet(item.key, { create: true });
+    api.ensureHeaders(item.headers);
+    touched.push(api.name());
+  });
+
+  return touched;
+}
+
+/*************************************************
+ * STATUS
+ *************************************************/
+
+function engineOSStatus_() {
+  const enabled = engineOSIsEnabled_();
+  const id = engineOSGetWorkbookId_();
+
+  let connected = false;
+  let name = "";
+  let url = "";
+  let sheets = [];
+
+  if (id) {
+    try {
+      const wb = SpreadsheetApp.openById(id);
+      connected = true;
+      name = wb.getName();
+      url = wb.getUrl();
+      sheets = wb.getSheets().map(sh => sh.getName());
+    } catch (err) {
+      connected = false;
+    }
+  }
+
+  return {
+    enabled: enabled,
+    workbookId: id,
+    connected: connected,
+    name: name,
+    url: url,
+    sheets: sheets
+  };
+}

@@ -1,0 +1,149 @@
+/*************************************************
+ * 13 PREP INOUT INTELLIGENCE BRIDGE
+ * Version: 1.0.0
+ *************************************************/
+
+function prepInOutApplyIntelligence_(targetDate) {
+  const plannedResult = prepInOutApplyPlannedOuts_(targetDate);
+  return plannedResult;
+}
+
+function prepInOutApplyPlannedOuts_(targetDate) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!inOut) throw new Error("Could not find IN/OUT tab.");
+
+  const plannedOuts = InOutIntelligenceOS().plannedOutsForDate(targetDate);
+  if (!plannedOuts.length) return { written: [], skippedForInOut: [] };
+
+  const written = [];
+  const skippedForInOut = [];
+
+  plannedOuts.forEach(outRecord => {
+    const role = outRecord.role || "";
+    const tempReplacement = outRecord.tempReplacement || getTempReplacementForLOA_(outRecord);
+
+    let inActor = tempReplacement;
+
+    if (!inActor && !outRecord.isContractLOA) {
+      inActor = prepPromptCoverForOut_(outRecord);
+    }
+
+    if (!inActor && outRecord.isContractLOA) {
+      inActor = prepPromptTempReplacementForLOA_(outRecord);
+    }
+
+    if (!inActor) return;
+
+    const completed = Object.assign({}, outRecord, {
+      inActor: inActor
+    });
+
+    if (completed.writeToInOutSheet) {
+      prepWriteOutToInOutSheet_(inOut, completed);
+      written.push(completed);
+    } else {
+      skippedForInOut.push(completed);
+    }
+  });
+
+  if (written.length || skippedForInOut.length) {
+    ui.alert(
+      "Planned Outs Processed",
+      [
+        written.length
+          ? "Written to IN/OUT:\n" + written.map(prepFormatOutSummary_).join("\n")
+          : "",
+        skippedForInOut.length
+          ? "Skipped from IN/OUT due to LOA/MLOA:\n" + skippedForInOut.map(prepFormatOutSummary_).join("\n")
+          : ""
+      ].filter(Boolean).join("\n\n"),
+      ui.ButtonSet.OK
+    );
+  }
+
+  return { written, skippedForInOut };
+}
+
+function prepPromptCoverForOut_(outRecord) {
+  const ui = SpreadsheetApp.getUi();
+
+  const options = InOutIntelligenceOS().coverOptionsForRole(outRecord.role || "");
+
+  const optionText = options.length
+    ? options.map((name, i) => `${i + 1}. ${name}`).join("\n")
+    : "No cover options found.";
+
+  const response = ui.prompt(
+    "Planned Out Coverage",
+    `${outRecord.actor} OUT\n\n` +
+    `Role: ${outRecord.role || "Not found"}\n` +
+    `Reason: ${outRecord.reason || "Not listed"}\n` +
+    `Status: ${outRecord.status || "Not listed"}\n` +
+    `Performances: ${outRecord.performances || "Not listed"}\n\n` +
+    `Possible Covers:\n${optionText}\n\n` +
+    `Type the number of the cover, or type a name manually.`,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return "";
+
+  const answer = response.getResponseText().trim();
+  const num = Number(answer);
+
+  if (num && options[num - 1]) return options[num - 1];
+  return answer;
+}
+
+function prepPromptTempReplacementForLOA_(outRecord) {
+  const ui = SpreadsheetApp.getUi();
+
+  const response = ui.prompt(
+    "LOA / MLOA Replacement",
+    `${outRecord.actor} is listed as ${outRecord.reason}.\n\n` +
+    `Role: ${outRecord.role || "Not found"}\n\n` +
+    `This should NOT be written to the IN/OUT sheet.\n\n` +
+    `Who is the temporary replacement?`,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return "";
+  return response.getResponseText().trim();
+}
+
+function prepWriteOutToInOutSheet_(inOut, record) {
+  const row = prepFindNextInOutEntryRow_(inOut);
+
+  inOut.getRange(row, 1).setValue(record.actor || "");
+  inOut.getRange(row, 3).setValue(record.inActor || "");
+  inOut.getRange(row, 5).setValue(record.role || "");
+  inOut.getRange(row, 7).setValue(record.reason || "");
+}
+
+function prepFindNextInOutEntryRow_(inOut) {
+  const startRow = 6;
+  const lastRow = Math.max(inOut.getLastRow(), startRow);
+  const values = inOut.getRange(startRow, 1, lastRow - startRow + 1, 7).getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    if (!values[i].some(v => String(v || "").trim())) {
+      return startRow + i;
+    }
+  }
+
+  return lastRow + 1;
+}
+
+function prepFormatOutSummary_(record) {
+  return `- ${record.actor} OUT, ${record.role} = ${record.inActor} (${record.reason || "No reason"})`;
+}
+
+/*************************************************
+ * TEST
+ *************************************************/
+
+function testPrepInOutIntelligenceToday() {
+  prepInOutApplyIntelligence_(new Date());
+}

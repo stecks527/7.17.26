@@ -1,0 +1,526 @@
+/*************************************************
+ * 15 - PREPOS PATCH TESTS
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Non-destructive PrepOS integration tests.
+ *************************************************/
+
+
+/* =========================================================
+ * FULL PREPOS PREFLIGHT
+ * ========================================================= */
+
+function testPrepOSEndToEndPreflight() {
+  const startedAt = Date.now();
+
+  clearShowStateOSCache();
+
+  const state = PrepOS().state();
+
+  if (!state) {
+    throw new Error(
+      "PrepOS returned no Show State."
+    );
+  }
+
+  const performance =
+    prepOSGetPreflightPerformance_(
+      state
+    );
+
+  const assignments =
+    state.assignments || {};
+
+  const intelligence =
+    state.intelligence || {};
+
+  const plannedOuts =
+    Array.isArray(
+      intelligence.plannedOuts
+    )
+      ? intelligence.plannedOuts
+      : [];
+
+  const payload =
+    prepOSBuildPreflightPayload_(
+      state,
+      performance,
+      assignments,
+      plannedOuts
+    );
+
+  /*
+   * Run the real payload normalization and validation,
+   * but do not call the apply pipeline.
+   */
+  const normalized =
+    normalizePrepApplyPayload_(
+      payload
+    );
+
+  validatePrepApplyPayload_(
+    normalized
+  );
+
+  const dependencies =
+    prepOSCheckPreflightDependencies_();
+
+  const missing =
+    dependencies.filter(function (item) {
+      return !item.available;
+    });
+
+  const sheetTargets =
+    prepOSCheckPreflightSheetTargets_();
+
+  const missingSheets =
+    sheetTargets.filter(function (item) {
+      return !item.available;
+    });
+
+  const result = {
+    ok:
+      missing.length === 0 &&
+      missingSheets.length === 0,
+
+    durationMs:
+      Date.now() - startedAt,
+
+    date:
+      state.prettyDate ||
+      state.date ||
+      "",
+
+    performance:
+      performance.inOutText ||
+      performance.label ||
+      "",
+
+    performancesToday:
+      Array.isArray(
+        state.performances
+      )
+        ? state.performances.length
+        : 0,
+
+    assignmentTracks:
+      Array.isArray(
+        assignments.tracks
+      )
+        ? assignments.tracks.length
+        : 0,
+
+    plannedOuts:
+      plannedOuts.length,
+
+    normalizedCastOuts:
+      normalized.castOuts.length,
+
+    writingToInOut:
+      normalized.castOuts.filter(
+        function (item) {
+          return item.writeToInOutSheet;
+        }
+      ).length,
+
+    contractLeave:
+      normalized.castOuts.filter(
+        function (item) {
+          return item.isContractLOA;
+        }
+      ).length,
+
+    dependencies:
+      dependencies,
+
+    sheetTargets:
+      sheetTargets,
+
+    missing:
+      missing.map(function (item) {
+        return item.name;
+      }),
+
+    missingSheets:
+      missingSheets.map(function (item) {
+        return item.name;
+      })
+  };
+
+  Logger.log(
+    "PREPOS END-TO-END PREFLIGHT"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS end-to-end preflight " +
+      (
+        result.ok
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Date: " +
+      result.date +
+      "\n" +
+      "Performance: " +
+      result.performance +
+      "\n" +
+      "Performances today: " +
+      result.performancesToday +
+      "\n" +
+      "Assignment tracks: " +
+      result.assignmentTracks +
+      "\n" +
+      "Planned outs: " +
+      result.plannedOuts +
+      "\n" +
+      "Writing to IN/OUT: " +
+      result.writingToInOut +
+      "\n" +
+      "Contract leave: " +
+      result.contractLeave +
+      "\n\n" +
+      "Missing functions: " +
+      result.missing.length +
+      "\n" +
+      "Missing sheets: " +
+      result.missingSheets.length +
+      "\n\n" +
+      "Duration: " +
+      result.durationMs +
+      " ms"
+    );
+
+  return result;
+}
+
+
+/* =========================================================
+ * PREFLIGHT PAYLOAD
+ * ========================================================= */
+
+function prepOSBuildPreflightPayload_(
+  state,
+  performance,
+  assignments,
+  plannedOuts
+) {
+  const assignmentValues =
+    Object.assign(
+      {},
+      assignments.values || {}
+    );
+
+  if (
+    !assignmentValues.conductor
+  ) {
+    assignmentValues.conductor =
+      performance.conductor ||
+      "";
+  }
+
+  const castOuts =
+    plannedOuts.map(function (item) {
+      return {
+        out:
+          prepOSFirstNonBlank_(
+            item.out,
+            item.actor,
+            item.actorOut
+          ),
+
+        in:
+          prepOSFirstNonBlank_(
+            item.finalInActor,
+            item.preselectedCover,
+            item.coverActor,
+            item.inActor,
+            item.in
+          ),
+
+        role:
+          prepOSFirstNonBlank_(
+            item.role,
+            item.character
+          ),
+
+        reason:
+          item.reason || "",
+
+        noCoverNeeded:
+          Boolean(
+            item.noCoverNeeded
+          ),
+
+        isContractLOA:
+          Boolean(
+            item.isContractLOA
+          ),
+
+        writeToInOutSheet:
+          item.writeToInOutSheet !== false
+      };
+    });
+
+  return {
+    performance:
+      performance.inOutText ||
+      performance.label ||
+      "",
+
+    conductor:
+      performance.conductor ||
+      assignmentValues.conductor ||
+      "",
+
+    notes:
+      typeof state.notes ===
+        "string"
+        ? state.notes
+        : "",
+
+    assignments: {
+      groups:
+        assignments.groups || [],
+
+      tracks:
+        assignments.tracks || [],
+
+      values:
+        assignmentValues,
+
+      dropdowns:
+        assignments.dropdowns || {},
+
+      officeShow:
+        Boolean(
+          assignments.officeShow
+        ),
+
+      training:
+        assignments.training || {
+          stageManagement: {
+            enabled: false
+          },
+
+          audio: {
+            enabled: false
+          }
+        }
+    },
+
+    castOuts:
+      castOuts,
+
+    guestSpellerName:
+      performance.guestSpeller ||
+      "",
+
+    guestDateTimeText:
+      performance.guestDateTimeText ||
+      "",
+
+    guestSpellerNote:
+      performance.guestNote ||
+      ""
+  };
+}
+
+
+/* =========================================================
+ * PERFORMANCE SELECTION
+ * ========================================================= */
+
+function prepOSGetPreflightPerformance_(
+  state
+) {
+  const performances =
+    Array.isArray(
+      state.performances
+    )
+      ? state.performances
+      : [];
+
+  if (!performances.length) {
+    throw new Error(
+      "PrepOS found no performances."
+    );
+  }
+
+  const selectedIndex =
+    state.selectedIndex !== null &&
+    state.selectedIndex !== undefined
+      ? Number(
+          state.selectedIndex
+        )
+      : 0;
+
+  return (
+    performances[selectedIndex] ||
+    performances[0]
+  );
+}
+
+
+/* =========================================================
+ * DEPENDENCIES
+ * ========================================================= */
+
+function prepOSCheckPreflightDependencies_() {
+  const checks = [
+    {
+      name:
+        "PrepOS",
+
+      available:
+        typeof PrepOS ===
+        "function"
+    },
+
+    {
+      name:
+        "buildShowState",
+
+      available:
+        typeof buildShowState ===
+        "function"
+    },
+
+    {
+      name:
+        "normalizePrepApplyPayload_",
+
+      available:
+        typeof normalizePrepApplyPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "validatePrepApplyPayload_",
+
+      available:
+        typeof validatePrepApplyPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "writeShowAssignmentsFromPayload_",
+
+      available:
+        typeof writeShowAssignmentsFromPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "writeInOutChangesFromDialog_",
+
+      available:
+        typeof writeInOutChangesFromDialog_ ===
+        "function"
+    },
+
+    {
+      name:
+        "writeInOutChangesToPerformanceReportFromPayload_",
+
+      available:
+        typeof writeInOutChangesToPerformanceReportFromPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "writeGuestSpellerToPerformanceReportFromPayload_",
+
+      available:
+        typeof writeGuestSpellerToPerformanceReportFromPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "writeReportNotesFromPayload_",
+
+      available:
+        typeof writeReportNotesFromPayload_ ===
+        "function"
+    },
+
+    {
+      name:
+        "queueSnapshotOSv2FromPrep",
+
+      available:
+        typeof queueSnapshotOSv2FromPrep ===
+        "function"
+    },
+
+    {
+      name:
+        "updateInsertFromInOut",
+
+      available:
+        typeof updateInsertFromInOut ===
+        "function"
+    },
+
+    {
+      name:
+        "EngineAssignmentHistoryOS",
+
+      available:
+        typeof EngineAssignmentHistoryOS ===
+        "function"
+    }
+  ];
+
+  return checks;
+}
+
+
+/* =========================================================
+ * SHEET TARGETS
+ * ========================================================= */
+
+function prepOSCheckPreflightSheetTargets_() {
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const required = [
+    "IN/OUT",
+    "Performance Report",
+    "Insert",
+    "Cast List",
+    "Expanded Calendar",
+    "PD/Vacation Tracker"
+  ];
+
+  return required.map(function (name) {
+    return {
+      name:
+        name,
+
+      available:
+        Boolean(
+          ss.getSheetByName(
+            name
+          )
+        )
+    };
+  });
+}

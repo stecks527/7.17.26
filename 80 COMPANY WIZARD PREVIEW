@@ -1,0 +1,310 @@
+/*******************************
+ * 80 COMPANY WIZARD PREVIEW- VERSION 1
+ * Preview New Hire
+ *******************************/
+
+const CW = {
+  NEW_HIRE_SHEET: "New Hire",
+  LOG_SHEET: "Wizard Log",
+
+  CAST_HEADSHOT_FOLDER_ID: "1FHxiRKssu39qgePG4eF9zt3n8pH315BY",
+  NON_CAST_HEADSHOT_FOLDER_ID: "1n2gFNrMwlaLrO2wnRNkP-yNOOcFp3zIt",
+
+  PREVIEW_START_ROW: 5,
+  PREVIEW_START_COL: 1,
+
+  COMPANY_AREAS: {
+    CAST: "Cast",
+    STAGE_MANAGEMENT: "Stage Management"
+  }
+};
+
+function previewNewHire() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CW.NEW_HIRE_SHEET);
+  if (!sheet) throw new Error(`Could not find tab: ${CW.NEW_HIRE_SHEET}`);
+
+  const hire = readNewHire_();
+  const preview = buildNewHirePreview_(ss, hire);
+
+  writeNewHirePreview_(sheet, preview);
+  logWizard_("Preview New Hire", `Preview generated for ${hire.name}`);
+
+  SpreadsheetApp.getUi().alert(`Preview complete for ${hire.name}.`);
+}
+
+function readNewHire_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CW.NEW_HIRE_SHEET);
+
+  const row = sheet.getRange(2, 1, 1, 9).getDisplayValues()[0];
+
+  const hire = {
+    name: clean_(row[0]),
+    nameInitial: clean_(row[1]),
+    pronouns: clean_(row[2]),
+    companyArea: clean_(row[3]),
+    positionTrack: clean_(row[4]),
+    hireType: clean_(row[5]),
+    phone: clean_(row[6]),
+    email: clean_(row[7]),
+    headshot: clean_(row[8])
+  };
+
+  validateNewHire_(hire);
+  return hire;
+}
+
+function validateNewHire_(hire) {
+  const missing = [];
+
+  if (!hire.name) missing.push("NAME");
+  if (!hire.nameInitial) missing.push("NAME + INITIAL");
+  if (!hire.companyArea) missing.push("COMPANY AREA");
+  if (!hire.positionTrack) missing.push("POSITION / TRACK");
+  if (!hire.hireType) missing.push("HIRE TYPE");
+
+  if (missing.length) {
+    throw new Error("Missing required New Hire field(s): " + missing.join(", "));
+  }
+}
+
+function buildNewHirePreview_(ss, hire) {
+  const lines = [];
+
+  const isCast = hire.companyArea === "Cast";
+  const isStageManagement = hire.companyArea === "Stage Management";
+  const isPrincipal = hire.hireType === "Principal";
+  const isSwing = hire.hireType === "Swing";
+  const isCrew = hire.hireType === "Crew";
+
+  lines.push(["NEW HIRE PREVIEW", ""]);
+  lines.push(["Name", hire.name]);
+  lines.push(["Name + Initial", hire.nameInitial]);
+  lines.push(["Pronouns", hire.pronouns || ""]);
+  lines.push(["Company Area", hire.companyArea]);
+  lines.push(["Position / Track", hire.positionTrack]);
+  lines.push(["Hire Type", hire.hireType]);
+  lines.push(["", ""]);
+
+  lines.push(["Workbook Actions", ""]);
+
+  lines.push(["✓ Contact Sheet", `Add to ${hire.companyArea} section`]);
+
+  if (isCast) {
+    lines.push(["✓ Cast List", isPrincipal ? "Principal replacement workflow" : "Add cast member"]);
+    lines.push(["✓ IN/OUT", isPrincipal ? "Copy matching character row" : "Add alphabetically"]);
+    lines.push(["✓ Payroll", "Add new cast payroll block"]);
+    lines.push(["✓ U/S Tracker", "Update top/bottom tracker"]);
+    lines.push(["✓ PD/Vacation Tracker", "Create 3-row block"]);
+    lines.push(["✓ Sign-In", "Add alphabetically"]);
+  } else if (isStageManagement) {
+    lines.push(["✓ Payroll", "Add Stage Management payroll block"]);
+    lines.push(["— Sign-In", "Skipped for Stage Management"]);
+    lines.push(["— U/S Tracker", "Skipped"]);
+    lines.push(["— PD/Vacation Tracker", "Skipped"]);
+  } else {
+    lines.push(["— Payroll", "Skipped for non-cast / non-stage-management"]);
+    lines.push(["— Sign-In", "Skipped for crew / management / producers / band"]);
+    lines.push(["— U/S Tracker", "Skipped"]);
+    lines.push(["— PD/Vacation Tracker", "Skipped"]);
+  }
+
+  lines.push(["", ""]);
+
+  if (isCast && isPrincipal) {
+    const templateActor = findCurrentPrincipalByCharacter_(ss, hire.positionTrack);
+    if (templateActor) {
+      lines.push(["✓ Template Actor Found", `${templateActor} currently listed for ${hire.positionTrack}`]);
+    } else {
+      lines.push(["⚠ Template Actor Not Found", `Could not find current actor for ${hire.positionTrack}`]);
+    }
+  }
+
+  const headshotResult = findHeadshotForHire_(hire);
+  if (headshotResult.found) {
+    lines.push(["✓ Headshot Found", headshotResult.name]);
+  } else {
+    lines.push(["⚠ Headshot Not Found", "Will continue without automatic headshot"]);
+  }
+
+  lines.push(["", ""]);
+  lines.push(["Slides / Assets", ""]);
+  lines.push(["✓ Cover Page", "Can update [WHO] / [ROLE]"]);
+  lines.push(["✓ Water Bottle Tag", "Can create/update name tag"]);
+  lines.push(["✓ Dressing Room Signage", "Can create/update tag and room sheet"]);
+  lines.push(["✓ Faces Page", isPrincipal ? "Replacement workflow possible" : "Add workflow will be manual in v1"]);
+
+  lines.push(["", ""]);
+  lines.push(["Things To Print", ""]);
+  lines.push(["□ Updated Contact Sheet", "2 copies"]);
+  lines.push(["□ Full Calendar", "2 copies"]);
+  lines.push(["□ Rehearsal Calendar", ""]);
+  lines.push(["□ Dressing Room Tag / Full Room", ""]);
+  lines.push(["□ Face Page", ""]);
+
+  lines.push(["", ""]);
+  lines.push(["Physical Tasks", ""]);
+  lines.push(["□ Update Stage Door List", ""]);
+  lines.push(["□ Order Slider", ""]);
+
+  lines.push(["", ""]);
+  lines.push(["Status", "Preview only. No workbook changes made."]);
+
+  return lines;
+}
+
+function writeNewHirePreview_(sheet, lines) {
+  const startRow = CW.PREVIEW_START_ROW;
+  const startCol = CW.PREVIEW_START_COL;
+
+  sheet.getRange(startRow, startCol, 80, 4).clearContent().clearFormat();
+
+  const range = sheet.getRange(startRow, startCol, lines.length, 2);
+  range.setValues(lines);
+
+  range.setFontFamily("Arial").setFontSize(10);
+  sheet.getRange(startRow, startCol, 1, 2)
+    .setFontWeight("bold")
+    .setBackground("#c9daf8");
+
+  for (let i = 0; i < lines.length; i++) {
+    const label = lines[i][0];
+
+    if (!label) continue;
+
+    const row = startRow + i;
+
+    if (
+      label === "Workbook Actions" ||
+      label === "Slides / Assets" ||
+      label === "Things To Print" ||
+      label === "Physical Tasks" ||
+      label === "Status"
+    ) {
+      sheet.getRange(row, startCol, 1, 2)
+        .setFontWeight("bold")
+        .setBackground("#d9ead3");
+    }
+
+    if (label.startsWith("⚠")) {
+      sheet.getRange(row, startCol, 1, 2).setBackground("#fff2cc");
+    }
+
+    if (label.startsWith("—")) {
+      sheet.getRange(row, startCol, 1, 2).setFontColor("#666666");
+    }
+  }
+
+  sheet.autoResizeColumns(startCol, 2);
+}
+
+function findCurrentPrincipalByCharacter_(ss, character) {
+  const sheet = ss.getSheetByName("Cast List");
+  if (!sheet) return "";
+
+  const values = sheet.getDataRange().getDisplayValues();
+
+  for (let r = 1; r < values.length; r++) {
+    const role = clean_(values[r][0]);
+    const fullName = clean_(values[r][1]);
+    const fullCharacter = clean_(values[r][3]);
+
+    if (
+      fullCharacter.toLowerCase() === character.toLowerCase() ||
+      role.toLowerCase() === character.toLowerCase()
+    ) {
+      return fullName;
+    }
+  }
+
+  return "";
+}
+
+function findHeadshotForHire_(hire) {
+  if (hire.headshot) {
+    return {
+      found: true,
+      name: "Manual headshot provided",
+      fileId: extractDriveId_(hire.headshot)
+    };
+  }
+
+  const folderId = hire.companyArea === "Cast"
+    ? CW.CAST_HEADSHOT_FOLDER_ID
+    : CW.NON_CAST_HEADSHOT_FOLDER_ID;
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFiles();
+
+    const target = normalizeName_(hire.name);
+
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileName = normalizeName_(file.getName());
+
+      if (fileName.includes(target) || target.includes(fileName.replace(/\.(jpg|jpeg|png|webp|heic)$/i, ""))) {
+        return {
+          found: true,
+          name: file.getName(),
+          fileId: file.getId()
+        };
+      }
+    }
+  } catch (err) {
+    return {
+      found: false,
+      name: "",
+      fileId: "",
+      error: err.message
+    };
+  }
+
+  return {
+    found: false,
+    name: "",
+    fileId: ""
+  };
+}
+
+function logWizard_(action, result) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CW.LOG_SHEET);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CW.LOG_SHEET);
+    sheet.getRange(1, 1, 1, 4).setValues([["DATE", "USER", "ACTION", "RESULT"]]);
+    sheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+  }
+
+  sheet.appendRow([
+    new Date(),
+    Session.getActiveUser().getEmail(),
+    action,
+    result
+  ]);
+}
+
+function extractDriveId_(text) {
+  const value = String(text || "").trim();
+
+  const fileMatch = value.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  const idMatch = value.match(/[a-zA-Z0-9_-]{20,}/);
+  if (idMatch) return idMatch[0];
+
+  return value;
+}
+
+function normalizeName_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\.(jpg|jpeg|png|webp|heic)$/i, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function clean_(value) {
+  return String(value || "").trim();
+}

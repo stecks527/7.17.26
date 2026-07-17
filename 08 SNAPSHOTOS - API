@@ -1,0 +1,42 @@
+/*************************************************
+ * 08 SNAPSHOTOS - API
+ * Version: 0.2.0
+ * Status: STABLE / ENGINE STORAGE
+ *************************************************/
+
+const SNAPSHOT_OS_V2_ENGINE = {
+  propertyKey: "STAGEOS_ENGINE_WORKBOOK_ID",
+  workbookName: "StageOS Engine"
+};
+
+function SnapshotOSv2() {
+  return {
+    captureResolvedCastSnapshot: function () {
+      return snapshotOSv2CaptureResolvedCastSnapshot_();
+    },
+
+    captureShowStateSnapshotFromPrep: function (payload) {
+      return snapshotOSv2CaptureShowStateSnapshotFromPrep_(payload);
+    },
+
+    captureAssignmentSnapshotFromPrep: function (payload) {
+      return snapshotOSv2CaptureAssignmentSnapshotFromPrep(payload);
+    },
+
+    getLatestAssignmentSnapshot: function () {
+      return snapshotOSv2GetLatestAssignmentSnapshot();
+    },
+
+    getPreviousAssignmentSnapshot: function () {
+      return snapshotOSv2GetPreviousAssignmentSnapshot();
+    },
+
+    getLatestResolvedCastSnapshot: function () {
+      return snapshotOSv2GetLatestResolvedCastSnapshot();
+    },
+
+    getPreviousResolvedCastSnapshot: function () {
+      return snapshotOSv2GetPreviousResolvedCastSnapshot();
+    }
+  };
+}

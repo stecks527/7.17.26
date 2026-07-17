@@ -1,0 +1,87 @@
+/*************************************************
+ * 83 CAST LIST CACHE OS
+ * Version: 0.1.0
+ *
+ * Fast cached access to Cast List data.
+ *************************************************/
+
+function CastListCacheOS() {
+  return {
+    get: function () {
+      return castListCacheOSGet_();
+    },
+
+    refresh: function () {
+      return castListCacheOSRefresh_();
+    },
+
+    clear: function () {
+      PropertiesService.getDocumentProperties()
+        .deleteProperty("CAST_LIST_CACHE_OS_DATA");
+    }
+  };
+}
+
+function castListCacheOSGet_() {
+  const props = PropertiesService.getDocumentProperties();
+  const raw = props.getProperty("CAST_LIST_CACHE_OS_DATA");
+
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      // Fall through and rebuild.
+    }
+  }
+
+  return castListCacheOSRefresh_();
+}
+
+function castListCacheOSRefresh_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const castList = ss.getSheetByName("Cast List");
+
+  if (!castList) throw new Error('Could not find "Cast List" tab.');
+
+  const data = castList.getDataRange().getDisplayValues();
+
+  const actors = [];
+  const roles = [];
+  const principalByRole = {};
+  const rolesByKey = {};
+
+  for (let i = 2; i < data.length; i++) {
+    const role = clean_(data[i][0]);
+    const actor = clean_(data[i][1]);
+
+    if (actor) actors.push(actor);
+    if (role) roles.push(role);
+    if (role) rolesByKey[cleanKey_(role)] = role;
+    if (role && actor && !principalByRole[cleanKey_(role)]) {
+      principalByRole[cleanKey_(role)] = actor;
+    }
+  }
+
+  const cache = {
+    cachedAt: new Date().toISOString(),
+    actors: uniqueSorted_(actors),
+    roles: uniqueSorted_(roles),
+    principalByRole: principalByRole,
+    rolesByKey: rolesByKey
+  };
+
+  PropertiesService.getDocumentProperties()
+    .setProperty("CAST_LIST_CACHE_OS_DATA", JSON.stringify(cache));
+
+  return cache;
+}
+
+function refreshCastListCacheOS() {
+  const cache = CastListCacheOS().refresh();
+
+  SpreadsheetApp.getUi().alert(
+    "Cast List cache refreshed.\n\n" +
+    "Actors: " + cache.actors.length + "\n" +
+    "Roles: " + cache.roles.length
+  );
+}

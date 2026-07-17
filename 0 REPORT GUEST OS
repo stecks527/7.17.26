@@ -1,0 +1,104 @@
+/*************************************************
+ * 30 REPORT GUEST OS
+ * Version: 0.1.0
+ *************************************************/
+
+function ReportGuestOS() {
+  return {
+    build: reportGuestBuild_,
+    write: reportGuestWrite_
+  };
+}
+
+/*************************************************
+ * BUILD
+ *************************************************/
+
+function reportGuestBuild_(state) {
+
+  const guest = {
+
+    exists: false,
+
+    name: "",
+
+    number: "",
+
+    groupPhoto: "",
+
+    spotted: ""
+
+  };
+
+  const showStateGuest =
+    state.guest || {};
+
+  const name =
+    showStateGuest.name || "";
+
+  const number =
+    showStateGuest.number || "";
+
+  if (!name) {
+    return guest;
+  }
+
+  guest.exists = true;
+
+  guest.name = name;
+
+  guest.number = number;
+
+  const label =
+    number
+      ? " (Guest Speller #" + number + ")"
+      : "";
+
+  guest.groupPhoto =
+    "– Group Photo with " +
+    name +
+    label +
+    " attached to this report.";
+
+  guest.spotted =
+    "SPOTTED: " +
+    name +
+    label;
+
+  return guest;
+
+}
+
+/*************************************************
+ * WRITE
+ *************************************************/
+
+function reportGuestWrite_(guest) {
+
+  if (!guest.exists) return;
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName("Performance Report");
+
+  const layout =
+    ReportLayout();
+
+  report
+    .getRange(layout.guest.groupPhoto)
+    .setValue(guest.groupPhoto)
+    .setFontFamily("Arial")
+    .setFontSize(11);
+
+  report
+    .getRange(layout.guest.spotted)
+    .setValue(guest.spotted)
+    .setFontFamily("Arial")
+    .setFontSize(11);
+
+  Logger.log(
+    "ReportGuestOS wrote guest speller."
+  );
+
+}

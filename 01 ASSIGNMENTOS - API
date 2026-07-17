@@ -1,0 +1,661 @@
+/*************************************************
+ * 01 ASSIGNMENTOS - API
+ * Version: 4.0.0
+ * Status: ACTIVE
+ *
+ * Canonical public API for performance staffing.
+ *************************************************/
+
+function AssignmentOS() {
+  return {
+    /*************************************************
+     * DATA
+     *************************************************/
+
+    getTracks: function () {
+      return [
+        {
+          id: "calling",
+          label: "Calling SM",
+          departmentGroup: "stageManagement",
+          contactDepartment: "STAGE MANAGEMENT"
+        },
+        {
+          id: "deck",
+          label: "Deck SM",
+          departmentGroup: "stageManagement",
+          contactDepartment: "STAGE MANAGEMENT"
+        },
+        {
+          id: "conductor",
+          label: "Conductor",
+          departmentGroup: "music",
+          contactDepartment: "MUSIC"
+        },
+        {
+          id: "audio",
+          label: "A1 / Mixer",
+          departmentGroup: "audio",
+          contactDepartment: "SOUND"
+        }
+      ];
+    },
+
+    getGroups: function () {
+      return [
+        {
+          id: "stageManagement",
+          label: "Stage Management",
+          trackIds: [
+            "calling",
+            "deck"
+          ],
+          showOfficeShow: true,
+          showTraining: true
+        },
+        {
+          id: "music",
+          label: "Music Team",
+          trackIds: [
+            "conductor"
+          ],
+          showTraining: false
+        },
+        {
+          id: "audio",
+          label: "Audio",
+          trackIds: [
+            "audio"
+          ],
+          showTraining: true
+        }
+      ];
+    },
+
+    getPeopleByTrack: function () {
+      return assignmentOSGetPeopleByTrack_();
+    },
+
+    getAllDepartments: function () {
+      return assignmentOSGetAllDepartments_();
+    },
+
+    /*************************************************
+     * CACHE LIFECYCLE
+     *************************************************/
+
+    getCached: function () {
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        return AssignmentCacheOS().get();
+      }
+
+      return assignmentOSBuildUncachedState_();
+    },
+
+    refresh: function () {
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        return AssignmentCacheOS().refresh();
+      }
+
+      return assignmentOSBuildUncachedState_();
+    },
+
+    clearCache: function () {
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        AssignmentCacheOS().clear();
+      }
+
+      return true;
+    },
+
+    /*************************************************
+     * HEALTH
+     *************************************************/
+
+    status: function () {
+      return assignmentOSStatus_();
+    },
+
+    test: function () {
+      return testAssignmentOSPlatformAPI();
+    }
+  };
+}
+
+
+/*************************************************
+ * UNCACHED STATE FALLBACK
+ *************************************************/
+
+function assignmentOSBuildUncachedState_() {
+  const tracks =
+    AssignmentOS().getTracks();
+
+  const groups =
+    AssignmentOS().getGroups();
+
+  const peopleByTrack =
+    AssignmentOS().getPeopleByTrack();
+
+  const people =
+    uniqueSorted_(
+      Object.keys(
+        peopleByTrack
+      )
+        .flatMap(function (trackId) {
+          return (
+            peopleByTrack[trackId] ||
+            []
+          );
+        })
+        .map(function (person) {
+          return (
+            person.name ||
+            person
+          );
+        })
+    );
+
+  return {
+    cachedAt: "",
+    source: "uncached",
+    groups: groups,
+    tracks: tracks,
+    peopleByTrack: peopleByTrack,
+    people: people
+  };
+}
+
+
+/*************************************************
+ * STATUS
+ *************************************************/
+
+function assignmentOSStatus_() {
+  const cached =
+    AssignmentOS().getCached() ||
+    {};
+
+  const tracks =
+    cached.tracks ||
+    AssignmentOS().getTracks();
+
+  const groups =
+    cached.groups ||
+    AssignmentOS().getGroups();
+
+  const peopleByTrack =
+    cached.peopleByTrack ||
+    {};
+
+  const missingTracks =
+    tracks
+      .filter(function (track) {
+        return !Array.isArray(
+          peopleByTrack[track.id]
+        );
+      })
+      .map(function (track) {
+        return track.id;
+      });
+
+  return {
+    system: "AssignmentOS",
+    version: "4.0.0",
+    available: true,
+
+    cacheAvailable:
+      typeof AssignmentCacheOS ===
+      "function",
+
+    cachedAt:
+      cached.cachedAt || "",
+
+    groups:
+      groups.length,
+
+    tracks:
+      tracks.length,
+
+    people:
+      Array.isArray(
+        cached.people
+      )
+        ? cached.people.length
+        : 0,
+
+    peopleByTrack: {
+      calling:
+        (
+          peopleByTrack.calling ||
+          []
+        ).length,
+
+      deck:
+        (
+          peopleByTrack.deck ||
+          []
+        ).length,
+
+      conductor:
+        (
+          peopleByTrack.conductor ||
+          []
+        ).length,
+
+      audio:
+        (
+          peopleByTrack.audio ||
+          []
+        ).length
+    },
+
+    missingTracks:
+      missingTracks,
+
+    healthy:
+      tracks.length === 4 &&
+      missingTracks.length === 0
+  };
+}
+
+
+/*************************************************
+ * PLATFORM API TEST
+ *************************************************/
+
+function testAssignmentOSPlatformAPI() {
+  const os =
+    AssignmentOS();
+
+  const refreshed =
+    os.refresh();
+
+  const status =
+    os.status();
+
+  const requiredMethods = [
+    "getTracks",
+    "getGroups",
+    "getPeopleByTrack",
+    "getAllDepartments",
+    "getCached",
+    "refresh",
+    "clearCache",
+    "status",
+    "test"
+  ];
+
+  const missingMethods =
+    requiredMethods.filter(
+      function (methodName) {
+        return (
+          typeof os[methodName] !==
+          "function"
+        );
+      }
+    );
+
+  const result = {
+    healthy:
+      status.healthy &&
+      missingMethods.length === 0,
+
+    methodsChecked:
+      requiredMethods.length,
+
+    missingMethods:
+      missingMethods,
+
+    tracks:
+      status.tracks,
+
+    groups:
+      status.groups,
+
+    people:
+      status.people,
+
+    calling:
+      status.peopleByTrack.calling,
+
+    deck:
+      status.peopleByTrack.deck,
+
+    conductor:
+      status.peopleByTrack.conductor,
+
+    audio:
+      status.peopleByTrack.audio,
+
+    cacheRefreshed:
+      Boolean(refreshed),
+
+    cachedAt:
+      status.cachedAt
+  };
+
+  Logger.log(
+    "ASSIGNMENTOS PLATFORM API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "AssignmentOS platform API test " +
+      (
+        result.healthy
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Methods checked: " +
+      result.methodsChecked +
+      "\n" +
+      "Missing methods: " +
+      result.missingMethods.length +
+      "\n" +
+      "Tracks: " +
+      result.tracks +
+      "\n" +
+      "Groups: " +
+      result.groups +
+      "\n" +
+      "People: " +
+      result.people +
+      "\n\n" +
+      "Calling: " +
+      result.calling +
+      "\n" +
+      "Deck: " +
+      result.deck +
+      "\n" +
+      "Conductor: " +
+      result.conductor +
+      "\n" +
+      "Audio: " +
+      result.audio
+    );
+
+  return result;
+}
+
+/*************************************************
+ * CONTACT SHEET READER
+ *************************************************/
+
+function assignmentOSGetPeopleByTrack_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const contact = ss.getSheetByName("Contact Sheet");
+  if (!contact) return {};
+
+  const tracks = AssignmentOS().getTracks();
+  const peopleByDept = assignmentOSReadContactSheetDepartments_(contact);
+  const output = {};
+
+  tracks.forEach(function (track) {
+    output[track.id] = peopleByDept[track.contactDepartment] || [];
+  });
+
+  // Conductor is special:
+  // Music department = only Music Director titles.
+  // Band department = only Keys 1 titles.
+  output.conductor = assignmentOSBuildConductorPeople_(peopleByDept);
+
+  if (output.calling && !output.calling.some(p => p.name === "Zach De Brino")) {
+    output.calling.push({
+      name: "Zach De Brino",
+      pronouns: "he/him",
+      title: "Stage Management PA / Sub Stage Manager"
+    });
+  }
+
+  if (output.deck && !output.deck.some(p => p.name === "Zach De Brino")) {
+    output.deck.push({
+      name: "Zach De Brino",
+      pronouns: "he/him",
+      title: "Stage Management PA / Sub Stage Manager"
+    });
+  }
+
+  return output;
+}
+
+function assignmentOSBuildConductorPeople_(peopleByDept) {
+  const music = (peopleByDept["MUSIC"] || []).filter(function (person) {
+    return String(person.title || "")
+      .toLowerCase()
+      .includes("music director");
+  });
+
+  const band = (peopleByDept["BAND"] || []).filter(function (person) {
+    return String(person.title || "")
+      .toLowerCase()
+      .includes("keys 1");
+  });
+
+  const combined = music.concat(band);
+  const seen = {};
+
+  return combined.filter(function (person) {
+    const name = String(person.name || "").trim();
+    const key = name.toLowerCase();
+
+    if (!name || seen[key]) return false;
+
+    seen[key] = true;
+    return true;
+  });
+}
+
+
+function assignmentOSGetAllDepartments_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const contact = ss.getSheetByName("Contact Sheet");
+  if (!contact) return {};
+
+  return assignmentOSReadContactSheetDepartments_(contact);
+}
+
+function assignmentOSReadContactSheetDepartments_(sheet) {
+  const values = sheet.getDataRange().getDisplayValues();
+  const departments = {};
+  let currentDepartment = "";
+
+  for (let r = 0; r < values.length; r++) {
+    const row = values[r];
+    const possibleHeader = assignmentOSDetectDepartmentHeader_(row);
+
+    if (possibleHeader) {
+      currentDepartment = possibleHeader;
+      if (!departments[currentDepartment]) departments[currentDepartment] = [];
+      continue;
+    }
+
+    if (!currentDepartment) continue;
+
+    const name = assignmentOSClean_(row[0]);
+    const pronouns = assignmentOSClean_(row[1]);
+    const title = assignmentOSClean_(row[2]);
+
+    if (!name) continue;
+    if (assignmentOSLooksLikeHeaderText_(name)) continue;
+    if (assignmentOSLooksLikeNonPersonRow_(name, title)) continue;
+
+    departments[currentDepartment].push({
+      name: name,
+      pronouns: pronouns,
+      title: title
+    });
+  }
+
+  Object.keys(departments).forEach(function (dept) {
+    departments[dept] = departments[dept].filter(function (person) {
+      return person.name && !assignmentOSLooksLikeHeaderText_(person.name);
+    });
+  });
+
+  return departments;
+}
+
+/*************************************************
+ * HEADER DETECTION
+ *************************************************/
+
+function assignmentOSDetectDepartmentHeader_(row) {
+  const cells = row.map(assignmentOSClean_).filter(Boolean);
+
+  // Real department headers are merged/header rows with only one meaningful cell.
+  // Person rows have name/pronouns/title, so they should NOT become headers.
+  if (cells.length !== 1) return "";
+
+  const raw = cells[0];
+  const normalized = assignmentOSNormalizeHeader_(raw);
+
+  if (normalized.includes("STAGE MANAGEMENT")) return "STAGE MANAGEMENT";
+  if (normalized.includes("CREATIVE TEAM")) return "CREATIVE TEAM";
+  if (normalized.includes("GENERAL MANAGEMENT")) return "GENERAL MANAGEMENT";
+  if (normalized.includes("COMPANY MANAGEMENT")) return "COMPANY MANAGEMENT";
+  if (normalized.includes("PRODUCTION MANAGEMENT")) return "PRODUCTION MANAGEMENT";
+
+  const map = {
+    "PRODUCERS": "PRODUCERS",
+    "MANAGEMENT": "MANAGEMENT",
+    "MUSIC": "MUSIC",
+    "CAST": "CAST",
+    "FULL CAST": "CAST",
+    "BAND": "BAND",
+    "CREW": "CREW",
+    "CARPENTRY": "CARPENTRY",
+    "PROPS": "PROPS",
+    "ELECTRICS": "ELECTRICS",
+    "LIGHTING": "ELECTRICS",
+    "SOUND": "SOUND",
+    "WARDROBE": "WARDROBE",
+    "WIGS": "WIGS",
+    "HAIR": "WIGS",
+    "SCENIC": "SCENIC"
+  };
+
+  return map[normalized] || "";
+}
+
+function assignmentOSNormalizeHeader_(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/&/g, " ")
+    .replace(/\//g, " ")
+    .replace(/-/g, " ")
+    .replace(/[^A-Z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function assignmentOSLooksLikeHeaderText_(value) {
+  const upper = String(value || "").toUpperCase().trim();
+
+  return (
+    upper === "CONTACT SHEET" ||
+    upper === "PRODUCERS" ||
+    upper === "MANAGEMENT" ||
+    upper === "GENERAL MANAGEMENT" ||
+    upper === "COMPANY MANAGEMENT" ||
+    upper === "PRODUCTION MANAGEMENT" ||
+    upper === "STAGE MANAGEMENT" ||
+    upper === "CREATIVE TEAM" ||
+    upper === "CREATIVE TEAM / DESIGNERS" ||
+    upper === "MUSIC" ||
+    upper === "CAST" ||
+    upper === "FULL CAST" ||
+    upper === "BAND" ||
+    upper === "CREW" ||
+    upper === "CARPENTRY" ||
+    upper === "PROPS" ||
+    upper === "ELECTRICS" ||
+    upper === "LIGHTING" ||
+    upper === "SOUND" ||
+    upper === "WARDROBE" ||
+    upper === "WIGS" ||
+    upper === "HAIR" ||
+    upper === "SCENIC"
+  );
+}
+
+function assignmentOSLooksLikeNonPersonRow_(name, title) {
+  const n = assignmentOSClean_(name).toUpperCase();
+  const t = assignmentOSClean_(title).toUpperCase();
+
+  if (!n) return true;
+
+  return (
+    n.includes("@") ||
+    n.includes("321 THEATRICAL") ||
+    n === "STEWART PRODUCTIONS" ||
+    n === "FULL CAST" ||
+    n === "CAST" ||
+    n === "BAND" ||
+    n === "CREW" ||
+    t === "TITLE"
+  );
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function assignmentOSClean_(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*************************************************
+ * NAME NORMALIZATION
+ *************************************************/
+
+function assignmentOSNormalizeName_(name) {
+  const aliases = {
+    "Liz Doran": "Elizabeth Doran",
+    "Elizabeth Doran": "Elizabeth Doran",
+
+    "Beth Weinstein Stewart": "Bethany Weinstein Stewart",
+    "Bethany Weinstein Stewart": "Bethany Weinstein Stewart"
+  };
+
+  const clean = assignmentOSClean_(name);
+  return aliases[clean] || clean;
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testAssignmentOS() {
+  Logger.log(JSON.stringify(AssignmentOS().getTracks(), null, 2));
+}
+
+function testAssignmentOSContactPeople() {
+  Logger.log(JSON.stringify(AssignmentOS().getPeopleByTrack(), null, 2));
+}
+
+function testAssignmentOSAllDepartments() {
+  Logger.log(JSON.stringify(AssignmentOS().getAllDepartments(), null, 2));
+}

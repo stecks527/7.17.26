@@ -1,0 +1,75 @@
+/*************************************************
+ * 13 INOUT INTELLIGENCE TESTS
+ *************************************************/
+
+function testPlannedOutsForToday() {
+  const outs = InOutIntelligenceOS().plannedOutsForDate(new Date());
+  Logger.log(JSON.stringify(outs, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Planned outs found: " + outs.length + "\n\n" +
+    outs.map(o =>
+      o.actor + " OUT" +
+      (o.role ? " as " + o.role : "") +
+      (o.reason ? " — " + o.reason : "") +
+      (o.tempReplacement ? "\nTemp Replacement: " + o.tempReplacement : "")
+    ).join("\n\n")
+  );
+}
+
+function testRoleForActor() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt("Actor name?");
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  const role = InOutIntelligenceOS().roleForActor(res.getResponseText());
+
+  ui.alert("Role: " + (role || "Not found"));
+}
+
+function testCoverOptionsForRole() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt("Role?", "Example: Barfée", ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  const role = res.getResponseText().trim();
+  const options = InOutIntelligenceOS().coverOptionsForRole(role);
+
+  ui.alert(
+    "Cover options for " + role + ":\n\n" +
+    (options.length ? options.join("\n") : "No options found.")
+  );
+}
+
+function testRolesForActor() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt("Actor?", "Example: Brandon L. Armstrong", ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  const actor = res.getResponseText().trim();
+  const roles = InOutIntelligenceOS().rolesForActor(actor);
+
+  ui.alert(
+    "Roles for " + actor + ":\n\n" +
+    (roles.length ? roles.join("\n") : "No roles found.")
+  );
+}
+
+function testPlannedOutRoutingForToday() {
+  const outs = InOutIntelligenceOS().plannedOutsForDate(new Date());
+
+  SpreadsheetApp.getUi().alert(
+    outs.map(o =>
+      o.actor +
+      " | " + o.role +
+      " | " + o.reason +
+      "\nTemp Replacement: " + (o.tempReplacement || "None") +
+      "\nIN/OUT Sheet: " + (o.writeToInOutSheet ? "YES" : "NO") +
+      "\nReports/Trackers: " + (o.writeToReportsAndTrackers ? "YES" : "YES")
+    ).join("\n\n")
+  );
+}
+
+function testPrepPlannedOutsForInOutToday() {
+  prepPlannedOutsForInOut_(new Date());
+}

@@ -1,0 +1,274 @@
+/*************************************************
+ * 20 GUEST SPELLER
+ * Self-contained StageOS Guest Speller module
+ *************************************************/
+
+const STAGEOS_GUEST = {
+  TEMPLATE_ID: "1fgFOqf2RhMXvu_Q4z0Hh2T6NLsdbfNENdh361kJ9jzI",
+  PARENT_FOLDER_ID: "1Gzr4jq2gM4B2w18KjtGLvPCQdq3xVevJ"
+};
+
+function getStageOSGuestSpellerForPerformance(dateText, performanceNumber, performanceText) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const calendar = ss.getSheetByName("Expanded Calendar");
+  if (!calendar) return blankStageOSGuest_();
+
+  const wantedDateKey = stageOSGuestDateKey_(dateText);
+  const values = calendar.getDataRange().getDisplayValues();
+
+  let currentDateKey = "";
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+
+    if (row[0]) currentDateKey = stageOSGuestDateKey_(row[0]);
+
+    const rowPerf = stageOSGuestPerformanceNumber_(row[1]);
+    const guestName = stageOSGuestClean_(row[3]);
+
+    if (
+      currentDateKey === wantedDateKey &&
+      rowPerf === String(performanceNumber) &&
+      guestName
+    ) {
+      const dateTimeText = buildStageOSGuestDateTimeText_(dateText, performanceText);
+      const todayOrTonight = isStageOSEveningPerformance_(performanceText) ? "tonight" : "today";
+
+      return {
+        name: guestName,
+        guestSpellerName: guestName,
+        dateTimeText,
+        guestDateTimeText: dateTimeText,
+        note:
+          "- Celeb guest speller " +
+          todayOrTonight +
+          "!! Info will be on the callboard for those that wish to know in advance. There will be a group photo post show for all those that wish to stay."
+      };
+    }
+  }
+
+  return blankStageOSGuest_();
+}
+
+function getStageOSGuestSpellerToday() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inOut = ss.getSheetByName("IN/OUT");
+  if (!inOut) return blankStageOSGuest_();
+
+  const dateText = inOut.getRange("A3").getDisplayValue();
+  const performanceText = inOut.getRange("A4").getDisplayValue();
+  const performanceNumber = stageOSGuestPerformanceNumber_(performanceText);
+
+  return getStageOSGuestSpellerForPerformance(dateText, performanceNumber, performanceText);
+}
+
+// Backwards-compatible wrapper for older code.
+function getGuestSpellerForPerformance_(dateText, performanceNumber, performanceText) {
+  return getStageOSGuestSpellerForPerformance(dateText, performanceNumber, performanceText);
+}
+
+function guestSpellerButton() {
+  const guest = getStageOSGuestSpellerToday();
+
+  if (!guest.name) {
+    SpreadsheetApp.getUi().alert("No guest speller found for the current IN/OUT performance.");
+    return;
+  }
+
+  showGuestSpellerDialog({
+    guestSpellerName: guest.name,
+    guestDateTimeText: guest.dateTimeText
+  });
+}
+
+function showGuestSpellerDialog(data) {
+  data = data || {};
+
+  const guestName = data.guestSpellerName || data.name || "";
+  const dateTimeText = data.guestDateTimeText || data.dateTimeText || "";
+
+  if (!guestName) {
+    SpreadsheetApp.getUi().alert("No guest speller found.");
+    return;
+  }
+
+  const cleanData = {
+    guestSpellerName: guestName,
+    guestDateTimeText: dateTimeText
+  };
+
+  const template = HtmlService.createTemplateFromFile("25a GuestSpellerDialog");
+  template.dataJson = JSON.stringify(cleanData);
+  template.guestSpellerName = guestName;
+  template.guestDateTimeText = dateTimeText;
+
+  const html = template.evaluate()
+    .setWidth(460)
+    .setHeight(380);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Guest Speller");
+}
+
+function createGuestSpellerPacketFromPrep(data) {
+  const guestSpellerName = data.guestSpellerName || data.name || "";
+  const dateTimeText = data.guestDateTimeText || data.dateTimeText || "";
+
+  if (!guestSpellerName) throw new Error("Missing guest speller name.");
+
+  const parentFolder = DriveApp.getFolderById(STAGEOS_GUEST.PARENT_FOLDER_ID);
+  const guestFolder = stageOSGuestGetOrCreateSubfolder_(parentFolder, guestSpellerName);
+
+  const templateFile = DriveApp.getFileById(STAGEOS_GUEST.TEMPLATE_ID);
+  const cleanDateTime = String(dateTimeText || "").replace(/:$/, "");
+  const newFileName = guestSpellerName + (cleanDateTime ? " - " + cleanDateTime : "");
+
+  const copiedFile = templateFile.makeCopy(newFileName, guestFolder);
+  const presentation = SlidesApp.openById(copiedFile.getId());
+
+  replaceTextEverywhereInPresentation_(presentation, "{{DATE_TIME}}", dateTimeText);
+  replaceTextEverywhereInPresentation_(presentation, "{{GUEST_SPELLER}}", guestSpellerName);
+
+  presentation.saveAndClose();
+
+  const pdfBlob = DriveApp.getFileById(copiedFile.getId())
+    .getAs(MimeType.PDF)
+    .setName(newFileName + ".pdf");
+
+  const pdfFile = guestFolder.createFile(pdfBlob);
+
+  return {
+    folderUrl: guestFolder.getUrl(),
+    slideUrl: copiedFile.getUrl(),
+    pdfUrl: pdfFile.getUrl(),
+    pdfDownloadUrl: "https://drive.google.com/uc?export=download&id=" + pdfFile.getId()
+  };
+}
+
+function replaceTextEverywhereInPresentation_(presentation, searchText, replacementText) {
+  presentation.replaceAllText(searchText, replacementText || "");
+
+  presentation.getSlides().forEach(slide => {
+    slide.getPageElements().forEach(element => {
+      try {
+        if (element.getPageElementType() === SlidesApp.PageElementType.SHAPE) {
+          element.asShape().getText().replaceAllText(searchText, replacementText || "");
+        }
+
+        if (element.getPageElementType() === SlidesApp.PageElementType.TABLE) {
+          const table = element.asTable();
+
+          for (let r = 0; r < table.getNumRows(); r++) {
+            for (let c = 0; c < table.getNumColumns(); c++) {
+              table.getCell(r, c).getText().replaceAllText(searchText, replacementText || "");
+            }
+          }
+        }
+      } catch (err) {}
+    });
+  });
+}
+
+/*************************************************
+ * GUEST SPELLER HELPERS
+ *************************************************/
+
+function stageOSGuestDateKey_(value) {
+  const text = stageOSGuestClean_(value);
+  if (!text) return "";
+
+  const date = new Date(text);
+
+  if (!isNaN(date.getTime()) && /\b20\d{2}\b/.test(text)) {
+    return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+
+  const inferredYear = stageOSGuestInferYear_(text);
+  const dateWithYear = new Date(text + ", " + inferredYear);
+
+  if (!isNaN(dateWithYear.getTime())) {
+    return Utilities.formatDate(dateWithYear, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+
+  return text.toUpperCase().replace(/,/g, "").replace(/\s+/g, " ").trim();
+}
+
+function stageOSGuestInferYear_(dateText) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const normalizedDate = stageOSGuestNormalize_(dateText);
+
+  const sheets = ss.getSheets().filter(sheet =>
+    sheet.getName().toLowerCase().includes("weekly schedule")
+  );
+
+  for (const sheet of sheets) {
+    const values = sheet.getDataRange().getDisplayValues();
+
+    for (let r = 0; r < values.length; r++) {
+      const rowText = values[r].slice(0, 5).join(" ");
+      const normalizedRow = stageOSGuestNormalize_(rowText);
+
+      if (normalizedRow.includes(normalizedDate)) {
+        const yearFromRow = rowText.match(/\b(20\d{2})\b/);
+        if (yearFromRow) return Number(yearFromRow[1]);
+
+        const yearFromName = sheet.getName().match(/\b\d{1,2}\.\d{1,2}\.(\d{2})\b/);
+        if (yearFromName) return 2000 + Number(yearFromName[1]);
+      }
+    }
+  }
+
+  return 2026;
+}
+
+function buildStageOSGuestDateTimeText_(dateText, performanceText) {
+  const keyDate = stageOSGuestDateKey_(dateText);
+  const date = new Date(keyDate + "T12:00:00");
+
+  const monthDay = !isNaN(date.getTime())
+    ? Utilities.formatDate(date, Session.getScriptTimeZone(), "MMMM d").toUpperCase()
+    : String(dateText || "").toUpperCase();
+
+  const timeMatch = String(performanceText || "").match(/(\d{1,2}:\d{2})\s*(AM|PM)?/i);
+  const timeText = timeMatch
+    ? (timeMatch[1] + (timeMatch[2] || "PM")).replace(/\s+/g, "").toUpperCase()
+    : "";
+
+  return timeText ? monthDay + ", " + timeText + ":" : monthDay + ":";
+}
+
+function stageOSGuestPerformanceNumber_(text) {
+  const match = String(text || "").match(/PERFORMANCE\s*#?\s*(\d+)/i);
+  return match ? match[1] : "";
+}
+
+function isStageOSEveningPerformance_(performanceText) {
+  const text = String(performanceText || "").toUpperCase();
+  return text.includes("EVE") || text.includes("7:") || text.includes("8:");
+}
+
+function stageOSGuestGetOrCreateSubfolder_(parentFolder, folderName) {
+  const existing = parentFolder.getFoldersByName(folderName);
+  return existing.hasNext() ? existing.next() : parentFolder.createFolder(folderName);
+}
+
+function blankStageOSGuest_() {
+  return {
+    name: "",
+    guestSpellerName: "",
+    dateTimeText: "",
+    guestDateTimeText: "",
+    note: ""
+  };
+}
+
+function stageOSGuestClean_(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function stageOSGuestNormalize_(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/,/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

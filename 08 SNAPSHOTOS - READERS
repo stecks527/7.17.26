@@ -1,0 +1,113 @@
+/*************************************************
+ * 08 SNAPSHOTOS - READERS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Responsibilities:
+ * - Read latest SnapshotOS groups from Engine storage.
+ * - Read previous SnapshotOS groups from Engine storage.
+ *
+ * Shared SnapshotOS helpers live only in:
+ * 09f SNAPSHOTOS - HELPERS.gs
+ *************************************************/
+
+function snapshotOSv2GetLatestAssignmentSnapshot() {
+  return snapshotOSv2ReadLatestSnapshotGroup_("Assignment Snapshots");
+}
+
+function snapshotOSv2GetPreviousAssignmentSnapshot() {
+  return snapshotOSv2ReadPreviousSnapshotGroup_("Assignment Snapshots");
+}
+
+function snapshotOSv2GetLatestResolvedCastSnapshot() {
+  return snapshotOSv2ReadLatestSnapshotGroup_("Resolved Cast Snapshots");
+}
+
+function snapshotOSv2GetPreviousResolvedCastSnapshot() {
+  return snapshotOSv2ReadPreviousSnapshotGroup_("Resolved Cast Snapshots");
+}
+
+function snapshotOSv2ReadLatestSnapshotGroup_(sheetName) {
+  const workbook = snapshotOSv2GetStorageWorkbook();
+  const sheet = workbook.getSheetByName(sheetName);
+
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const values = sheet.getDataRange().getValues().slice(1);
+  if (!values.length) return [];
+
+  const latestSnapshotId = values[values.length - 1][0];
+  if (!latestSnapshotId) return [];
+
+  return values.filter(function (row) {
+    return row[0] === latestSnapshotId;
+  });
+}
+
+function snapshotOSv2ReadPreviousSnapshotGroup_(sheetName) {
+  const workbook = snapshotOSv2GetStorageWorkbook();
+  const sheet = workbook.getSheetByName(sheetName);
+
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const values = sheet.getDataRange().getValues().slice(1);
+  const snapshotIds = [];
+
+  values.forEach(function (row) {
+    const snapshotId = row[0];
+
+    if (snapshotId && snapshotIds.indexOf(snapshotId) === -1) {
+      snapshotIds.push(snapshotId);
+    }
+  });
+
+  if (snapshotIds.length < 2) return [];
+
+  const previousSnapshotId = snapshotIds[snapshotIds.length - 2];
+
+  return values.filter(function (row) {
+    return row[0] === previousSnapshotId;
+  });
+}
+
+function testSnapshotReaders() {
+  const assignments = snapshotOSv2GetLatestAssignmentSnapshot();
+  const cast = snapshotOSv2GetLatestResolvedCastSnapshot();
+
+  Logger.log("LATEST ASSIGNMENT SNAPSHOT");
+  Logger.log(JSON.stringify(assignments, null, 2));
+  Logger.log("LATEST RESOLVED CAST SNAPSHOT");
+  Logger.log(JSON.stringify(cast, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Snapshot readers online.\n\n" +
+    "Assignments: " + assignments.length + "\n" +
+    "Resolved Cast: " + cast.length
+  );
+
+  return {
+    assignments: assignments,
+    cast: cast
+  };
+}
+
+function testPreviousSnapshotReaders() {
+  const assignments = snapshotOSv2GetPreviousAssignmentSnapshot();
+  const cast = snapshotOSv2GetPreviousResolvedCastSnapshot();
+
+  Logger.log("PREVIOUS ASSIGNMENT SNAPSHOT");
+  Logger.log(JSON.stringify(assignments, null, 2));
+  Logger.log("PREVIOUS RESOLVED CAST SNAPSHOT");
+  Logger.log(JSON.stringify(cast, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Previous snapshot readers online.\n\n" +
+    "Assignments: " + assignments.length + "\n" +
+    "Resolved Cast: " + cast.length
+  );
+
+  return {
+    assignments: assignments,
+    cast: cast
+  };
+}

@@ -1,0 +1,237 @@
+/*************************************************
+ * 82 CAST RESOLVER API
+ * Version: 0.1.0
+ * Status: PUBLIC API
+ *
+ * Stable helpers for downstream systems.
+ *
+ * Future consumers:
+ * - SnapshotOS
+ * - IntelligenceOS
+ * - Home
+ * - FOH Board
+ * - InsertOS
+ * - Performance Report
+ *************************************************/
+
+/*************************************************
+ * FULL COMPANY
+ *************************************************/
+
+function getResolvedCompany() {
+  return CastResolverOS().resolveCurrentPerformance().company;
+}
+
+function getResolvedPerformanceCastObject() {
+  return CastResolverOS().resolveCurrentPerformance();
+}
+
+/*************************************************
+ * ROLE LOOKUPS
+ *************************************************/
+
+function getResolvedActorForRole(roleName) {
+  const company = getResolvedCompany();
+  const target = castResolverOSNormalize_(roleName);
+
+  const match = company.find(row =>
+    castResolverOSNormalize_(row.role) === target
+  );
+
+  return match ? match.resolvedActor : "";
+}
+
+function getResolvedCompanyByRole() {
+  const company = getResolvedCompany();
+  const output = {};
+
+  company.forEach(row => {
+    output[row.role] = row.resolvedActor;
+  });
+
+  return output;
+}
+
+/*************************************************
+ * ACTOR / COVERAGE LOOKUPS
+ *************************************************/
+
+function getResolvedRolesForActor(actorName) {
+  const company = getResolvedCompany();
+  const target = castResolverOSNormalize_(actorName);
+
+  return company
+    .filter(row =>
+      castResolverOSNormalize_(row.resolvedActor) === target
+    )
+    .map(row => row.role);
+}
+
+function getResolvedCoveredRoles() {
+  return getResolvedCompany().filter(row => row.status === "COVERED");
+}
+
+function getResolvedDefaultRoles() {
+  return getResolvedCompany().filter(row => row.status === "DEFAULT");
+}
+
+function getResolvedUncoveredRoles() {
+  return getResolvedCompany().filter(row => row.status === "OUT_UNCOVERED");
+}
+
+/*************************************************
+ * SNAPSHOT-FRIENDLY OUTPUT
+ *************************************************/
+
+function getResolvedCastSnapshotPayload() {
+  const resolved = CastResolverOS().resolveCurrentPerformance();
+
+  return {
+    system: "CastResolverOS",
+    version: "0.1.0",
+    capturedAt: new Date(),
+    performanceDate: resolved.performanceDate,
+    performanceLabel: resolved.performanceLabel,
+    company: resolved.company.map(row => ({
+      role: row.role,
+      actor: row.resolvedActor,
+      defaultActor: row.defaultActor,
+      status: row.status,
+      outActor: row.outActor,
+      inActor: row.inActor,
+      reason: row.reason
+    }))
+  };
+}
+
+/*************************************************
+ * API TESTERS
+ *************************************************/
+
+function testCastResolverOS_API() {
+  const payload = getResolvedCastSnapshotPayload();
+
+  Logger.log(JSON.stringify(payload, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "CastResolverOS API test complete.\n\nResolved roles: " +
+    payload.company.length +
+    "\nCheck Logs."
+  );
+}
+
+function testResolvedActorForRole() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt("Role Lookup", "Enter a role name:", ui.ButtonSet.OK_CANCEL);
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const role = response.getResponseText();
+  const actor = getResolvedActorForRole(role);
+
+  ui.alert(actor || "No resolved actor found for: " + role);
+}
+
+/*************************************************
+ * 08d CAST RESOLVER CENTRAL API
+ * Version: 0.3.0
+ * Status: STABLE PUBLIC API
+ *
+ * This is the preferred API for all future modules.
+ *************************************************/
+
+function getCastResolverState() {
+  return CastResolverOS().resolveCurrentPerformance();
+}
+
+function getCastResolverCompany() {
+  return getCastResolverState().company || [];
+}
+
+function getCastResolverRole(roleName) {
+  const target = castResolverOSNormalize_(roleName);
+
+  return getCastResolverCompany().find(row =>
+    castResolverOSNormalize_(row.role) === target
+  ) || null;
+}
+
+function getCastResolverActorForRole(roleName) {
+  const role = getCastResolverRole(roleName);
+  return role ? role.resolvedActor : "";
+}
+
+function getCastResolverActorStatus(actorName) {
+  const target = castResolverOSNormalize_(actorName);
+  const company = getCastResolverCompany();
+
+  const defaultRows = company.filter(row =>
+    castResolverOSNormalize_(row.defaultActor) === target
+  );
+
+  const resolvedRows = company.filter(row =>
+    castResolverOSNormalize_(row.resolvedActor) === target
+  );
+
+  const outRows = company.filter(row =>
+    castResolverOSNormalize_(row.outActor) === target
+  );
+
+  const inRows = company.filter(row =>
+    castResolverOSNormalize_(row.inActor) === target
+  );
+
+  return {
+    actor: actorName,
+    isDefaultCompany: defaultRows.length > 0,
+    isResolvedOnStage: resolvedRows.length > 0,
+    isOut: outRows.length > 0,
+    isIn: inRows.length > 0,
+    defaultRoles: defaultRows.map(row => row.role),
+    resolvedRoles: resolvedRows.map(row => row.role),
+    outRoles: outRows.map(row => row.role),
+    inRoles: inRows.map(row => row.role)
+  };
+}
+
+function getCastResolverChanges() {
+  return getCastResolverCompany().filter(row => row.status !== "DEFAULT");
+}
+
+function getCastResolverSummary() {
+  const state = getCastResolverState();
+  const company = state.company || [];
+
+  return {
+    system: "CastResolverOS",
+    version: state.version,
+    performanceDate: state.performanceDate,
+    performanceLabel: state.performanceLabel,
+    totalRoles: company.length,
+    defaultCount: company.filter(row => row.status === "DEFAULT").length,
+    coveredCount: company.filter(row => row.status === "COVERED").length,
+    uncoveredCount: company.filter(row => row.status === "OUT_UNCOVERED").length,
+    changes: getCastResolverChanges()
+  };
+}
+
+function getCastResolverSnapshotPayload() {
+  return getResolvedCastSnapshotPayload();
+}
+
+/*************************************************
+ * CENTRAL API TESTERS
+ *************************************************/
+
+function testCastResolverCentralAPI() {
+  const summary = getCastResolverSummary();
+
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "CastResolver Central API online.\n\n" +
+    "Roles: " + summary.totalRoles + "\n" +
+    "Changes: " + summary.changes.length + "\n" +
+    "Uncovered: " + summary.uncoveredCount
+  );
+}

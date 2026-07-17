@@ -1,0 +1,383 @@
+/*************************************************
+ * 15 - PREPOS - POST COMMIT
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Replace and delete the old versions of:
+ * - prepRefreshPayrollNotesQuietly_
+ * - prepFindPayrollCodeOutputCell_
+ *
+ * Do not keep prepFindPayrollCodeOutputCell_ anywhere.
+ * CODE OUTPUT and =PAYROLLNOTES() are retired.
+ *************************************************/
+
+
+/* =========================================================
+ * POST-PREP PAYROLL REFRESH
+ *
+ * Compatibility name retained for any existing Prep caller.
+ * The behavior is now fully model-driven.
+ * ========================================================= */
+
+function prepRefreshPayrollNotesQuietly_() {
+  if (
+    typeof refreshPayrollFromCanonicalModel_ ===
+    "function"
+  ) {
+    return refreshPayrollFromCanonicalModel_();
+  }
+
+  if (
+    typeof PayrollOS ===
+    "function"
+  ) {
+    return PayrollOS()
+      .refresh({
+        forceBuild:
+          true,
+
+        writeGrid:
+          true,
+
+        writeNotes:
+          true,
+
+        showAlert:
+          false
+      });
+  }
+
+  throw new Error(
+    "Canonical PayrollOS refresh is unavailable."
+  );
+}
+
+
+/* =========================================================
+ * NOTES WRITER COMPATIBILITY
+ * ========================================================= */
+
+function refreshPayrollNotesFromModel(
+  notesResult
+) {
+  if (
+    notesResult
+  ) {
+    return PayrollNotesWriterOS()
+      .write(
+        notesResult
+      );
+  }
+
+  if (
+    typeof PayrollOS ===
+    "function"
+  ) {
+    return PayrollOS()
+      .notes({
+        forceBuild:
+          true
+      });
+  }
+
+  return PayrollNotesWriterOS()
+    .write();
+}
+
+function prepPostCommitOperationalSync(data) {
+  return OperationsOS().commitPrep(data);
+}
+
+const PREP_POST_RESET_PAYLOAD_KEY =
+  "STAGEOS_PREP_POST_RESET_PAYLOAD";
+
+function prepStorePostResetPayload(
+  data
+) {
+  const payload = {
+    queuedAt:
+      new Date().toISOString(),
+
+    data:
+      data || {}
+  };
+
+  PropertiesService
+    .getDocumentProperties()
+    .setProperty(
+      PREP_POST_RESET_PAYLOAD_KEY,
+      JSON.stringify(payload)
+    );
+
+  Logger.log(
+    "Prep post-reset payload stored."
+  );
+
+  return {
+    success:
+      true
+  };
+}
+
+function prepGetPostResetPayload_() {
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        PREP_POST_RESET_PAYLOAD_KEY
+      );
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed =
+      JSON.parse(raw);
+
+    return (
+      parsed &&
+      parsed.data
+        ? parsed.data
+        : null
+    );
+
+  } catch (err) {
+    Logger.log(
+      "Could not parse Prep post-reset payload: " +
+      err.message
+    );
+
+    return null;
+  }
+}
+
+function prepClearPostResetPayload_() {
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      PREP_POST_RESET_PAYLOAD_KEY
+    );
+}
+
+/*************************************************
+ * PREP COVERAGE LEDGER
+ *
+ * Stores one resolved Prep payload per performance.
+ *************************************************/
+
+const PREP_COVERAGE_LEDGER_KEY =
+  "STAGEOS_PREP_COVERAGE_LEDGER";
+
+
+function prepRecordCoverageLedger_(
+  payload
+) {
+  payload = payload || {};
+
+  const date =
+    String(
+      payload.date || ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const performance =
+    String(
+      payload.performance || ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (
+    !date ||
+    !performance
+  ) {
+    return {
+      success: false,
+      message:
+        "Coverage ledger skipped: date or performance missing."
+    };
+  }
+
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  const currentRaw =
+    props.getProperty(
+      PREP_COVERAGE_LEDGER_KEY
+    );
+
+  let ledger = {};
+
+  if (currentRaw) {
+    try {
+      ledger =
+        JSON.parse(
+          currentRaw
+        ) || {};
+
+    } catch (err) {
+      ledger = {};
+    }
+  }
+
+  const key =
+    prepCoverageLedgerKey_(
+      date,
+      performance
+    );
+
+  ledger[key] = {
+    recordedAt:
+      new Date().toISOString(),
+
+    date:
+      date,
+
+    performance:
+      performance,
+
+    castOuts:
+      Array.isArray(
+        payload.castOuts
+      )
+        ? payload.castOuts.map(
+            function (entry) {
+              return {
+                out:
+                  entry.out || "",
+
+                in:
+                  entry.in || "",
+
+                role:
+                  entry.role || "",
+
+                reason:
+                  entry.reason || "",
+
+                source:
+                  entry.source || "",
+
+                writeToInOutSheet:
+                  entry.writeToInOutSheet !==
+                    false,
+
+                noCoverNeeded:
+                  entry.noCoverNeeded ===
+                    true
+              };
+            }
+          )
+        : []
+  };
+
+  props.setProperty(
+    PREP_COVERAGE_LEDGER_KEY,
+    JSON.stringify(
+      ledger
+    )
+  );
+
+  Logger.log(
+    "Prep coverage ledger updated: " +
+    key
+  );
+
+  return {
+    success:
+      true,
+
+    key:
+      key,
+
+    records:
+      Object.keys(
+        ledger
+      ).length
+  };
+}
+
+
+function prepGetCoverageLedger_() {
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        PREP_COVERAGE_LEDGER_KEY
+      );
+
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return (
+      JSON.parse(raw) ||
+      {}
+    );
+
+  } catch (err) {
+    return {};
+  }
+}
+
+
+function prepCoverageLedgerKey_(
+  date,
+  performance
+) {
+  return [
+    String(date || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim(),
+
+    String(performance || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim()
+  ].join("::");
+}
+
+
+function testPrepCoverageLedger() {
+  const ledger =
+    prepGetCoverageLedger_();
+
+  const result = {
+    records:
+      Object.keys(
+        ledger
+      ).length,
+
+    ledger:
+      ledger
+  };
+
+  Logger.log(
+    "PREP COVERAGE LEDGER"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Prep Coverage Ledger\n\n" +
+      "Recorded performances: " +
+      result.records +
+      "\n\n" +
+      "Open the execution log for details."
+    );
+
+  return result;
+}

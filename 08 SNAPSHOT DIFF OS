@@ -1,0 +1,125 @@
+/*************************************************
+ * 08 SNAPSHOT DIFF OS
+ * Version: 0.1.0
+ *
+ * Compares two snapshot groups.
+ *************************************************/
+
+function SnapshotDiffOS() {
+  return {
+
+    assignments: function () {
+      return snapshotDiffAssignments_();
+    },
+
+    cast: function () {
+      return snapshotDiffResolvedCast_();
+    }
+
+  };
+}
+
+/*************************************************
+ * ASSIGNMENTS
+ *************************************************/
+
+function snapshotDiffAssignments_() {
+
+  const previous = snapshotOSv2GetPreviousAssignmentSnapshot();
+  const current = snapshotOSv2GetLatestAssignmentSnapshot();
+
+  return snapshotDiffRows_(
+    previous,
+    current,
+    8,   // Track Label
+    9    // Assigned Person
+  );
+
+}
+
+/*************************************************
+ * RESOLVED CAST
+ *************************************************/
+
+function snapshotDiffResolvedCast_() {
+
+  const previous = snapshotOSv2GetPreviousResolvedCastSnapshot();
+  const current = snapshotOSv2GetLatestResolvedCastSnapshot();
+
+  return snapshotDiffRows_(
+    previous,
+    current,
+    4,   // Role
+    5    // Actor
+  );
+
+}
+
+/*************************************************
+ * GENERIC
+ *************************************************/
+
+function snapshotDiffRows_(previous, current, keyCol, valueCol) {
+
+  const previousMap = {};
+  const currentMap = {};
+
+  previous.forEach(r => previousMap[r[keyCol]] = r[valueCol]);
+  current.forEach(r => currentMap[r[keyCol]] = r[valueCol]);
+
+  const keys = Array.from(
+    new Set([
+      ...Object.keys(previousMap),
+      ...Object.keys(currentMap)
+    ])
+  );
+
+  const changes = [];
+
+  keys.forEach(key => {
+
+    const oldValue = previousMap[key] || "";
+    const newValue = currentMap[key] || "";
+
+    if (oldValue !== newValue) {
+
+      changes.push({
+
+        key,
+
+        previous: oldValue,
+
+        current: newValue
+
+      });
+
+    }
+
+  });
+
+  return changes;
+
+}
+
+/*************************************************
+ * TESTERS
+ *************************************************/
+
+function testSnapshotDiffOS() {
+
+  const assignments = SnapshotDiffOS().assignments();
+  const cast = SnapshotDiffOS().cast();
+
+  Logger.log("Assignments");
+  Logger.log(JSON.stringify(assignments, null, 2));
+
+  Logger.log("Cast");
+  Logger.log(JSON.stringify(cast, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "SnapshotDiffOS\n\n" +
+    "Assignment Changes: " + assignments.length + "\n" +
+    "Cast Changes: " + cast.length
+  );
+
+}

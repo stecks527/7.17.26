@@ -1,0 +1,28 @@
+/*************************************************
+ * 81 WIZARD LOG / COMPANY HISTORY
+ * Engine-first
+ *************************************************/
+
+function logStageOS_(action, result) {
+  const payload = {
+    user: Session.getActiveUser().getEmail(),
+    action: action || "",
+    result: result || ""
+  };
+
+  if (typeof EngineWizardLogOS === "function") {
+    EngineWizardLogOS().log(action, result, payload);
+    return;
+  }
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info("Wizard", action || "", result || "", payload);
+    return;
+  }
+
+  Logger.log("Wizard | " + action + " | " + result);
+}
+
+function logWizard_(action, result) {
+  logStageOS_(action, result);
+}

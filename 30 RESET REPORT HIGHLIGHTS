@@ -1,0 +1,843 @@
+/*************************************************
+ * 30 RESET REPORT HIGHLIGHTS
+ *
+ * Active responsibilities:
+ * - Clear Performance Highlights
+ * - Reset Performance Report shell
+ * - Route today's IN/OUT notes safely
+ *
+ * Key safety rule:
+ * - Never preserve stale report notes during reset
+ * - Never write IN/OUT notes onto section title rows
+ *************************************************/
+
+function clearPerformanceHighlights() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Performance Highlights");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Could not find the "Performance Highlights" tab.');
+    return;
+  }
+
+  sheet.getRange("A3:A181").uncheck();
+
+  const rangesToClear = [
+    "B13","G13",
+    "B33","G33",
+    "G35",
+    "B37","G37",
+    "B39","G39",
+    "G41",
+    "B43","G43",
+    "B47","G47",
+    "B49","G49",
+    "G54","G57",
+    "B59","G59",
+    "B64","G64",
+    "B66","G66",
+    "G71",
+    "B90","G90",
+    "G92",
+    "B94","G94",
+    "B96","G96",
+    "G98",
+    "B100","G100",
+    "B106","G106",
+    "G108",
+    "B110","G110",
+    "B121","G121",
+    "G123",
+    "B125","G125"
+  ];
+
+  rangesToClear.forEach(rangeA1 => {
+    sheet.getRange(rangeA1).clearContent();
+  });
+}
+
+/*************************************************
+ * FULL RESET BUTTONS
+ *************************************************/
+
+function fullReportResetMat() {
+  updateReportBuilder();
+
+  if (typeof copyReportBuilderScheduleToPerformanceReport_ === "function") {
+    copyReportBuilderScheduleToPerformanceReport_();
+  }
+
+  clearPerformanceHighlights();
+  clearPerformanceReport_("today");
+
+  if (typeof routeInOutNotesToPerformanceReport_SAFE === "function") {
+    routeInOutNotesToPerformanceReport_SAFE(false);
+  }
+
+  SpreadsheetApp.getUi().alert("Report reset complete for matinee.");
+}
+
+function fullReportResetEve() {
+  setUpcomingDateForEveReset_();
+  forcePerformanceReportEveHeader_();
+  updateReportBuilder();
+
+  if (typeof copyReportBuilderScheduleToPerformanceReport_ === "function") {
+    copyReportBuilderScheduleToPerformanceReport_();
+  }
+
+  clearPerformanceHighlights();
+  clearPerformanceReport_("tonight");
+
+  // Route ONLY safe notes after the shell is clean.
+  if (typeof routeInOutNotesToPerformanceReport_SAFE === "function") {
+    routeInOutNotesToPerformanceReport_SAFE(false);
+  }
+
+  SpreadsheetApp.getUi().alert("Report reset complete for evening.");
+}
+
+function reportResetMatinee() {
+  fullReportResetMat();
+}
+
+function reportResetEvening() {
+  fullReportResetEve();
+}
+
+/*************************************************
+ * PERFORMANCE REPORT RESET
+ *************************************************/
+
+/*************************************************
+ * PERFORMANCE REPORT RESET
+ * Version: 0.5.0
+ *
+ * Uses the shared ReportOS Layout Index.
+ *************************************************/
+
+function clearPerformanceReport_(
+  timeWord,
+  options
+) {
+  options = options || {};
+
+  const preserveExistingNotes =
+    options.preserveExistingNotes === true;
+
+  const timer =
+    typeof TimerOS === "function"
+      ? TimerOS(
+          "Performance Report Shell Reset"
+        )
+      : null;
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report" tab.'
+    );
+  }
+
+  const defaultNote =
+    "– No notes " +
+    String(
+      timeWord || "today"
+    ) +
+    ", thank you!";
+
+  /*
+   * Build once—or reuse the index already built during
+   * this execution.
+   */
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      false
+    );
+
+  if (timer) {
+    timer.mark(
+      "Get shared layout index",
+      {
+        indexBuildMs:
+          index.durationMs,
+
+        lastRow:
+          index.lastRow
+      }
+    );
+  }
+
+  /*
+   * Fixed non-layout-dependent fields.
+   */
+  report
+    .getRangeList([
+      "F6:G6",
+      "G7"
+    ])
+    .clearContent();
+
+  if (timer) {
+    timer.mark(
+      "Clear fixed report fields"
+    );
+  }
+
+  const neutralHeaders = [
+    "SCENIC:",
+    "PROPS:",
+    "COSTUMES:",
+    "WIGS/HAIR:",
+    "SOUND:",
+    "LIGHTING:",
+    "SCRIPT:",
+    "MUSIC:",
+    "CHOREO:",
+    "GENERAL/COMPANY MANAGEMENT:",
+    "PRODUCTION MANAGEMENT:",
+    "PRODUCING:",
+    "FACILITIES:",
+    "GENERAL NOTES:",
+    "REHEARSAL NOTES:"
+  ];
+
+  const neutralRanges = [];
+
+  neutralHeaders.forEach(
+    function (headerText) {
+      const cell =
+        reportOSRequireContentCell_(
+          report,
+          index,
+          headerText,
+          1,
+          1
+        );
+
+      const existing =
+        String(
+          cell.getDisplayValue() ||
+          ""
+        ).trim();
+
+      if (
+        preserveExistingNotes &&
+        existing &&
+        !isDefaultReportNote_SAFE_(
+          existing
+        )
+      ) {
+        return;
+      }
+
+      neutralRanges.push(
+        cell.getA1Notation()
+      );
+    }
+  );
+
+  const performanceNoteCell =
+    reportOSRequireContentCell_(
+      report,
+      index,
+      "PERFORMANCE NOTES:",
+      1,
+      1
+    );
+
+  const performanceExisting =
+    String(
+      performanceNoteCell
+        .getDisplayValue() ||
+      ""
+    ).trim();
+
+  const shouldResetPerformanceNotes =
+    !preserveExistingNotes ||
+    !performanceExisting ||
+    performanceExisting === "–" ||
+    performanceExisting === "-" ||
+    isDefaultReportNote_SAFE_(
+      performanceExisting
+    );
+
+  if (neutralRanges.length) {
+    report
+      .getRangeList(
+        Array.from(
+          new Set(
+            neutralRanges
+          )
+        )
+      )
+      .setValue(
+        defaultNote
+      );
+  }
+
+  if (
+    shouldResetPerformanceNotes
+  ) {
+    performanceNoteCell
+      .setValue(
+        "–"
+      );
+  }
+
+  if (timer) {
+    timer.mark(
+      "Reset report note sections",
+      {
+        neutralCells:
+          neutralRanges.length,
+
+        performanceNotesReset:
+          shouldResetPerformanceNotes,
+
+        preserveExistingNotes:
+          preserveExistingNotes
+      }
+    );
+  }
+
+  /*
+   * Improv Highlights is optional, but when found,
+   * clear exactly one row beneath its header.
+   */
+  const improvCell =
+    reportOSFindOptionalContentCell_(
+      report,
+      index,
+      "IMPROV HIGHLIGHTS:",
+      1,
+      1
+    );
+
+  if (improvCell) {
+    improvCell.clearContent();
+  } else {
+    Logger.log(
+      'Report reset warning: "IMPROV HIGHLIGHTS:" ' +
+      "was not found."
+    );
+  }
+
+  if (timer) {
+    timer.mark(
+      "Clear Improv Highlights",
+      {
+        clearedCell:
+          improvCell
+            ? improvCell.getA1Notation()
+            : ""
+      }
+    );
+
+    timer.finish({
+      success:
+        true,
+
+      resetWord:
+        timeWord || "today",
+
+      preserveExistingNotes:
+        preserveExistingNotes
+    });
+  }
+}
+
+/* =========================================================
+ * SAFE REPORT LAYOUT INDEX
+ * ========================================================= */
+
+function reportResetBuildSafeLayoutIndex_(
+  columnAValues
+) {
+  const values =
+    Array.isArray(
+      columnAValues
+    )
+      ? columnAValues
+      : [];
+
+  const headerRows = {};
+
+  values.forEach(
+    function (
+      value,
+      index
+    ) {
+      const normalized =
+        reportResetNormalizeHeader_(
+          value
+        );
+
+      if (
+        normalized &&
+        isPerformanceReportSectionHeader_SAFE_(
+          normalized
+        )
+      ) {
+        headerRows[
+          normalized
+        ] =
+          index + 1;
+      }
+    }
+  );
+
+  return {
+    values:
+      values,
+
+    headerRows:
+      headerRows
+  };
+}
+
+
+/* =========================================================
+ * REQUIRED CONTENT ROW
+ *
+ * Report sections place their writable content exactly
+ * one row below the header.
+ * ========================================================= */
+
+function reportResetRequireContentRow_(
+  index,
+  headerText
+) {
+  const targetRow =
+    reportResetFindOptionalContentRow_(
+      index,
+      headerText
+    );
+
+  if (!targetRow) {
+    throw new Error(
+      "Report reset stopped for safety.\n\n" +
+      'Could not safely resolve the content row below "' +
+      headerText +
+      '".\n\n' +
+      "No report headers were changed."
+    );
+  }
+
+  return targetRow;
+}
+
+
+function reportResetFindOptionalContentRow_(
+  index,
+  headerText
+) {
+  index =
+    index || {};
+
+  const values =
+    index.values ||
+    [];
+
+  const headerRows =
+    index.headerRows ||
+    {};
+
+  const wanted =
+    reportResetNormalizeHeader_(
+      headerText
+    );
+
+  const headerRow =
+    Number(
+      headerRows[wanted] ||
+      0
+    );
+
+  if (!headerRow) {
+    return null;
+  }
+
+  const targetRow =
+    headerRow + 1;
+
+  const targetValue =
+    String(
+      values[
+        targetRow - 1
+      ] || ""
+    ).trim();
+
+  /*
+   * Never return a row containing another header.
+   */
+  if (
+    targetValue &&
+    isPerformanceReportSectionHeader_SAFE_(
+      targetValue
+    )
+  ) {
+    Logger.log(
+      "Unsafe report destination detected below " +
+      wanted +
+      ": row " +
+      targetRow +
+      " contains another header."
+    );
+
+    return null;
+  }
+
+  return targetRow;
+}
+
+
+/* =========================================================
+ * FINAL WRITE SAFETY
+ * ========================================================= */
+
+function reportResetValidateWriteAddresses_(
+  sheet,
+  addresses
+) {
+  const uniqueAddresses =
+    Array.from(
+      new Set(
+        addresses || []
+      )
+    );
+
+  if (!uniqueAddresses.length) {
+    return true;
+  }
+
+  const ranges =
+    sheet
+      .getRangeList(
+        uniqueAddresses
+      )
+      .getRanges();
+
+  ranges.forEach(
+    function (range) {
+      const existing =
+        String(
+          range.getDisplayValue() ||
+          ""
+        ).trim();
+
+      if (
+        existing &&
+        isPerformanceReportSectionHeader_SAFE_(
+          existing
+        )
+      ) {
+        throw new Error(
+          "Report reset stopped for safety.\n\n" +
+          "The proposed destination " +
+          range.getA1Notation() +
+          ' contains the header "' +
+          existing +
+          '".\n\n' +
+          "No header was overwritten."
+        );
+      }
+    }
+  );
+
+  return true;
+}
+
+
+function reportResetNormalizeHeader_(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .trim()
+    .toUpperCase();
+}
+/*************************************************
+ * SAFE IN/OUT NOTES ROUTING
+ *************************************************/
+
+function routeInOutNotesToPerformanceReport_SAFE(showAlert = true) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!inOut || !report) {
+    SpreadsheetApp.getUi().alert('Could not find "IN/OUT" or "Performance Report" tab.');
+    return;
+  }
+
+  const notesText = inOut.getRange("A28").getDisplayValue();
+
+  if (!notesText.trim()) {
+    if (showAlert) SpreadsheetApp.getUi().alert("No IN/OUT notes found in A28.");
+    return;
+  }
+
+  const routed = {
+    scenic: [],
+    props: [],
+    costumes: [],
+    wigs: [],
+    sound: [],
+    lighting: [],
+    script: [],
+    music: [],
+    choreo: [],
+    general: [],
+    production: [],
+    producing: [],
+    facilities: []
+  };
+
+  notesText
+    .split(/\n+/)
+    .map(line => line.replace(/^[-–]\s*/, "").trim())
+    .filter(Boolean)
+    .forEach(note => {
+      if (shouldIgnoreInOutNote_(note)) return;
+
+      const category = getReportNoteCategory_(note);
+      const routedNote = transformInOutNoteForReport_(note);
+
+      if (routed[category]) {
+        routed[category].push("– " + routedNote);
+      }
+    });
+
+  const headerMap = {
+    scenic: "SCENIC:",
+    props: "PROPS:",
+    costumes: "COSTUMES:",
+    wigs: "WIGS/HAIR:",
+    sound: "SOUND:",
+    lighting: "LIGHTING:",
+    script: "SCRIPT:",
+    music: "MUSIC:",
+    choreo: "CHOREO:",
+    general: "GENERAL/COMPANY MANAGEMENT:",
+    production: "PRODUCTION MANAGEMENT:",
+    producing: "PRODUCING:",
+    facilities: "FACILITIES:"
+  };
+
+  Object.keys(headerMap).forEach(category => {
+    const newLines = routed[category];
+    if (!newLines.length) return;
+
+    const targetRow = findSafeReportNoteRowBelowHeader_(report, headerMap[category]);
+
+    if (!targetRow) {
+      Logger.log("Could not find safe note row for: " + category);
+      return;
+    }
+
+    const cell = report.getRange(targetRow, 1);
+
+    const currentLines = cell.getDisplayValue()
+      .split(/\n+/)
+      .map(line => line.trim())
+      .filter(line => line && !isDefaultReportNote_SAFE_(line));
+
+    const merged = mergeUniqueReportLines_SAFE_(currentLines, newLines);
+
+    cell.setValue(merged.join("\n"));
+  });
+
+  if (showAlert) {
+    SpreadsheetApp.getUi().alert("IN/OUT notes routed safely to the Performance Report.");
+  }
+}
+
+/*************************************************
+ * SAFE ROW FINDERS
+ *************************************************/
+
+function findSafeReportNoteRowBelowHeader_(sheet, headerText) {
+  const headerRow = findReportHeaderRow_SAFE_(sheet, headerText);
+  if (!headerRow) return null;
+
+  const lastRow = sheet.getLastRow();
+
+  for (let r = headerRow + 1; r <= lastRow; r++) {
+    const value = sheet.getRange(r, 1).getDisplayValue().trim();
+
+    if (isPerformanceReportSectionHeader_SAFE_(value)) {
+      return null;
+    }
+
+    if (!value || isDefaultReportNote_SAFE_(value)) {
+      return r;
+    }
+
+    return r;
+  }
+
+  return null;
+}
+
+function findReportHeaderRow_SAFE_(sheet, headerText) {
+  const target = String(headerText || "").trim().toUpperCase();
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const value = String(values[i][0] || "").trim().toUpperCase();
+    if (value === target) return i + 1;
+  }
+
+  return null;
+}
+
+function isPerformanceReportSectionHeader_SAFE_(text) {
+  const value = String(text || "").trim().toUpperCase();
+
+  const headers = [
+    "TECHNICAL NOTES:",
+    "SCENIC:",
+    "PROPS:",
+    "COSTUMES:",
+    "WIGS/HAIR:",
+    "SOUND:",
+    "LIGHTING:",
+    "SCRIPT:",
+    "MUSIC:",
+    "CHOREO:",
+    "GENERAL/COMPANY MANAGEMENT:",
+    "PRODUCTION MANAGEMENT:",
+    "PRODUCING:",
+    "FACILITIES:",
+    "UPCOMING:",
+    "GENERAL NOTES:",
+    "REHEARSAL NOTES:",
+    "PERFORMANCE NOTES:",
+    "WORDS USED:",
+    "IMPROV HIGHLIGHTS:"
+  ];
+
+  return headers.indexOf(value) !== -1;
+}
+
+/*************************************************
+ * SUPPORT HELPERS
+ *************************************************/
+
+function isDefaultPerformanceReportNote_(text) {
+  return isDefaultReportNote_SAFE_(text);
+}
+
+function isDefaultReportNote_SAFE_(text) {
+  const value = cleanReportPatch_(text).toLowerCase();
+
+  return (
+    value.includes("no notes today") ||
+    value.includes("no notes tonight") ||
+    value.includes("no notes, thank you")
+  );
+}
+
+function mergeUniqueReportLines_SAFE_(currentLines, newLines) {
+  const seen = new Set();
+  const output = [];
+
+  currentLines.concat(newLines).forEach(line => {
+    const key = cleanReportPatch_(line).toLowerCase();
+    if (!key || seen.has(key)) return;
+
+    seen.add(key);
+    output.push(line);
+  });
+
+  return output;
+}
+
+function cleanReportPatch_(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*************************************************
+ * EXISTING RESET HELPERS
+ *************************************************/
+
+function setUpcomingDateForEveReset_() {
+  if (typeof updateReportSchedulesOnly === "function") {
+    updateReportSchedulesOnly();
+    return;
+  }
+
+  if (typeof fillReportSchedules === "function") {
+    fillReportSchedules();
+    return;
+  }
+
+  throw new Error("Could not find schedule reset function for Eve reset.");
+}
+
+function syncInOutToPerformanceReport_() {
+  if (typeof updatePerformanceReportInOutGrid === "function") {
+    updatePerformanceReportInOutGrid();
+    return;
+  }
+
+  if (typeof updatePerformanceReportInOutGrid_ === "function") {
+    updatePerformanceReportInOutGrid_();
+    return;
+  }
+
+  Logger.log("No IN/OUT grid sync function found. Skipping legacy note routing.");
+}
+
+function syncInOutGridToPerformanceReport_() {
+  return syncInOutToPerformanceReport_();
+}
+
+function forcePerformanceReportEveHeader_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = ss.getSheetByName("Performance Report");
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+
+  const current = report.getRange("A3").getDisplayValue();
+
+  report.getRange("A3")
+    .setValue(current.replace(/\s*-\s*(MAT|EVE)\s*$/i, "") + " - EVE")
+    .setFontFamily("Arial")
+    .setFontSize(24)
+    .setFontWeight("normal")
+    .setHorizontalAlignment("center");
+}
+
+function findReportContentRowAfterHeader_(sheet, headerText) {
+  return findSafeReportNoteRowBelowHeader_(sheet, headerText);
+}
+
+function setReportSectionNoteByHeader_(sheet, headerText, value, preserveExistingNotes) {
+  const targetRow = findSafeReportNoteRowBelowHeader_(sheet, headerText);
+
+  if (!targetRow) {
+    Logger.log("Could not find safe row under " + headerText);
+    return;
+  }
+
+  const cell = sheet.getRange(targetRow, 1);
+  const current = cell.getDisplayValue().trim();
+
+  if (preserveExistingNotes && current && !isDefaultReportNote_SAFE_(current)) {
+    return;
+  }
+
+  cell.setValue(value);
+}

@@ -1,0 +1,396 @@
+/*************************************************
+ * 00 STAGEOS - EVENT ROUTER
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Canonical spreadsheet edit router.
+ *
+ * Responsibilities:
+ * - Receive the simple spreadsheet onEdit event.
+ * - Route edits to subsystem handlers.
+ * - Isolate failures so one broken handler does not
+ *   prevent the remaining handlers from running.
+ *
+ * Important:
+ * Home actions that open dialogs or require authorization
+ * are handled by the separate installable trigger:
+ *
+ * homeOSInstallableOnEdit_(e)
+ *************************************************/
+
+
+/* =========================================================
+ * SIMPLE SPREADSHEET EDIT ENTRYPOINT
+ * ========================================================= */
+
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const context = stageOSEditContext_(e);
+
+  /*
+   * Home / Mission Control
+   *
+   * Handles only safe, non-authorized changes such as:
+   * - Workflow completion checkboxes
+   * - Long-term task completion
+   *
+   * MISSION_ACTION buttons are intentionally handled by
+   * the installable HomeOS trigger instead.
+   */
+  stageOSRunEditHandler_(
+    "HomeOS",
+    function () {
+      if (
+        typeof handleMissionControlEdit_ ===
+        "function"
+      ) {
+        handleMissionControlEdit_(e);
+      }
+    },
+    context
+  );
+
+  /*
+   * Performance Highlights jokes
+   */
+  stageOSRunEditHandler_(
+    "Performance Highlights",
+    function () {
+      if (
+        typeof refreshJokesOnEdit_TEST_ ===
+        "function"
+      ) {
+        refreshJokesOnEdit_TEST_(e);
+      }
+    },
+    context
+  );
+
+  /*
+   * Payroll Notes
+   */
+  stageOSRunEditHandler_(
+    "Payroll Notes",
+    function () {
+      if (
+        typeof payrollNotesOnEdit_ ===
+        "function"
+      ) {
+        payrollNotesOnEdit_(e);
+      }
+    },
+    context
+  );
+
+  /*
+   * Future handlers should be added here through
+   * stageOSRunEditHandler_ so failures remain isolated.
+   */
+
+  // stageOSRunEditHandler_(
+  //   "InsertOS",
+  //   function () {
+  //     if (
+  //       typeof handleInsertEdit_ ===
+  //       "function"
+  //     ) {
+  //       handleInsertEdit_(e);
+  //     }
+  //   },
+  //   context
+  // );
+
+  // stageOSRunEditHandler_(
+  //   "TimelineOS",
+  //   function () {
+  //     if (
+  //       typeof handleTimelineEdit_ ===
+  //       "function"
+  //     ) {
+  //       handleTimelineEdit_(e);
+  //     }
+  //   },
+  //   context
+  // );
+}
+
+
+/* =========================================================
+ * EDIT CONTEXT
+ * ========================================================= */
+
+function stageOSEditContext_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  return {
+    event: e,
+
+    range: range,
+
+    sheet: sheet,
+
+    sheetName:
+      sheet
+        ? sheet.getName()
+        : "",
+
+    row:
+      range.getRow(),
+
+    column:
+      range.getColumn(),
+
+    numRows:
+      range.getNumRows(),
+
+    numColumns:
+      range.getNumColumns(),
+
+    a1Notation:
+      range.getA1Notation(),
+
+    value:
+      e.value !== undefined
+        ? e.value
+        : range.getValue(),
+
+    oldValue:
+      e.oldValue !== undefined
+        ? e.oldValue
+        : undefined,
+
+    editedAt:
+      new Date()
+  };
+}
+
+
+/* =========================================================
+ * SAFE HANDLER EXECUTION
+ * ========================================================= */
+
+function stageOSRunEditHandler_(
+  label,
+  handler,
+  context
+) {
+  try {
+    handler();
+
+    return {
+      ok: true,
+      label: label
+    };
+
+  } catch (err) {
+    const errorText =
+      String(
+        err &&
+        err.message
+          ? err.message
+          : err
+      );
+
+    Logger.log(
+      [
+        "StageOS onEdit handler failed",
+        label,
+        context
+          ? context.sheetName +
+            "!" +
+            context.a1Notation
+          : "",
+        errorText
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    );
+
+    if (
+      typeof EngineRouterOS ===
+      "function"
+    ) {
+      try {
+        EngineRouterOS().error(
+          "StageOS Event Router",
+          label,
+          errorText,
+          {
+            sheet:
+              context
+                ? context.sheetName
+                : "",
+
+            range:
+              context
+                ? context.a1Notation
+                : "",
+
+            row:
+              context
+                ? context.row
+                : "",
+
+            column:
+              context
+                ? context.column
+                : ""
+          }
+        );
+      } catch (logErr) {
+        Logger.log(
+          "StageOS Event Router could not write to Engine: " +
+          String(logErr)
+        );
+      }
+    }
+
+    return {
+      ok: false,
+      label: label,
+      error: errorText
+    };
+  }
+}
+
+
+/* =========================================================
+ * DIAGNOSTIC TEST
+ *
+ * This test does not edit any sheet.
+ * It verifies that the expected handlers are available.
+ * ========================================================= */
+
+function testStageOSEventRouter() {
+  const handlers = [
+    {
+      name:
+        "handleMissionControlEdit_",
+
+      available:
+        typeof handleMissionControlEdit_ ===
+        "function"
+    },
+
+    {
+      name:
+        "refreshJokesOnEdit_TEST_",
+
+      available:
+        typeof refreshJokesOnEdit_TEST_ ===
+        "function"
+    },
+
+    {
+      name:
+        "payrollNotesOnEdit_",
+
+      available:
+        typeof payrollNotesOnEdit_ ===
+        "function"
+    },
+
+    {
+      name:
+        "homeOSInstallableOnEdit_",
+
+      available:
+        typeof homeOSInstallableOnEdit_ ===
+        "function"
+    }
+  ];
+
+  const missing =
+    handlers.filter(function (item) {
+      return !item.available;
+    });
+
+  Logger.log(
+    "STAGEOS EVENT ROUTER TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      handlers,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageOS Event Router test.\n\n" +
+      "Handlers checked: " +
+      handlers.length +
+      "\n" +
+      "Missing: " +
+      missing.length +
+      (
+        missing.length
+          ? "\n\n" +
+            missing
+              .map(function (item) {
+                return item.name;
+              })
+              .join("\n")
+          : ""
+      )
+    );
+
+  return {
+    handlers:
+      handlers,
+
+    missing:
+      missing
+  };
+}
+
+
+/* =========================================================
+ * INSTALLABLE TRIGGER STATUS
+ * ========================================================= */
+
+function showStageOSEditTriggerStatus() {
+  const triggers =
+    ScriptApp
+      .getProjectTriggers();
+
+  const homeTriggers =
+    triggers.filter(
+      function (trigger) {
+        return (
+          trigger.getHandlerFunction() ===
+          "homeOSInstallableOnEdit_"
+        );
+      }
+    );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageOS Edit Trigger Status\n\n" +
+      "Simple onEdit router: Active\n" +
+      "HomeOS installable triggers: " +
+      homeTriggers.length +
+      "\n\n" +
+      (
+        homeTriggers.length === 1
+          ? "Trigger setup looks correct."
+          : homeTriggers.length === 0
+            ? "Run installHomeOSActionTrigger."
+            : "Multiple HomeOS triggers found. Run installHomeOSActionTrigger to reset them."
+      )
+    );
+
+  return {
+    simpleOnEdit:
+      true,
+
+    homeInstallableTriggers:
+      homeTriggers.length
+  };
+}

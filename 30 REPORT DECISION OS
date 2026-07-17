@@ -1,0 +1,1240 @@
+/*************************************************
+ * 30 REPORT DECISION OS
+ * Version: 1.0.0
+ * Status: ACTIVE / CANONICAL
+ *
+ * Rich Performance Report reset preview.
+ *
+ * Responsibilities:
+ * - Build a report-shaped preview model
+ * - Show every note section in report order
+ * - Allow individual notes to be kept or reset
+ * - Run the canonical ReportResetOS pipeline
+ * - Restore only selected notes safely
+ * - Merge restored notes with any fresh IN/OUT notes
+ *************************************************/
+
+
+/* =========================================================
+ * PUBLIC API
+ * ========================================================= */
+
+function ReportDecisionOS() {
+  return {
+    openResetPreview:
+      reportDecisionOpenResetPreview_,
+
+    current:
+      reportDecisionBuildResetDecision_,
+
+    run:
+      reportOSRunResetWithDecision
+  };
+}
+
+
+/* =========================================================
+ * PUBLIC ENTRY POINTS
+ * ========================================================= */
+
+function reportDecisionResetAuto_TEST() {
+  return ReportDecisionOS()
+    .openResetPreview(
+      "AUTO"
+    );
+}
+
+
+function reportDecisionOpenResetPreviewFromPrep() {
+  ReportDecisionOS()
+    .openResetPreview(
+      "AUTO"
+    );
+
+  return {
+    success:
+      true,
+
+    message:
+      "Report Reset Preview opened."
+  };
+}
+
+
+/*
+ * Backward-compatible wrappers.
+ * These now open the rich preview instead of using
+ * an all-or-nothing Spreadsheet alert.
+ */
+function runReportResetMatineeWithDecision() {
+  return ReportDecisionOS()
+    .openResetPreview(
+      "MAT"
+    );
+}
+
+
+function runReportResetEveningWithDecision() {
+  return ReportDecisionOS()
+    .openResetPreview(
+      "EVE"
+    );
+}
+
+
+/* =========================================================
+ * OPEN PREVIEW
+ * ========================================================= */
+
+function reportDecisionOpenResetPreview_(
+  mode
+) {
+  const normalizedMode =
+    reportDecisionNormalizeMode_(
+      mode
+    );
+
+  const state =
+    ReportOS()
+      .preview(
+        normalizedMode
+      );
+
+  const decision =
+    reportDecisionBuildResetDecision_(
+      state
+    );
+
+  const template =
+    HtmlService
+      .createTemplateFromFile(
+        "30 REPORT OS - 08 ReportDecisionDialog"
+      );
+
+  template.dataJson =
+    JSON.stringify({
+      mode:
+        normalizedMode,
+
+      state:
+        state,
+
+      decision:
+        decision
+    });
+
+  const html =
+    template
+      .evaluate()
+      .setWidth(
+        860
+      )
+      .setHeight(
+        820
+      );
+
+  SpreadsheetApp
+    .getUi()
+    .showModalDialog(
+      html,
+      "Performance Report Reset Preview"
+    );
+}
+
+
+/* =========================================================
+ * BUILD PREVIEW MODEL
+ * ========================================================= */
+
+function reportDecisionBuildResetDecision_(
+  state
+) {
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const report =
+    ss.getSheetByName(
+      "Performance Report"
+    );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report" tab.'
+    );
+  }
+
+  const index =
+    typeof reportOSGetLayoutIndex_ ===
+      "function"
+      ? reportOSGetLayoutIndex_(
+          report,
+          false
+        )
+      : null;
+
+  const sectionGroups = [
+    {
+      id:
+        "technical",
+
+      title:
+        "TECHNICAL NOTES",
+
+      sections: [
+        "SCENIC:",
+        "PROPS:",
+        "COSTUMES:",
+        "WIGS/HAIR:",
+        "SOUND:",
+        "LIGHTING:",
+        "SCRIPT:",
+        "MUSIC:",
+        "CHOREO:",
+        "GENERAL/COMPANY MANAGEMENT:",
+        "PRODUCTION MANAGEMENT:",
+        "PRODUCING:",
+        "FACILITIES:"
+      ]
+    },
+    {
+      id:
+        "general",
+
+      title:
+        "GENERAL NOTES",
+
+      sections: [
+        "GENERAL NOTES:",
+        "REHEARSAL NOTES:"
+      ]
+    },
+    {
+      id:
+        "performance",
+
+      title:
+        "PERFORMANCE NOTES",
+
+      sections: [
+        "PERFORMANCE NOTES:"
+      ]
+    }
+  ];
+
+  let realCount =
+    0;
+
+  let neutralCount =
+    0;
+
+  const groups =
+    sectionGroups.map(
+      function (
+        group
+      ) {
+        const sections =
+          group.sections.map(
+            function (
+              header
+            ) {
+              const row =
+                reportDecisionResolveContentRow_(
+                  report,
+                  index,
+                  header
+                );
+
+              const value =
+                row
+                  ? String(
+                      report
+                        .getRange(
+                          row,
+                          1
+                        )
+                        .getDisplayValue() ||
+                      ""
+                    ).trim()
+                  : "";
+
+              const isReal =
+                reportDecisionIsRealNote_(
+                  value
+                );
+
+              if (isReal) {
+                realCount++;
+              } else {
+                neutralCount++;
+              }
+
+              return {
+                id:
+                  reportDecisionSectionId_(
+                    header
+                  ),
+
+                header:
+                  header,
+
+                label:
+                  header.replace(
+                    /:$/,
+                    ""
+                  ),
+
+                row:
+                  row || 0,
+
+                value:
+                  value,
+
+                isReal:
+                  isReal,
+
+                checked:
+                  isReal,
+
+                status:
+                  isReal
+                    ? "existing"
+                    : "neutral",
+
+                displayText:
+                  isReal
+                    ? value
+                    : reportDecisionNeutralDisplay_(
+                        header,
+                        value
+                      )
+              };
+            }
+          );
+
+        return {
+          id:
+            group.id,
+
+          title:
+            group.title,
+
+          sections:
+            sections,
+
+          realCount:
+            sections.filter(
+              function (
+                section
+              ) {
+                return section.isReal;
+              }
+            ).length
+        };
+      }
+    );
+
+  state =
+    state || {};
+
+  const reportHeader =
+    state.reportHeader ||
+    {};
+
+  return {
+    system:
+      "ReportDecisionOS",
+
+    version:
+      "1.0.0",
+
+    mode:
+      reportDecisionNormalizeMode_(
+        state.mode ||
+        ""
+      ),
+
+    performance:
+      state.performance ||
+      state.performanceText ||
+      reportHeader.number ||
+      reportHeader.performance ||
+      "",
+
+    date:
+      state.date ||
+      reportHeader.date ||
+      "",
+
+    groups:
+      groups,
+
+    counts: {
+      real:
+        realCount,
+
+      neutral:
+        neutralCount,
+
+      total:
+        realCount +
+        neutralCount
+    },
+
+    existingNotes:
+      groups
+        .reduce(
+          function (
+            output,
+            group
+          ) {
+            return output.concat(
+              group.sections.filter(
+                function (
+                  section
+                ) {
+                  return section.isReal;
+                }
+              )
+            );
+          },
+          []
+        )
+  };
+}
+
+
+/* =========================================================
+ * RUN RESET
+ * ========================================================= */
+
+function reportOSRunResetWithDecision(
+  mode,
+  preservedSelections
+) {
+  const startedAt =
+    Date.now();
+
+  try {
+    const normalizedMode =
+      reportDecisionNormalizeMode_(
+        mode
+      );
+
+    const preservedNotes =
+      reportDecisionCaptureSelectedNotes_(
+        preservedSelections
+      );
+
+    /*
+     * Run the canonical destructive reset with no global
+     * preservation. Individual notes are restored safely
+     * after ReportResetOS and fresh IN/OUT routing finish.
+     */
+    const state =
+      ReportResetOS()
+        .run(
+          normalizedMode,
+          {
+            preserveExistingNotes:
+              false,
+
+            preserveSpecificNoteRows:
+              []
+          }
+        );
+
+    const restoreResult =
+      reportDecisionRestoreSelectedNotes_(
+        preservedNotes
+      );
+
+    const result = {
+      success:
+        true,
+
+      message:
+        "Report reset complete.",
+
+      mode:
+        state &&
+        state.mode
+          ? state.mode
+          : normalizedMode,
+
+      date:
+        state &&
+        state.date
+          ? state.date
+          : "",
+
+      performance:
+        state &&
+        state.performance
+          ? state.performance
+          : "",
+
+      preserved:
+        restoreResult.preserved,
+
+      restored:
+        restoreResult.restored,
+
+      skipped:
+        restoreResult.skipped,
+
+      durationMs:
+        Date.now() -
+        startedAt
+    };
+
+    Logger.log(
+      "REPORT DECISION RESET COMPLETE"
+    );
+
+    Logger.log(
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
+    );
+
+    return result;
+
+  } catch (err) {
+    const result = {
+      success:
+        false,
+
+      message:
+        String(
+          err &&
+          err.message
+            ? err.message
+            : err
+        ),
+
+      stack:
+        String(
+          err &&
+          err.stack
+            ? err.stack
+            : ""
+        ),
+
+      durationMs:
+        Date.now() -
+        startedAt
+    };
+
+    Logger.log(
+      "REPORT DECISION RESET FAILED"
+    );
+
+    Logger.log(
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
+    );
+
+    return result;
+  }
+}
+
+
+/* =========================================================
+ * CAPTURE SELECTED NOTES
+ * ========================================================= */
+
+function reportDecisionCaptureSelectedNotes_(
+  selections
+) {
+  const requested =
+    Array.isArray(
+      selections
+    )
+      ? selections
+      : [];
+
+  if (!requested.length) {
+    return [];
+  }
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const report =
+    ss.getSheetByName(
+      "Performance Report"
+    );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report" tab.'
+    );
+  }
+
+  const index =
+    typeof reportOSGetLayoutIndex_ ===
+      "function"
+      ? reportOSGetLayoutIndex_(
+          report,
+          false
+        )
+      : null;
+
+  return requested
+    .map(
+      function (
+        item
+      ) {
+        /*
+         * Accept both the new object format and the older
+         * row-number-only format.
+         */
+        const header =
+          item &&
+          typeof item ===
+            "object"
+            ? String(
+                item.header ||
+                ""
+              ).trim()
+            : "";
+
+        const requestedRow =
+          item &&
+          typeof item ===
+            "object"
+            ? Number(
+                item.row ||
+                0
+              )
+            : Number(
+                item ||
+                0
+              );
+
+        let row =
+          header
+            ? reportDecisionResolveContentRow_(
+                report,
+                index,
+                header
+              )
+            : requestedRow;
+
+        if (
+          !row ||
+          row < 1
+        ) {
+          return null;
+        }
+
+        const safeHeader =
+          header ||
+          reportDecisionFindHeaderAboveRow_(
+            report,
+            row
+          );
+
+        if (!safeHeader) {
+          return null;
+        }
+
+        const expectedRow =
+          reportDecisionResolveContentRow_(
+            report,
+            index,
+            safeHeader
+          );
+
+        if (
+          !expectedRow ||
+          expectedRow !== row
+        ) {
+          row =
+            expectedRow;
+        }
+
+        const value =
+          String(
+            report
+              .getRange(
+                row,
+                1
+              )
+              .getDisplayValue() ||
+            ""
+          ).trim();
+
+        if (
+          !reportDecisionIsRealNote_(
+            value
+          )
+        ) {
+          return null;
+        }
+
+        return {
+          header:
+            safeHeader,
+
+          row:
+            row,
+
+          value:
+            value
+        };
+      }
+    )
+    .filter(
+      Boolean
+    );
+}
+
+
+/* =========================================================
+ * RESTORE SELECTED NOTES
+ * ========================================================= */
+
+function reportDecisionRestoreSelectedNotes_(
+  preservedNotes
+) {
+  const notes =
+    Array.isArray(
+      preservedNotes
+    )
+      ? preservedNotes
+      : [];
+
+  const result = {
+    preserved:
+      notes.length,
+
+    restored:
+      0,
+
+    skipped:
+      []
+  };
+
+  if (!notes.length) {
+    return result;
+  }
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const report =
+    ss.getSheetByName(
+      "Performance Report"
+    );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report" tab.'
+    );
+  }
+
+  /*
+   * Rebuild/retrieve after the reset because row positions
+   * must be validated against the current report structure.
+   */
+  const index =
+    typeof reportOSGetLayoutIndex_ ===
+      "function"
+      ? reportOSGetLayoutIndex_(
+          report,
+          true
+        )
+      : null;
+
+  notes.forEach(
+    function (
+      note
+    ) {
+      const row =
+        reportDecisionResolveContentRow_(
+          report,
+          index,
+          note.header
+        );
+
+      if (!row) {
+        result.skipped.push({
+          header:
+            note.header,
+
+          reason:
+            "Could not resolve a safe content row."
+        });
+
+        return;
+      }
+
+      const cell =
+        report.getRange(
+          row,
+          1
+        );
+
+      const current =
+        String(
+          cell.getDisplayValue() ||
+          ""
+        ).trim();
+
+      const merged =
+        reportDecisionMergeNoteText_(
+          note.value,
+          current
+        );
+
+      cell
+        .setValue(
+          merged
+        )
+        .setWrap(
+          true
+        )
+        .setVerticalAlignment(
+          "top"
+        );
+
+      result.restored++;
+    }
+  );
+
+  SpreadsheetApp.flush();
+
+  return result;
+}
+
+
+/* =========================================================
+ * MERGE OLD NOTE + NEWLY ROUTED NOTE
+ * ========================================================= */
+
+function reportDecisionMergeNoteText_(
+  preservedText,
+  currentText
+) {
+  const preservedLines =
+    reportDecisionRealLines_(
+      preservedText
+    );
+
+  const currentLines =
+    reportDecisionRealLines_(
+      currentText
+    );
+
+  if (
+    typeof mergeUniqueReportLines_SAFE_ ===
+    "function"
+  ) {
+    return mergeUniqueReportLines_SAFE_(
+      preservedLines,
+      currentLines
+    ).join("\n");
+  }
+
+  const seen = {};
+  const output = [];
+
+  preservedLines
+    .concat(
+      currentLines
+    )
+    .forEach(
+      function (
+        line
+      ) {
+        const key =
+          String(
+            line || ""
+          )
+            .replace(
+              /\s+/g,
+              " "
+            )
+            .trim()
+            .toLowerCase();
+
+        if (
+          !key ||
+          seen[key]
+        ) {
+          return;
+        }
+
+        seen[key] =
+          true;
+
+        output.push(
+          line
+        );
+      }
+    );
+
+  return output.join(
+    "\n"
+  );
+}
+
+
+function reportDecisionRealLines_(
+  value
+) {
+  const text =
+    String(
+      value || ""
+    ).trim();
+
+  if (
+    !text ||
+    !reportDecisionIsRealNote_(
+      text
+    )
+  ) {
+    return [];
+  }
+
+  return text
+    .split(
+      /\n+/
+    )
+    .map(
+      function (
+        line
+      ) {
+        return String(
+          line || ""
+        ).trim();
+      }
+    )
+    .filter(
+      function (
+        line
+      ) {
+        return (
+          line &&
+          reportDecisionIsRealNote_(
+            line
+          )
+        );
+      }
+    );
+}
+
+
+/* =========================================================
+ * SAFE LAYOUT RESOLUTION
+ * ========================================================= */
+
+function reportDecisionResolveContentRow_(
+  report,
+  index,
+  header
+) {
+  if (
+    typeof reportOSFindOptionalContentCell_ ===
+      "function" &&
+    index
+  ) {
+    const cell =
+      reportOSFindOptionalContentCell_(
+        report,
+        index,
+        header,
+        1,
+        1
+      );
+
+    return cell
+      ? cell.getRow()
+      : null;
+  }
+
+  if (
+    typeof findSafeReportNoteRowBelowHeader_ ===
+      "function"
+  ) {
+    return findSafeReportNoteRowBelowHeader_(
+      report,
+      header
+    );
+  }
+
+  return reportDecisionFindContentRowAfterHeader_(
+    report,
+    header
+  );
+}
+
+
+function reportDecisionFindContentRowAfterHeader_(
+  sheet,
+  headerText
+) {
+  const target =
+    String(
+      headerText || ""
+    )
+      .trim()
+      .toUpperCase();
+
+  const values =
+    sheet
+      .getRange(
+        1,
+        1,
+        sheet.getLastRow(),
+        1
+      )
+      .getDisplayValues();
+
+  for (
+    let index = 0;
+    index < values.length;
+    index++
+  ) {
+    const value =
+      String(
+        values[index][0] ||
+        ""
+      )
+        .trim()
+        .toUpperCase();
+
+    if (
+      value === target
+    ) {
+      const candidate =
+        index + 2;
+
+      const candidateValue =
+        String(
+          values[
+            candidate - 1
+          ] &&
+          values[
+            candidate - 1
+          ][0] ||
+          ""
+        ).trim();
+
+      if (
+        candidateValue &&
+        typeof isPerformanceReportSectionHeader_SAFE_ ===
+          "function" &&
+        isPerformanceReportSectionHeader_SAFE_(
+          candidateValue
+        )
+      ) {
+        return null;
+      }
+
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+
+function reportDecisionFindHeaderAboveRow_(
+  report,
+  row
+) {
+  if (
+    !report ||
+    !row ||
+    row <= 1
+  ) {
+    return "";
+  }
+
+  const value =
+    String(
+      report
+        .getRange(
+          row - 1,
+          1
+        )
+        .getDisplayValue() ||
+      ""
+    ).trim();
+
+  if (
+    typeof isPerformanceReportSectionHeader_SAFE_ ===
+      "function" &&
+    isPerformanceReportSectionHeader_SAFE_(
+      value
+    )
+  ) {
+    return value;
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * NOTE CLASSIFICATION
+ * ========================================================= */
+
+function reportDecisionIsRealNote_(
+  value
+) {
+  const text =
+    String(
+      value || ""
+    ).trim();
+
+  if (!text) {
+    return false;
+  }
+
+  const lower =
+    text.toLowerCase();
+
+  if (
+    lower === "–" ||
+    lower === "-"
+  ) {
+    return false;
+  }
+
+  return !(
+    lower.includes(
+      "no notes today"
+    ) ||
+    lower.includes(
+      "no notes tonight"
+    ) ||
+    lower.includes(
+      "no notes, thank you"
+    )
+  );
+}
+
+
+function reportDecisionNeutralDisplay_(
+  header,
+  currentValue
+) {
+  if (
+    String(
+      header || ""
+    ).toUpperCase() ===
+    "PERFORMANCE NOTES:"
+  ) {
+    return "No existing performance note to preserve.";
+  }
+
+  if (
+    currentValue &&
+    !reportDecisionIsRealNote_(
+      currentValue
+    )
+  ) {
+    return "No existing note — this section will reset normally.";
+  }
+
+  return "No existing note — this section will reset normally.";
+}
+
+
+/* =========================================================
+ * HELPERS
+ * ========================================================= */
+
+function reportDecisionNormalizeMode_(
+  mode
+) {
+  const upper =
+    String(
+      mode || "AUTO"
+    )
+      .trim()
+      .toUpperCase();
+
+  if (
+    upper === "MAT" ||
+    upper === "MATINEE"
+  ) {
+    return "MAT";
+  }
+
+  if (
+    upper === "EVE" ||
+    upper === "EVENING"
+  ) {
+    return "EVE";
+  }
+
+  return "AUTO";
+}
+
+
+function reportDecisionSectionId_(
+  header
+) {
+  return String(
+    header || ""
+  )
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9]+/g,
+      "_"
+    )
+    .replace(
+      /^_+|_+$/g,
+      ""
+    );
+}
+
+
+/* =========================================================
+ * TEST HELPERS
+ * ========================================================= */
+
+function reportDecisionRunNeutral_TEST() {
+  return reportOSRunResetWithDecision(
+    "AUTO",
+    []
+  );
+}
+
+
+function reportDecisionRunKeepAll_TEST() {
+  const decision =
+    reportDecisionBuildResetDecision_();
+
+  const selections =
+    decision.existingNotes.map(
+      function (
+        note
+      ) {
+        return {
+          header:
+            note.header,
+
+          row:
+            note.row
+        };
+      }
+    );
+
+  return reportOSRunResetWithDecision(
+    "AUTO",
+    selections
+  );
+}

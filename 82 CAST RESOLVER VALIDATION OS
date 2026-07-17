@@ -1,0 +1,136 @@
+/*************************************************
+ * 82 CAST RESOLVER VALIDATION OS
+ * Version: 1.0.0
+ * Status: ENGINE-FIRST VALIDATION / SAFETY CHECK
+ *************************************************/
+
+function validateCastResolverOS() {
+  const resolved = CastResolverOS().resolveCurrentPerformance();
+
+  if (typeof EngineResolverHistoryOS === "function") {
+    EngineResolverHistoryOS().record(resolved);
+  }
+
+  const issues = castResolverOSBuildValidationIssues_(resolved);
+
+  castResolverOSWriteValidationDebug_(resolved, issues);
+
+  const errorCount = issues.filter(i => i.severity === "ERROR").length;
+  const warningCount = issues.filter(i => i.severity === "WARNING").length;
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "CastResolverOS",
+      "Validate Resolver",
+      "CastResolver validation complete.",
+      {
+        performanceDate: resolved.performanceDate,
+        performanceLabel: resolved.performanceLabel,
+        errors: errorCount,
+        warnings: warningCount
+      }
+    );
+  }
+
+  if (typeof EngineAnalyticsOS === "function") {
+    EngineAnalyticsOS().record(
+      "CastResolverOS",
+      "Resolver Validation",
+      1,
+      {
+        performanceDate: resolved.performanceDate,
+        performanceLabel: resolved.performanceLabel,
+        errors: errorCount,
+        warnings: warningCount
+      }
+    );
+  }
+
+  SpreadsheetApp.getUi().alert(
+    "CastResolver validation complete.\n\n" +
+    "Errors: " + errorCount + "\n" +
+    "Warnings: " + warningCount
+  );
+
+  return {
+    resolved,
+    issues
+  };
+}
+
+function castResolverOSBuildValidationIssues_(resolved) {
+  const issues = [];
+  const company = resolved.company || [];
+  const rawRows = resolved.rawInOutRows || [];
+  const castRows = resolved.castInOutRows || [];
+
+  const knownRoles = company.map(row => castResolverOSNormalize_(row.role));
+
+  company.forEach(row => {
+    if (!row.resolvedActor) {
+      issues.push({
+        severity: "ERROR",
+        type: "BLANK_RESOLVED_ACTOR",
+        role: row.role,
+        actor: "",
+        message: "Resolved actor is blank."
+      });
+    }
+
+    if (row.status === "OUT_UNCOVERED") {
+      issues.push({
+        severity: "ERROR",
+        type: "OUT_UNCOVERED",
+        role: row.role,
+        actor: row.outActor,
+        message: row.role + " is marked OUT with no IN actor."
+      });
+    }
+  });
+
+  castRows.forEach(row => {
+    if ((row.out || row.in) && !row.role) {
+      issues.push({
+        severity: "ERROR",
+        type: "BLANK_INOUT_ROLE",
+        role: "",
+        actor: row.out || row.in,
+        message: "IN/OUT row " + row.sheetRow + " has actor information but no role."
+      });
+    }
+
+    if (row.role && knownRoles.indexOf(castResolverOSNormalize_(row.role)) === -1) {
+      issues.push({
+        severity: "WARNING",
+        type: "UNKNOWN_CAST_ROLE",
+        role: row.role,
+        actor: row.out || row.in,
+        message: "IN/OUT row " + row.sheetRow + " references a role not found in Cast List."
+      });
+    }
+  });
+
+  return issues;
+}
+
+function castResolverOSWriteValidationDebug_(resolved, issues) {
+  const errorCount = issues.filter(i => i.severity === "ERROR").length;
+  const warningCount = issues.filter(i => i.severity === "WARNING").length;
+
+  if (typeof EngineResolverOS === "function") {
+    EngineResolverOS().append({
+      Timestamp: new Date(),
+      Action: "Resolver Validation",
+      Source: "validateCastResolverOS",
+      Notes: "Resolver validation written to Engine only.",
+      Confidence: errorCount ? "ERRORS" : warningCount ? "WARNINGS" : "CLEAR",
+      "Payload JSON": JSON.stringify({
+        performanceDate: resolved.performanceDate,
+        performanceLabel: resolved.performanceLabel,
+        errorCount: errorCount,
+        warningCount: warningCount,
+        issues: issues
+      })
+    });
+  }
+}

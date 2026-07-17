@@ -1,0 +1,235 @@
+/*************************************************
+ * 13 INOUT PLANNED OUTS
+ * Version: 2.0.0
+ * Status: COMPATIBILITY LAYER
+ *
+ * Planned-out resolution is now owned by the same
+ * resolved PayrollScheduleOS / WeeklyOS pipeline used by:
+ *
+ * - PrepOS
+ * - Payroll
+ * - Payroll Notes
+ * - PerformanceAssignmentOS
+ *
+ * This wrapper remains so older callers of
+ * InOutIntelligenceOS().plannedOutsForDate()
+ * continue to work without maintaining a second
+ * PD/Vacation Tracker reader.
+ *************************************************/
+
+function getPlannedOutsForDate_(
+  targetDate
+) {
+  const startedAt =
+    Date.now();
+
+  if (
+    typeof prepOSReadPlannedOutsFromWeeklyOS_ !==
+      "function"
+  ) {
+    throw new Error(
+      "The canonical planned-out reader " +
+      "prepOSReadPlannedOutsFromWeeklyOS_ is unavailable."
+    );
+  }
+
+  const plannedOuts =
+    prepOSReadPlannedOutsFromWeeklyOS_(
+      targetDate
+    ) || [];
+
+  Logger.log(
+    "INOUT PLANNED OUTS COMPATIBILITY WRAPPER"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      {
+        source:
+          "PayrollScheduleOS",
+
+        records:
+          plannedOuts.length,
+
+        durationMs:
+          Date.now() -
+          startedAt
+      },
+      null,
+      2
+    )
+  );
+
+  return plannedOuts;
+}
+
+function buildInOutIntelRoleByActorCache_() {
+  const output = {};
+
+  if (
+    typeof CastListCacheOS !==
+    "function"
+  ) {
+    return output;
+  }
+
+  const cache =
+    CastListCacheOS().get() ||
+    {};
+
+  const principalByRole =
+    cache.principalByRole ||
+    {};
+
+  const rolesByKey =
+    cache.rolesByKey ||
+    {};
+
+  Object.keys(
+    principalByRole
+  ).forEach(function (roleKey) {
+    const actor =
+      String(
+        principalByRole[roleKey] ||
+        ""
+      ).trim();
+
+    if (!actor) return;
+
+    const actorKey =
+      normalizeInOutIntelText_(
+        actor
+      );
+
+    output[actorKey] =
+      rolesByKey[roleKey] ||
+      roleKey;
+  });
+
+  return output;
+}
+
+function prepPlannedOutsForInOut_(targetDate) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!inOut) throw new Error("Could not find IN/OUT tab.");
+
+  const plannedOuts = InOutIntelligenceOS().plannedOutsForDate(targetDate);
+  if (!plannedOuts.length) return { written: [], skippedForInOut: [] };
+
+  const written = [];
+  const skippedForInOut = [];
+
+  plannedOuts.forEach(outRecord => {
+    const actor = outRecord.actor || "";
+    const role = outRecord.role || "";
+    const reason = outRecord.reason || "";
+    const status = outRecord.status || "";
+    const performances = outRecord.performances || "";
+
+    const tempReplacement = getTempReplacementForLOA_(outRecord);
+
+    const coverOptions = tempReplacement
+      ? [tempReplacement]
+      : InOutIntelligenceOS().coverOptionsForRole(role);
+
+    const cover = tempReplacement || promptCoverForPlannedOut_({
+      actor,
+      role,
+      reason,
+      status,
+      performances,
+      coverOptions
+    });
+
+    if (!cover) return;
+
+    const completedRecord = Object.assign({}, outRecord, {
+      inActor: cover
+    });
+
+    if (completedRecord.writeToInOutSheet) {
+      writePlannedOutToInOutSheet_(inOut, completedRecord);
+      written.push(completedRecord);
+    } else {
+      skippedForInOut.push(completedRecord);
+    }
+  });
+
+  if (written.length || skippedForInOut.length) {
+    const message = [
+      written.length
+        ? "Written to IN/OUT:\n" + written.map(formatPlannedOutSummary_).join("\n")
+        : "",
+      skippedForInOut.length
+        ? "Skipped from IN/OUT due to LOA/MLOA:\n" + skippedForInOut.map(formatPlannedOutSummary_).join("\n")
+        : ""
+    ].filter(Boolean).join("\n\n");
+
+    ui.alert("Planned Outs Processed", message, ui.ButtonSet.OK);
+  }
+
+  return { written, skippedForInOut };
+}
+
+function promptCoverForPlannedOut_(info) {
+  const ui = SpreadsheetApp.getUi();
+  const options = info.coverOptions || [];
+
+  const optionText = options.length
+    ? options.map((name, i) => `${i + 1}. ${name}`).join("\n")
+    : "No cover options found.";
+
+  const message =
+    `${info.actor} OUT\n\n` +
+    `Role: ${info.role || "Not found"}\n` +
+    `Reason: ${info.reason || "Not listed"}\n` +
+    `Status: ${info.status || "Not listed"}\n` +
+    `Performances: ${info.performances || "Not listed"}\n\n` +
+    `Possible Covers:\n${optionText}\n\n` +
+    `Type the number of the cover, or type a name manually.`;
+
+  const response = ui.prompt(
+    "Planned Out Coverage",
+    message,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return "";
+
+  const answer = response.getResponseText().trim();
+  if (!answer) return "";
+
+  const number = Number(answer);
+  if (number && options[number - 1]) return options[number - 1];
+
+  return answer;
+}
+
+function writePlannedOutToInOutSheet_(inOut, record) {
+  const row = findNextInOutEntryRow_(inOut);
+
+  inOut.getRange(row, 1).setValue(record.actor || "");
+  inOut.getRange(row, 3).setValue(record.inActor || "");
+  inOut.getRange(row, 5).setValue(record.role || "");
+  inOut.getRange(row, 7).setValue(record.reason || "");
+}
+
+function findNextInOutEntryRow_(inOut) {
+  const startRow = 6;
+  const lastRow = Math.max(inOut.getLastRow(), startRow);
+  const values = inOut.getRange(startRow, 1, lastRow - startRow + 1, 7).getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const rowHasData = values[i].some(v => String(v || "").trim());
+    if (!rowHasData) return startRow + i;
+  }
+
+  return lastRow + 1;
+}
+
+function formatPlannedOutSummary_(record) {
+  return `- ${record.actor} OUT, ${record.role} = ${record.inActor} (${record.reason || "No reason"})`;
+}

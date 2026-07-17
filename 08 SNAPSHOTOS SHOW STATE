@@ -1,0 +1,365 @@
+/*************************************************
+ * 08 SNAPSHOTOS SHOW STATE
+ * Version: 1.0.0
+ * Status: ENGINE-FIRST
+ *************************************************/
+
+function snapshotOSv2CaptureShowStateSnapshotFromPrep_(payload) {
+  if (!payload) throw new Error("SnapshotOS v2: missing Prep IN/OUT payload.");
+
+  const show = snapshotOSv2GetShowWorkbook_();
+  const inOut = show.getSheetByName("IN/OUT");
+  const sh = snapshotOSv2GetOrCreateShowStateSheet_();
+
+  const now = new Date();
+  const performanceText = payload.performance || "";
+
+  const performanceNumber = snapshotOSv2ExtractPerformanceNumber_(performanceText) || "UNKNOWN";
+  const performanceTime = (performanceText.match(/- (.+?) (MAT|EVE)/i) || [])[1] || "";
+  const showType = snapshotOSv2ExtractPerformanceType_(performanceText) || "SHOW";
+
+  const dateText =
+    payload.date ||
+    (inOut ? inOut.getRange("A3").getDisplayValue() : "") ||
+    "";
+
+  const snapshotId = "P" + performanceNumber + "-" + showType.toUpperCase();
+
+  const castOuts = payload.castOuts || [];
+  const notesText = payload.notes || "";
+
+  const crewNotesCount = notesText
+    ? notesText.split("\n").filter(line => line.trim()).length
+    : 0;
+
+  const officeShow =
+    payload.assignments &&
+    payload.assignments.officeShow === true;
+
+  const trainingActive = snapshotOSv2PayloadHasTrainingActive_(payload);
+
+  const compactPayload = snapshotOSv2BuildCompactPrepPayload_(payload);
+
+  const row = [
+    snapshotId,
+    now,
+    dateText,
+    performanceText,
+    performanceNumber,
+    performanceTime,
+    showType,
+    payload.conductor || "",
+    payload.guestSpellerName || "",
+    castOuts.length,
+    crewNotesCount,
+    officeShow,
+    trainingActive,
+    notesText,
+    JSON.stringify(compactPayload)
+  ];
+
+  const existingRow = snapshotOSv2FindSnapshotRowById_(sh, snapshotId);
+
+  if (existingRow) {
+    sh.getRange(existingRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sh.appendRow(row);
+  }
+
+  const historyResult = snapshotOSv2AppendShowStateHistory_(snapshotId, row, compactPayload);
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "SnapshotOS",
+      "Show State Snapshot",
+      "Show State snapshot written to Engine.",
+      {
+        snapshotId: snapshotId,
+        revision: historyResult.revisionNumber,
+        performance: performanceText
+      }
+    );
+  }
+
+  return {
+    ok: true,
+    snapshotId,
+    sheetName: sh.getName(),
+    rowsWritten: 1
+  };
+}
+
+function snapshotOSv2GetOrCreateShowStateSheet_() {
+  const sh = snapshotOSv2GetOrCreateEngineBackedSheet_("SnapshotOS v2 - Show State");
+
+  const headers = [
+    "Snapshot ID",
+    "Captured At",
+    "Date",
+    "Performance Label",
+    "Performance Number",
+    "Performance Time",
+    "Show Type",
+    "Conductor",
+    "Guest Speller",
+    "Cast Outs Count",
+    "Crew Notes Count",
+    "Office Show",
+    "Training Active",
+    "Notes",
+    "Payload JSON"
+  ];
+
+  snapshotOSv2EnsureHeaders_(sh, headers, "#cfe2f3");
+  return sh;
+}
+
+function snapshotOSv2AppendShowStateHistory_(snapshotId, latestRow, payload) {
+  const sh = snapshotOSv2GetOrCreateShowStateHistorySheet_();
+
+  const revisionNumber = snapshotOSv2GetNextRevisionNumber_(sh, snapshotId);
+  const changeSummary = snapshotOSv2BuildShowStateChangeSummary_(sh, snapshotId, payload);
+
+  const historyRow = [
+    snapshotId,
+    revisionNumber,
+    new Date(),
+    changeSummary,
+    ...latestRow.slice(2),
+    JSON.stringify(payload)
+  ];
+
+  sh.appendRow(historyRow);
+
+  return {
+    snapshotId,
+    revisionNumber,
+    changeSummary
+  };
+}
+
+function snapshotOSv2GetOrCreateShowStateHistorySheet_() {
+  const sh = snapshotOSv2GetOrCreateEngineBackedSheet_("SnapshotOS v2 - Show State History");
+
+  const headers = [
+    "Snapshot ID",
+    "Revision",
+    "Revision Captured At",
+    "Change Summary",
+    "Date",
+    "Performance Label",
+    "Performance Number",
+    "Performance Time",
+    "Show Type",
+    "Conductor",
+    "Guest Speller",
+    "Cast Outs Count",
+    "Crew Notes Count",
+    "Office Show",
+    "Training Active",
+    "Notes",
+    "Latest Payload JSON",
+    "Revision Payload JSON"
+  ];
+
+  snapshotOSv2EnsureHeaders_(sh, headers, "#cfe2f3");
+  return sh;
+}
+
+/*************************************************
+ * ENGINE-BACKED STORAGE
+ *************************************************/
+
+function snapshotOSv2GetOrCreateEngineBackedSheet_(name) {
+  if (typeof EngineOS === "function" && EngineOS().status().connected) {
+    return EngineOS().sheet(name, { create: true }).sheet();
+  }
+
+  return snapshotOSv2GetOrCreateSheet_(name);
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function snapshotOSv2FindSnapshotRowById_(sh, snapshotId) {
+  if (!sh || !snapshotId) return null;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return null;
+
+  const ids = sh.getRange(2, 1, lastRow - 1, 1).getValues().flat();
+  const index = ids.findIndex(id => id === snapshotId);
+
+  return index === -1 ? null : index + 2;
+}
+
+function snapshotOSv2PayloadHasTrainingActive_(payload) {
+  const training =
+    payload &&
+    payload.assignments &&
+    payload.assignments.training;
+
+  if (!training) return false;
+
+  return Object.keys(training).some(key => {
+    const item = training[key];
+    return item && item.enabled === true;
+  });
+}
+
+function snapshotOSv2GetNextRevisionNumber_(sh, snapshotId) {
+  if (!sh || !snapshotId) return 1;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return 1;
+
+  const ids = sh.getRange(2, 1, lastRow - 1, 1).getValues().flat();
+  const count = ids.filter(id => id === snapshotId).length;
+
+  return count + 1;
+}
+
+function snapshotOSv2BuildShowStateChangeSummary_(historySheet, snapshotId, newPayload) {
+  const previousPayload = snapshotOSv2GetLatestHistoryPayload_(historySheet, snapshotId);
+
+  if (!previousPayload) return "Initial Prep";
+
+  const changes = [];
+
+  if ((previousPayload.conductor || "") !== (newPayload.conductor || "")) {
+    changes.push(
+      "Conductor changed: " +
+      (previousPayload.conductor || "blank") +
+      " → " +
+      (newPayload.conductor || "blank")
+    );
+  }
+
+  if ((previousPayload.guestSpellerName || "") !== (newPayload.guestSpellerName || "")) {
+    changes.push("Guest Speller changed");
+  }
+
+  if ((previousPayload.notes || "") !== (newPayload.notes || "")) {
+    changes.push("Crew notes updated");
+  }
+
+  if (JSON.stringify(previousPayload.castOuts || []) !== JSON.stringify(newPayload.castOuts || [])) {
+    changes.push("Cast outs updated");
+  }
+
+  const oldAssignments =
+    previousPayload.assignments && previousPayload.assignments.values
+      ? previousPayload.assignments.values
+      : {};
+
+  const newAssignments =
+    newPayload.assignments && newPayload.assignments.values
+      ? newPayload.assignments.values
+      : {};
+
+  Object.keys(newAssignments).forEach(trackId => {
+    const oldValue = oldAssignments[trackId] || "";
+    const newValue = newAssignments[trackId] || "";
+
+    if (oldValue !== newValue) {
+      changes.push(
+        "Assignment changed: " +
+        trackId +
+        " " +
+        (oldValue || "blank") +
+        " → " +
+        (newValue || "blank")
+      );
+    }
+  });
+
+  const oldTraining = snapshotOSv2PayloadHasTrainingActive_(previousPayload);
+  const newTraining = snapshotOSv2PayloadHasTrainingActive_(newPayload);
+
+  if (oldTraining !== newTraining) {
+    changes.push("Training status changed");
+  }
+
+  return changes.length ? changes.join("; ") : "No significant changes";
+}
+
+function snapshotOSv2GetLatestHistoryPayload_(historySheet, snapshotId) {
+  if (!historySheet || !snapshotId) return null;
+
+  const lastRow = historySheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const values = historySheet.getRange(2, 1, lastRow - 1, 18).getValues();
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+
+    if (row[0] === snapshotId) {
+      const payloadJson = row[17];
+      if (!payloadJson) return null;
+
+      try {
+        return JSON.parse(payloadJson);
+      } catch (err) {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
+function snapshotOSv2BuildCompactPrepPayload_(payload) {
+  const assignments = payload.assignments || {};
+  const values = assignments.values || {};
+  const training = assignments.training || {};
+
+  return {
+    performance: payload.performance || "",
+    conductor: payload.conductor || "",
+    guestSpellerName: payload.guestSpellerName || "",
+    guestDateTimeText: payload.guestDateTimeText || "",
+    guestSpellerNote: payload.guestSpellerNote || "",
+    notes: payload.notes || "",
+    castOuts: payload.castOuts || [],
+    assignments: {
+      values: {
+        calling: values.calling || "",
+        deck: values.deck || "",
+        audio: values.audio || ""
+      },
+      officeShow: assignments.officeShow === true,
+      training: training
+    }
+  };
+}
+
+function testSnapshotOSShowStateEngineWrite() {
+  const payload = {
+    date: "Sunday, July 5",
+    performance: "PERFORMANCE #999 - 7:00 PM EVE",
+    conductor: "Test Conductor",
+    guestSpellerName: "Test Guest",
+    guestDateTimeText: "",
+    guestSpellerNote: "",
+    notes: "- Test snapshot note",
+    castOuts: [],
+    assignments: {
+      officeShow: false,
+      values: {
+        calling: "",
+        deck: "",
+        audio: ""
+      },
+      training: {}
+    }
+  };
+
+  const result = snapshotOSv2CaptureShowStateSnapshotFromPrep_(payload);
+
+  SpreadsheetApp.getUi().alert(
+    "Snapshot test complete.\n\n" +
+    JSON.stringify(result, null, 2)
+  );
+}

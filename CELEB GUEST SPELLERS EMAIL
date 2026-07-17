@@ -1,0 +1,360 @@
+/*************************************************
+ * CELEB GUEST SPELLERS EMAIL
+ *
+ * Reads:
+ *   Expanded Calendar
+ *   Column A = Date
+ *   Column C = Performance Time
+ *   Column D = Planned Guest Speller
+ *
+ * Creates a Gmail draft for the upcoming
+ * Monday through Sunday.
+ *************************************************/
+
+function createCelebGuestSpellersEmailDraft() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Expanded Calendar");
+
+  if (!sheet) {
+    throw new Error('Could not find the "Expanded Calendar" tab.');
+  }
+
+  const timeZone = Session.getScriptTimeZone();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const monday = getUpcomingMonday_(today);
+
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  const range = sheet.getDataRange();
+  const rawData = range.getValues();
+  const displayData = range.getDisplayValues();
+
+  const guests = [];
+  let activeDate = null;
+
+  for (let r = 1; r < rawData.length; r++) {
+    const rawDate = rawData[r][0];               // Column A
+    const displayedDate = displayData[r][0];     // Column A
+    const rawTime = rawData[r][2];               // Column C
+    const displayedTime = displayData[r][2];     // Column C
+    const guestName = String(displayData[r][3] || "").trim(); // Column D
+
+    const rowDate = parseExpandedCalendarDate_(
+      rawDate,
+      displayedDate
+    );
+
+    // Column A contains merged date cells.
+    // The first row of each date contains the value,
+    // and the following rows inherit activeDate.
+    if (rowDate) {
+      activeDate = rowDate;
+    }
+
+    if (!activeDate) {
+      continue;
+    }
+
+    if (activeDate < monday || activeDate > sunday) {
+      continue;
+    }
+
+    if (!guestName) {
+      continue;
+    }
+
+    const performanceTime = formatGuestTime_(
+      rawTime || displayedTime
+    );
+
+    guests.push({
+      date: new Date(activeDate),
+      time: performanceTime,
+      name: guestName
+    });
+  }
+
+  guests.sort(function(a, b) {
+    const dateDifference = a.date.getTime() - b.date.getTime();
+
+    if (dateDifference !== 0) {
+      return dateDifference;
+    }
+
+    return a.time.localeCompare(b.time);
+  });
+
+  const subject =
+    "Celeb Guest Spellers " +
+    formatSubjectDate_(monday) +
+    " – " +
+    formatSubjectDate_(sunday);
+
+  const htmlGuestSection = guests.length
+    ? guests.map(function(guest) {
+        const dateText = Utilities.formatDate(
+          guest.date,
+          timeZone,
+          "EEEE, M/d"
+        );
+
+        const dateAndTime = guest.time
+          ? dateText + " " + guest.time
+          : dateText;
+
+        return (
+          "- <b>" +
+          escapeGuestEmailHtml_(dateAndTime) +
+          "</b> - " +
+          escapeGuestEmailHtml_(guest.name)
+        );
+      }).join("<br>")
+    : "- NONE!";
+
+  const plainTextGuestSection = guests.length
+    ? guests.map(function(guest) {
+        const dateText = Utilities.formatDate(
+          guest.date,
+          timeZone,
+          "EEEE, M/d"
+        );
+
+        const dateAndTime = guest.time
+          ? dateText + " " + guest.time
+          : dateText;
+
+        return "- " + dateAndTime + " - " + guest.name;
+      }).join("\n")
+    : "- NONE!";
+
+  const signature = getStageOSEmailSignature_();
+
+  const htmlBody = `
+    <p>Hiya Cast,</p>
+
+    <p>
+      Welcome to the upcoming celeb/known guest spellers for the upcoming week email.
+      <b>Reminder: not everybody wishes to know this info in advance, so please use your discretion.</b>
+      We will still confirm all of this info with the LIFT TO REVEAL TODAY'S CELEB GUEST SPELLER
+      on the callboard/in-out text.
+    </p>
+
+    <p>
+      Here's what we got so far for this week:<br>
+      ${htmlGuestSection}
+    </p>
+
+    <p>
+      As always, subject to change. We will text/email with any updates.
+    </p>
+
+    <p>Happy Sunday,</p>
+
+    ${signatureToHtml_(signature)}
+  `;
+
+  const plainTextBody = [
+    "Hiya Cast,",
+    "",
+    "Welcome to the upcoming celeb/known guest spellers for the upcoming week email.",
+    "Reminder: not everybody wishes to know this info in advance, so please use your discretion.",
+    "We will still confirm all of this info with the LIFT TO REVEAL TODAY'S CELEB GUEST SPELLER on the callboard/in-out text.",
+    "",
+    "Here's what we got so far for this week:",
+    plainTextGuestSection,
+    "",
+    "As always, subject to change. We will text/email with any updates.",
+    "",
+    "Happy Sunday,",
+    "",
+    signature
+  ].join("\n");
+
+  GmailApp.createDraft(
+    "",
+    subject,
+    plainTextBody,
+    {
+      htmlBody: htmlBody
+    }
+  );
+
+  SpreadsheetApp.getUi().alert(
+    guests.length
+      ? guests.length +
+        " guest speller" +
+        (guests.length === 1 ? "" : "s") +
+        " found. Email draft created!"
+      : "No guest spellers were found for the upcoming week. Email draft created with NONE!"
+  );
+}
+
+
+/*************************************************
+ * UPCOMING MONDAY
+ *
+ * Sunday = tomorrow
+ * Monday = same day
+ * Tuesday–Saturday = next Monday
+ *************************************************/
+
+function getUpcomingMonday_(today) {
+  const date = new Date(today);
+  const dayOfWeek = date.getDay();
+
+  let daysUntilMonday = (8 - dayOfWeek) % 7;
+
+  if (dayOfWeek === 0) {
+    daysUntilMonday = 1;
+  }
+
+  date.setDate(date.getDate() + daysUntilMonday);
+  date.setHours(0, 0, 0, 0);
+
+  return date;
+}
+
+
+/*************************************************
+ * PARSE EXPANDED CALENDAR DATE
+ *
+ * Supports:
+ *   Real spreadsheet dates
+ *   Monday, July 13, 2026
+ *   July 13, 2026
+ *   7/13/2026
+ *   7/13/26
+ *************************************************/
+
+function parseExpandedCalendarDate_(rawValue, displayedValue) {
+  if (
+    rawValue instanceof Date &&
+    !isNaN(rawValue.getTime())
+  ) {
+    const date = new Date(rawValue);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  const text = String(
+    displayedValue || rawValue || ""
+  ).trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const slashMatch = text.match(
+    /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/
+  );
+
+  if (slashMatch) {
+    const month = Number(slashMatch[1]) - 1;
+    const day = Number(slashMatch[2]);
+
+    let year = slashMatch[3]
+      ? Number(slashMatch[3])
+      : new Date().getFullYear();
+
+    if (year < 100) {
+      year += 2000;
+    }
+
+    const slashDate = new Date(year, month, day);
+    slashDate.setHours(0, 0, 0, 0);
+
+    return isNaN(slashDate.getTime())
+      ? null
+      : slashDate;
+  }
+
+  const parsedDate = new Date(text);
+
+  if (isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  parsedDate.setHours(0, 0, 0, 0);
+
+  return parsedDate;
+}
+
+
+/*************************************************
+ * SUBJECT DATE
+ *************************************************/
+
+function formatSubjectDate_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE M/d"
+  );
+}
+
+
+/*************************************************
+ * PERFORMANCE TIME
+ *************************************************/
+
+function formatGuestTime_(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (
+    value instanceof Date &&
+    !isNaN(value.getTime())
+  ) {
+    return Utilities.formatDate(
+      value,
+      Session.getScriptTimeZone(),
+      "h:mma"
+    ).toLowerCase();
+  }
+
+  const text = String(value).trim();
+
+  if (!text) {
+    return "";
+  }
+
+  const normalized = text
+    .replace(/\s+/g, "")
+    .toLowerCase();
+
+  const timeMatch = normalized.match(
+    /^(\d{1,2})(?::(\d{2}))?(am|pm)$/
+  );
+
+  if (!timeMatch) {
+    return normalized;
+  }
+
+  const hour = timeMatch[1];
+  const minutes = timeMatch[2] || "";
+  const amPm = timeMatch[3];
+
+  return minutes === "00" || !minutes
+    ? hour + amPm
+    : hour + ":" + minutes + amPm;
+}
+
+
+/*************************************************
+ * HTML SAFETY
+ *************************************************/
+
+function escapeGuestEmailHtml_(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

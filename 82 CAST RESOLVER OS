@@ -1,0 +1,254 @@
+/*************************************************
+ * 82 CAST RESOLVER OS
+ * Version: 0.2.0
+ * Status: FOUNDATION
+ *
+ * v0.2 improvements:
+ * - Reads only the real IN/OUT grid
+ * - Stops before CONDUCTOR / NOTES / distribution rows
+ * - Ignores production-only roles for cast resolution
+ * - Preserves raw IN/OUT rows for validation/debug
+ *************************************************/
+
+function CastResolverOS() {
+  const stage = StageOS();
+
+return {
+  stage,
+
+  resolveCurrentPerformance: function () {
+    return castResolverOSResolveCurrentPerformance_();
+  },
+
+  state: function () {
+    return getCastResolverState();
+  },
+
+  company: function () {
+    return getCastResolverCompany();
+  },
+
+  role: function (roleName) {
+    return getCastResolverRole(roleName);
+  },
+
+  actor: function (actorName) {
+    return getCastResolverActorStatus(actorName);
+  },
+
+  changes: function () {
+    return getCastResolverChanges();
+  },
+
+  summary: function () {
+    return getCastResolverSummary();
+  },
+
+  snapshot: function () {
+    return getCastResolverSnapshotPayload();
+  },
+
+  validate: function () {
+    return validateCastResolverOS();
+  }
+};
+}
+
+function testCastResolverOS_ServiceAPI() {
+  const resolver = CastResolverOS();
+  const summary = resolver.summary();
+
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "CastResolverOS Service API online.\n\n" +
+    "Roles: " + summary.totalRoles + "\n" +
+    "Changes: " + summary.changes.length
+  );
+}
+
+function testCastResolverOS_CurrentPerformance() {
+  const resolved = CastResolverOS().resolveCurrentPerformance();
+  Logger.log(JSON.stringify(resolved, null, 2));
+  SpreadsheetApp.getUi().alert(
+    "CastResolverOS resolved " + resolved.company.length + " roles.\nCheck Logs."
+  );
+}
+
+function castResolverOSResolveCurrentPerformance_() {
+  const ss = SpreadsheetApp.getActive();
+  const castList = ss.getSheetByName("Cast List");
+  const inOut = ss.getSheetByName("IN/OUT");
+
+  if (!castList) throw new Error('CastResolverOS: Could not find "Cast List".');
+  if (!inOut) throw new Error('CastResolverOS: Could not find "IN/OUT".');
+
+  const performanceDate = inOut.getRange("A3").getDisplayValue();
+  const performanceLabel = inOut.getRange("B4").getDisplayValue();
+
+  const defaults = castResolverOSReadDefaultCast_(castList);
+  const rawInOutRows = castResolverOSReadFinalizedInOut_(inOut);
+  const castInOutRows = rawInOutRows.filter(row =>
+    !castResolverOSIsProductionOnlyRole_(row.role)
+  );
+
+  const company = defaults.map(person => {
+    const change = castInOutRows.find(row =>
+      castResolverOSSameRole_(row.role, person.role) ||
+      castResolverOSSameName_(row.out, person.defaultActor)
+    );
+
+    if (!change) {
+      return {
+        role: person.role,
+        defaultActor: person.defaultActor,
+        resolvedActor: person.defaultActor,
+        status: "DEFAULT",
+        outActor: "",
+        inActor: "",
+        reason: ""
+      };
+    }
+
+    return {
+      role: person.role,
+      defaultActor: person.defaultActor,
+      resolvedActor: change.in || "",
+      status: change.in ? "COVERED" : "OUT_UNCOVERED",
+      outActor: change.out || person.defaultActor,
+      inActor: change.in || "",
+      reason: change.reason || ""
+    };
+  });
+
+  return {
+    system: "CastResolverOS",
+    version: "0.2.0",
+    performanceDate,
+    performanceLabel,
+    company,
+    rawInOutRows,
+    castInOutRows
+  };
+}
+
+function castResolverOSReadDefaultCast_(castList) {
+  const values = castList.getDataRange().getDisplayValues();
+
+  return values
+    .map(row => ({
+      role: castResolverOSClean_(row[0]),
+      defaultActor: castResolverOSClean_(row[1])
+    }))
+    .filter(row =>
+      row.role &&
+      row.defaultActor &&
+      !/^role$/i.test(row.role) &&
+      !/^actor$/i.test(row.defaultActor)
+    );
+}
+
+function castResolverOSReadFinalizedInOut_(inOut) {
+  const startRow = 6;
+  const endRow = 22;
+
+  const rows = [];
+
+  for (let r = startRow; r <= endRow; r++) {
+    const out = castResolverOSReadMergedCell_(inOut, r, 1);     // A
+    const inActor = castResolverOSReadMergedCell_(inOut, r, 3); // C
+    const role = castResolverOSReadMergedCell_(inOut, r, 6);    // F
+    const reason = ""; // current IN/OUT visual grid has no reason column here
+
+    if (castResolverOSIsStopRow_(out, inActor, role, reason)) break;
+
+    if (out || inActor || role || reason) {
+      rows.push({
+        sheetRow: r,
+        out,
+        in: inActor,
+        role,
+        reason
+      });
+    }
+  }
+
+  return rows;
+}
+
+function castResolverOSReadMergedCell_(sheet, row, col) {
+  const range = sheet.getRange(row, col);
+  const mergedRanges = range.getMergedRanges();
+
+  if (mergedRanges && mergedRanges.length) {
+    return castResolverOSClean_(mergedRanges[0].getDisplayValue());
+  }
+
+  return castResolverOSClean_(range.getDisplayValue());
+}
+
+function castResolverOSIsStopRow_(out, inActor, role, reason) {
+  const combined = castResolverOSNormalize_(
+    [out, inActor, role, reason].join(" ")
+  );
+
+  const stopTerms = [
+    "conductor",
+    "notes",
+    "general notes",
+    "copies distribute",
+    "call board",
+    "sm office",
+    "wardrobe",
+    "dressing room",
+    "performance report"
+  ];
+
+  return stopTerms.some(term => combined.indexOf(term) !== -1);
+}
+
+function castResolverOSIsProductionOnlyRole_(role) {
+  const key = castResolverOSNormalize_(role);
+
+  const productionRoles = [
+    "calling sm",
+    "deck sm",
+    "asm",
+    "psm",
+    "conductor",
+    "music director",
+    "props",
+    "spot op",
+    "lx board",
+    "sound",
+    "wardrobe",
+    "wigs",
+    "automation",
+    "crew"
+  ];
+
+  return productionRoles.indexOf(key) !== -1;
+}
+
+function castResolverOSSameRole_(a, b) {
+  return castResolverOSNormalize_(a) === castResolverOSNormalize_(b);
+}
+
+function castResolverOSSameName_(a, b) {
+  return castResolverOSNormalize_(a) === castResolverOSNormalize_(b);
+}
+
+function castResolverOSNormalize_(value) {
+  return castResolverOSClean_(value)
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function castResolverOSClean_(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}

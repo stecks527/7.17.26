@@ -1,0 +1,270 @@
+function syncPropExpensesToPerishables() {
+  const SOURCE_SHEET_NAME = "FULL Expenses";
+  const DEST_SPREADSHEET_ID = "1HpvB4Ku9d_CuduOiEe-fbCuMUmSs6QQs-azs_C9-atE";
+  const DEST_SHEET_NAME = "Perishables";
+  const CARD_VALUE = "Emmy - Show";
+
+  const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSheet = sourceSS.getSheetByName(SOURCE_SHEET_NAME);
+  if (!sourceSheet) throw new Error(`Could not find source tab "${SOURCE_SHEET_NAME}".`);
+
+  const destSS = SpreadsheetApp.openById(DEST_SPREADSHEET_ID);
+  const destSheet = destSS.getSheetByName(DEST_SHEET_NAME);
+  if (!destSheet) throw new Error(`Could not find destination tab "${DEST_SHEET_NAME}".`);
+
+  const sourceValues = sourceSheet.getDataRange().getDisplayValues();
+  const destValues = destSheet.getDataRange().getDisplayValues();
+
+  const propsByWeek = {};
+  let currentWeekEnding = "";
+
+  for (let r = 0; r < sourceValues.length; r++) {
+    const row = sourceValues[r];
+    const rowText = row.join(" ");
+
+    const weekMatch = rowText.match(/Week Ending\s+([0-9.]+)/i);
+    if (weekMatch) {
+      currentWeekEnding = weekMatch[1];
+      continue;
+    }
+
+    const date = row[0];
+    const vendor = row[1];
+    const description = row[2];
+    const amount = row[3];
+    const what = String(row[4]).trim().toUpperCase();
+
+    if (what !== "PROP") continue;
+    if (!currentWeekEnding) continue;
+    if (!date || !vendor || !description || !amount) continue;
+
+    if (!propsByWeek[currentWeekEnding]) propsByWeek[currentWeekEnding] = [];
+
+    propsByWeek[currentWeekEnding].push([
+      date,
+      vendor,
+      description,
+      CARD_VALUE,
+      amount
+    ]);
+  }
+
+  let written = 0;
+  let skippedDuplicates = 0;
+  let missingWeeks = [];
+
+  Object.keys(propsByWeek).forEach(weekEnding => {
+    const destHeaderRow = findWeekHeaderRow_(destValues, weekEnding);
+
+    if (!destHeaderRow) {
+      missingWeeks.push(weekEnding);
+      return;
+    }
+
+    const existingKeys = getExistingPerishablesKeys_(destSheet, destHeaderRow);
+    const rowsToWrite = [];
+
+    propsByWeek[weekEnding].forEach(row => {
+      const key = makeExpenseKey_(row);
+      if (existingKeys.has(key)) {
+        skippedDuplicates++;
+      } else {
+        rowsToWrite.push(row);
+      }
+    });
+
+    if (rowsToWrite.length === 0) return;
+
+    const startRow = findFirstBlankExpenseRow_(destSheet, destHeaderRow);
+    destSheet.getRange(startRow, 2, rowsToWrite.length, 5).setValues(rowsToWrite);
+    written += rowsToWrite.length;
+  });
+
+  console.log(
+  `Rows added: ${written}, Duplicates skipped: ${skippedDuplicates}`
+);
+
+}
+
+function findWeekHeaderRow_(values, weekEnding) {
+  const target = normalizeWeekEnding_(weekEnding);
+
+  for (let r = 0; r < values.length; r++) {
+    const rowText = values[r].join(" ");
+    const match = rowText.match(/Week Ending\s+([0-9.]+)/i);
+
+    if (match && normalizeWeekEnding_(match[1]) === target) {
+      return r + 1;
+    }
+  }
+
+  return null;
+}
+
+function getExistingPerishablesKeys_(sheet, headerRow) {
+  const keys = new Set();
+  const startRow = headerRow + 1;
+  const lastRow = sheet.getLastRow();
+
+  for (let r = startRow; r <= lastRow; r++) {
+    const rowLabel = sheet.getRange(r, 3).getDisplayValue();
+
+    if (/Week Ending/i.test(rowLabel)) break;
+
+    const values = sheet.getRange(r, 2, 1, 5).getDisplayValues()[0];
+    if (values.some(v => String(v).trim() !== "")) {
+      keys.add(makeExpenseKey_(values));
+    }
+  }
+
+  return keys;
+}
+
+function findFirstBlankExpenseRow_(sheet, headerRow) {
+  const startRow = headerRow + 1;
+  const lastRow = sheet.getLastRow();
+
+  for (let r = startRow; r <= lastRow; r++) {
+    const rowLabel = sheet.getRange(r, 3).getDisplayValue();
+
+    if (/Week Ending/i.test(rowLabel)) {
+      throw new Error(`No blank rows available under week header on row ${headerRow}.`);
+    }
+
+    const values = sheet.getRange(r, 2, 1, 5).getDisplayValues()[0];
+
+    if (values.every(v => String(v).trim() === "")) {
+      return r;
+    }
+  }
+
+  throw new Error(`No blank rows available under week header on row ${headerRow}.`);
+}
+
+function makeExpenseKey_(row) {
+  return row.map(v => String(v).trim().toLowerCase()).join("|");
+}
+
+function normalizeWeekEnding_(value) {
+  return String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^0/, "");
+}
+
+function createPerishablesEmailDraft() {
+  const DEST_SPREADSHEET_ID = "1HpvB4Ku9d_CuduOiEe-fbCuMUmSs6QQs-azs_C9-atE";
+  const DEST_SHEET_GID = "1444945219";
+  const TO = ""; // add emails here
+  const CC = "";
+
+  const ui = SpreadsheetApp.getUi();
+
+  const weekEnding = getCurrentSundayPerishables_();
+  const weekEndingText = formatDateMDYY_(weekEnding);
+
+  const notesResponse = ui.prompt(
+    "Perishables Notes",
+    "Any notes for this email? Leave blank if none.",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (notesResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  const notes = notesResponse.getResponseText().trim();
+
+  const subject = `Spelling Bee // Perishables w.e ${weekEndingText}`;
+
+  let body =
+    "Hey Team,\n\n" +
+    `Attached is the list of perishable purchases made for the week ending ${weekEndingText}.\n\n` +
+    "Please reach out with any questions.\n\n";
+
+  if (notes) {
+    body +=
+      "PLEASE NOTE:\n" +
+      notes
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => line.startsWith("-") ? line : `- ${line}`)
+        .join("\n") +
+      "\n\n";
+  }
+
+  body += getStageOSEmailSignature_();
+
+  const pdfBlob = exportPerishablesPdf_(DEST_SPREADSHEET_ID, DEST_SHEET_GID, weekEndingText);
+
+  GmailApp.createDraft(TO, subject, body, {
+    cc: CC,
+    attachments: [pdfBlob]
+  });
+
+  ui.alert("Perishables email draft created.");
+}
+
+function exportPerishablesPdf_(spreadsheetId, gid, weekEndingText) {
+  const FOLDER_ID = "12_BCLOCacKWo1qYiXuftisgCBcEfsqXH";
+
+  const fileName = `Spelling Bee - Perishables w.e ${weekEndingText}.pdf`;
+
+  const url =
+    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?` +
+    [
+      "format=pdf",
+      `gid=${gid}`,
+      "portrait=true",
+      "size=letter",
+      "fitw=true",
+      "sheetnames=false",
+      "printtitle=false",
+      "pagenumbers=false",
+      "gridlines=false",
+      "fzr=false"
+    ].join("&");
+
+  const token = ScriptApp.getOAuthToken();
+
+  const response = UrlFetchApp.fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  const pdfBlob = response.getBlob().setName(fileName);
+
+  const folder = DriveApp.getFolderById(FOLDER_ID);
+  folder.createFile(pdfBlob.copyBlob());
+
+  return pdfBlob;
+}
+
+function getCurrentSundayPerishables_() {
+  const today = new Date();
+  const day = today.getDay(); // Sunday = 0
+  const diff = day === 0 ? 0 : 7 - day;
+
+  const sunday = new Date(today);
+  sunday.setDate(today.getDate() + diff);
+  sunday.setHours(0, 0, 0, 0);
+
+  return sunday;
+}
+
+function formatDateMDYY_(date) {
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const yy = String(date.getFullYear()).slice(-2);
+
+  return `${m}.${d}.${yy}`;
+}
+
+function runPerishablesWorkflow() {
+  syncPropExpensesToPerishables();
+
+  SpreadsheetApp.flush();
+  Utilities.sleep(3000);
+
+  createPerishablesEmailDraft();
+}

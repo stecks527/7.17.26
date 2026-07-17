@@ -1,0 +1,103 @@
+/*************************************************
+ * 15 PREPOS - SNAPSHOT QUEUE
+ * Version: 1.0.0
+ * Status: ENGINE-AWARE
+ *************************************************/
+
+function queueSnapshotOSv2FromPrep(payload) {
+  const props = PropertiesService.getDocumentProperties();
+
+  props.setProperty(
+    "SNAPSHOT_OS_V2_PENDING_PREP_PAYLOAD",
+    JSON.stringify(payload)
+  );
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "SnapshotOS",
+      "Queue Prep Snapshot",
+      "SnapshotOS queued for later capture.",
+      {
+        performance: payload.performance || "",
+        guestSpellerName: payload.guestSpellerName || ""
+      }
+    );
+  } else {
+    Logger.log("SnapshotOS queued for later capture.");
+  }
+}
+
+function runQueuedSnapshotOSv2Capture() {
+  const props = PropertiesService.getDocumentProperties();
+  const json = props.getProperty("SNAPSHOT_OS_V2_PENDING_PREP_PAYLOAD");
+
+  if (!json) {
+    SpreadsheetApp.getUi().alert("No queued SnapshotOS payload found.");
+    return;
+  }
+
+  const payload = JSON.parse(json);
+  const results = [];
+
+  try {
+    const showStateResult = SnapshotOSv2().captureShowStateSnapshotFromPrep(payload);
+    results.push("Show State: " + (showStateResult.snapshotId || "done"));
+
+    const resolvedCastResult = SnapshotOSv2().captureResolvedCastSnapshot();
+    results.push("Resolved Cast Snapshot: " + (resolvedCastResult.rowsWritten || 0) + " rows");
+
+    const assignmentResult = SnapshotOSv2().captureAssignmentSnapshotFromPrep(payload);
+    results.push("Assignment Snapshot: " + (assignmentResult.rowsWritten || 0) + " rows");
+
+    if (typeof CastResolverOS === "function" && typeof EngineResolverHistoryOS === "function") {
+      const resolved = CastResolverOS().resolveCurrentPerformance();
+      const resolverRows = EngineResolverHistoryOS().record(resolved);
+      results.push("Resolver History: " + resolverRows + " rows");
+    }
+
+    if (typeof EngineAnalyticsOS === "function") {
+      EngineAnalyticsOS().record(
+        "SnapshotOS",
+        "Queued Snapshot Capture",
+        1,
+        {
+          performance: payload.performance || "",
+          results: results
+        }
+      );
+    }
+
+    props.deleteProperty("SNAPSHOT_OS_V2_PENDING_PREP_PAYLOAD");
+
+    if (typeof EngineLogOS === "function") {
+      EngineLogOS().info(
+        "SnapshotOS",
+        "Run Queued Snapshot Capture",
+        "Queued SnapshotOS capture complete.",
+        {
+          performance: payload.performance || "",
+          results: results
+        }
+      );
+    }
+
+    SpreadsheetApp.getUi().alert(
+      "Queued SnapshotOS capture complete.\n\n" +
+      results.join("\n")
+    );
+
+  } catch (err) {
+    if (typeof EngineLogOS === "function") {
+      EngineLogOS().error(
+        "SnapshotOS",
+        "Run Queued Snapshot Capture ERROR",
+        err.message,
+        {
+          performance: payload.performance || ""
+        }
+      );
+    }
+
+    throw err;
+  }
+}

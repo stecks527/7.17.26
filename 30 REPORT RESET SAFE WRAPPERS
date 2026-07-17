@@ -1,0 +1,33 @@
+/*************************************************
+ * 30 REPORT RESET SAFE WRAPPERS
+ *************************************************/
+
+function fullReportResetMat_SAFE() {
+  updateReportBuilder_SAFE("MAT");
+
+  clearPerformanceHighlights();
+  clearPerformanceReport_("today");
+
+  // Run these AFTER clearPerformanceReport_ so they do not get erased.
+  syncInOutToPerformanceReport_();
+  syncInOutGridToPerformanceReport_SAFE();
+  routeInOutNotesToPerformanceReport_SAFE(false);
+  addGuestSpellerToPerformanceReport_SAFE();
+
+  SpreadsheetApp.getUi().alert("Full report reset complete for matinee.");
+}
+
+function fullReportResetEve_SAFE() {
+  updateReportBuilder_SAFE("EVE");
+
+  clearPerformanceHighlights();
+  clearPerformanceReport_("tonight");
+
+  // Run these AFTER clearPerformanceReport_ so they do not get erased.
+  syncInOutToPerformanceReport_();
+  syncInOutGridToPerformanceReport_SAFE();
+  routeInOutNotesToPerformanceReport_SAFE(false);
+  addGuestSpellerToPerformanceReport_SAFE();
+
+  SpreadsheetApp.getUi().alert("Full report reset complete for evening.");
+}

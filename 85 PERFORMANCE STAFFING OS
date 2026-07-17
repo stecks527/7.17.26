@@ -1,0 +1,910 @@
+/*************************************************
+ * 85 PERFORMANCE STAFFING OS
+ * Version: 0.1.0
+ * Status: ACTIVE
+ *
+ * Persists the actual Prep staffing selections for a
+ * specific date + performance.
+ *
+ * AssignmentOS answers:
+ * - Who is eligible for each staffing track?
+ *
+ * PerformanceStaffingOS answers:
+ * - Who was actually assigned to this performance?
+ *************************************************/
+
+
+function PerformanceStaffingOS() {
+  return {
+    save:
+      performanceStaffingOSSave_,
+
+    saveFromPrepPayload:
+      performanceStaffingOSSaveFromPrepPayload_,
+
+    load:
+      performanceStaffingOSLoad_,
+
+    loadForShowState:
+      performanceStaffingOSLoadForShowState_,
+
+    applyToShowState:
+      performanceStaffingOSApplyToShowState_,
+
+    clear:
+      performanceStaffingOSClear_,
+
+    clearAll:
+      performanceStaffingOSClearAll_,
+
+    status:
+      performanceStaffingOSStatus_,
+
+    test:
+      testPerformanceStaffingOS
+  };
+}
+
+
+/* =========================================================
+ * CONFIGURATION
+ * ========================================================= */
+
+function performanceStaffingOSConfig_() {
+  return {
+    version:
+      "0.1.0",
+
+    propertyPrefix:
+      "PERFORMANCE_STAFFING_OS|",
+
+    indexProperty:
+      "PERFORMANCE_STAFFING_OS_INDEX",
+
+    maxSavedPerformances:
+      120
+  };
+}
+
+
+/* =========================================================
+ * SAVE
+ * ========================================================= */
+
+function performanceStaffingOSSave_(
+  dateValue,
+  performanceValue,
+  assignments
+) {
+  const dateKey =
+    performanceStaffingOSDateKey_(
+      dateValue
+    );
+
+  const performanceKey =
+    performanceStaffingOSPerformanceKey_(
+      performanceValue
+    );
+
+  if (!dateKey) {
+    throw new Error(
+      "PerformanceStaffingOS could not determine the performance date."
+    );
+  }
+
+  if (!performanceKey) {
+    throw new Error(
+      "PerformanceStaffingOS could not determine the performance label."
+    );
+  }
+
+  assignments =
+    assignments || {};
+
+  const values =
+    assignments.values || {};
+
+  const record = {
+    system:
+      "PerformanceStaffingOS",
+
+    version:
+      "0.1.0",
+
+    savedAt:
+      new Date().toISOString(),
+
+    date:
+      dateKey,
+
+    performance:
+      String(
+        performanceValue || ""
+      ).trim(),
+
+    key:
+      performanceStaffingOSRecordKey_(
+        dateKey,
+        performanceKey
+      ),
+
+    values: {
+      calling:
+        String(
+          values.calling || ""
+        ).trim(),
+
+      deck:
+        String(
+          values.deck || ""
+        ).trim(),
+
+      conductor:
+        String(
+          values.conductor || ""
+        ).trim(),
+
+      audio:
+        String(
+          values.audio || ""
+        ).trim()
+    },
+
+    officeShow:
+      assignments.officeShow ===
+      true,
+
+    training:
+      performanceStaffingOSClone_(
+        assignments.training || {}
+      )
+  };
+
+  const properties =
+    PropertiesService
+      .getDocumentProperties();
+
+  properties.setProperty(
+    record.key,
+    JSON.stringify(record)
+  );
+
+  performanceStaffingOSUpdateIndex_(
+    record
+  );
+
+  return record;
+}
+
+
+/* =========================================================
+ * PREP PAYLOAD BRIDGE
+ * ========================================================= */
+
+function performanceStaffingOSSaveFromPrepPayload_(
+  payload
+) {
+  payload =
+    payload || {};
+
+  if (!payload.assignments) {
+    return {
+      saved:
+        false,
+
+      reason:
+        "Prep payload did not contain assignments."
+    };
+  }
+
+  const record =
+    performanceStaffingOSSave_(
+      payload.date,
+      payload.performance,
+      payload.assignments
+    );
+
+  return {
+    saved:
+      true,
+
+    record:
+      record
+  };
+}
+
+
+/*
+ * Public compatibility wrapper for Prep apply pipelines.
+ */
+function savePerformanceStaffingFromPrepPayload(
+  payload
+) {
+  return PerformanceStaffingOS()
+    .saveFromPrepPayload(
+      payload
+    );
+}
+
+
+/* =========================================================
+ * LOAD
+ * ========================================================= */
+
+function performanceStaffingOSLoad_(
+  dateValue,
+  performanceValue
+) {
+  const dateKey =
+    performanceStaffingOSDateKey_(
+      dateValue
+    );
+
+  const performanceKey =
+    performanceStaffingOSPerformanceKey_(
+      performanceValue
+    );
+
+  if (
+    !dateKey ||
+    !performanceKey
+  ) {
+    return null;
+  }
+
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        performanceStaffingOSRecordKey_(
+          dateKey,
+          performanceKey
+        )
+      );
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+
+  } catch (error) {
+    performanceStaffingOSClear_(
+      dateKey,
+      performanceValue
+    );
+
+    return null;
+  }
+}
+
+
+function performanceStaffingOSLoadForShowState_(
+  showState
+) {
+  showState =
+    showState || {};
+
+  const selectedPerformance =
+    showState.selectedPerformance ||
+    (
+      Array.isArray(
+        showState.performances
+      )
+        ? showState.performances[
+            showState.selectedIndex || 0
+          ]
+        : null
+    ) ||
+    {};
+
+  const dateValue =
+    showState.target &&
+    showState.target.date
+      ? showState.target.date
+      : showState.date;
+
+  const performanceValue =
+    selectedPerformance.inOutText ||
+    selectedPerformance.performance ||
+    selectedPerformance.label ||
+    "";
+
+  return performanceStaffingOSLoad_(
+    dateValue,
+    performanceValue
+  );
+}
+
+
+/* =========================================================
+ * SHOWSTATE BRIDGE
+ * ========================================================= */
+
+function performanceStaffingOSApplyToShowState_(
+  showState
+) {
+  if (!showState) {
+    return showState;
+  }
+
+  const saved =
+    performanceStaffingOSLoadForShowState_(
+      showState
+    );
+
+  if (!saved) {
+    return showState;
+  }
+
+  if (!showState.assignments) {
+    showState.assignments = {};
+  }
+
+  if (!showState.assignments.values) {
+    showState.assignments.values = {};
+  }
+
+  showState.assignments.values.calling =
+    saved.values.calling || "";
+
+  showState.assignments.values.deck =
+    saved.values.deck || "";
+
+  showState.assignments.values.conductor =
+    saved.values.conductor ||
+    showState.assignments.values.conductor ||
+    "";
+
+  showState.assignments.values.audio =
+    saved.values.audio || "";
+
+  showState.assignments.officeShow =
+    saved.officeShow === true;
+
+  showState.assignments.training =
+    performanceStaffingOSClone_(
+      saved.training || {}
+    );
+
+  showState.staffing = {
+    callingSM:
+      saved.values.calling || "",
+
+    deckSM:
+      saved.values.deck || "",
+
+    conductor:
+      saved.values.conductor ||
+      (
+        showState.staffing &&
+        showState.staffing.conductor
+          ? showState.staffing.conductor
+          : ""
+      ),
+
+    a1:
+      saved.values.audio || ""
+  };
+
+  showState.performanceStaffing = {
+    source:
+      "PerformanceStaffingOS",
+
+    savedAt:
+      saved.savedAt,
+
+    values:
+      performanceStaffingOSClone_(
+        saved.values
+      ),
+
+    officeShow:
+      saved.officeShow === true,
+
+    training:
+      performanceStaffingOSClone_(
+        saved.training || {}
+      )
+  };
+
+  if (showState.report) {
+    showState.report.staffing =
+      performanceStaffingOSClone_(
+        showState.staffing
+      );
+  }
+
+  return showState;
+}
+
+
+/*
+ * Public compatibility wrapper for ShowStateOS.
+ */
+function applyPerformanceStaffingToShowState(
+  showState
+) {
+  return PerformanceStaffingOS()
+    .applyToShowState(
+      showState
+    );
+}
+
+
+/* =========================================================
+ * CLEAR
+ * ========================================================= */
+
+function performanceStaffingOSClear_(
+  dateValue,
+  performanceValue
+) {
+  const dateKey =
+    performanceStaffingOSDateKey_(
+      dateValue
+    );
+
+  const performanceKey =
+    performanceStaffingOSPerformanceKey_(
+      performanceValue
+    );
+
+  if (
+    !dateKey ||
+    !performanceKey
+  ) {
+    return false;
+  }
+
+  const key =
+    performanceStaffingOSRecordKey_(
+      dateKey,
+      performanceKey
+    );
+
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      key
+    );
+
+  performanceStaffingOSRemoveFromIndex_(
+    key
+  );
+
+  return true;
+}
+
+
+function performanceStaffingOSClearAll_() {
+  const config =
+    performanceStaffingOSConfig_();
+
+  const properties =
+    PropertiesService
+      .getDocumentProperties();
+
+  const all =
+    properties.getProperties();
+
+  Object.keys(all)
+    .filter(function (key) {
+      return (
+        key.indexOf(
+          config.propertyPrefix
+        ) === 0 ||
+        key ===
+          config.indexProperty
+      );
+    })
+    .forEach(function (key) {
+      properties.deleteProperty(
+        key
+      );
+    });
+
+  return true;
+}
+
+
+/* =========================================================
+ * INDEX / PRUNING
+ * ========================================================= */
+
+function performanceStaffingOSUpdateIndex_(
+  record
+) {
+  const config =
+    performanceStaffingOSConfig_();
+
+  const properties =
+    PropertiesService
+      .getDocumentProperties();
+
+  let index = [];
+
+  const raw =
+    properties.getProperty(
+      config.indexProperty
+    );
+
+  if (raw) {
+    try {
+      index =
+        JSON.parse(raw) || [];
+    } catch (error) {
+      index = [];
+    }
+  }
+
+  index =
+    index.filter(function (item) {
+      return (
+        item.key !== record.key
+      );
+    });
+
+  index.push({
+    key:
+      record.key,
+
+    date:
+      record.date,
+
+    performance:
+      record.performance,
+
+    savedAt:
+      record.savedAt
+  });
+
+  index.sort(function (a, b) {
+    return String(
+      b.savedAt || ""
+    ).localeCompare(
+      String(
+        a.savedAt || ""
+      )
+    );
+  });
+
+  const removed =
+    index.slice(
+      config.maxSavedPerformances
+    );
+
+  removed.forEach(function (item) {
+    properties.deleteProperty(
+      item.key
+    );
+  });
+
+  index =
+    index.slice(
+      0,
+      config.maxSavedPerformances
+    );
+
+  properties.setProperty(
+    config.indexProperty,
+    JSON.stringify(index)
+  );
+}
+
+
+function performanceStaffingOSRemoveFromIndex_(
+  recordKey
+) {
+  const config =
+    performanceStaffingOSConfig_();
+
+  const properties =
+    PropertiesService
+      .getDocumentProperties();
+
+  const raw =
+    properties.getProperty(
+      config.indexProperty
+    );
+
+  if (!raw) {
+    return;
+  }
+
+  let index = [];
+
+  try {
+    index =
+      JSON.parse(raw) || [];
+  } catch (error) {
+    index = [];
+  }
+
+  index =
+    index.filter(function (item) {
+      return item.key !== recordKey;
+    });
+
+  properties.setProperty(
+    config.indexProperty,
+    JSON.stringify(index)
+  );
+}
+
+
+/* =========================================================
+ * STATUS
+ * ========================================================= */
+
+function performanceStaffingOSStatus_() {
+  const config =
+    performanceStaffingOSConfig_();
+
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        config.indexProperty
+      );
+
+  let index = [];
+
+  if (raw) {
+    try {
+      index =
+        JSON.parse(raw) || [];
+    } catch (error) {
+      index = [];
+    }
+  }
+
+  return {
+    system:
+      "PerformanceStaffingOS",
+
+    version:
+      config.version,
+
+    available:
+      true,
+
+    savedPerformances:
+      index.length,
+
+    latest:
+      index.length
+        ? index[0]
+        : null
+  };
+}
+
+
+/* =========================================================
+ * HELPERS
+ * ========================================================= */
+
+function performanceStaffingOSRecordKey_(
+  dateKey,
+  performanceKey
+) {
+  return (
+    performanceStaffingOSConfig_()
+      .propertyPrefix +
+    dateKey +
+    "|" +
+    performanceKey
+  );
+}
+
+
+function performanceStaffingOSPerformanceKey_(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function performanceStaffingOSDateKey_(
+  value
+) {
+  if (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(
+      value
+    )
+  ) {
+    return value;
+  }
+
+  let date =
+    value;
+
+  if (!(date instanceof Date)) {
+    if (
+      typeof prepOSParseDate_ ===
+      "function"
+    ) {
+      date =
+        prepOSParseDate_(
+          value
+        );
+    } else {
+      date =
+        new Date(
+          String(value || "")
+        );
+    }
+  }
+
+  if (
+    !(date instanceof Date) ||
+    isNaN(
+      date.getTime()
+    )
+  ) {
+    return "";
+  }
+
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+}
+
+
+function performanceStaffingOSClone_(
+  value
+) {
+  return JSON.parse(
+    JSON.stringify(
+      value || {}
+    )
+  );
+}
+
+
+/* =========================================================
+ * TEST
+ * ========================================================= */
+
+function testPerformanceStaffingOS() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const inOut =
+    ss.getSheetByName(
+      "IN/OUT"
+    );
+
+  if (!inOut) {
+    throw new Error(
+      'Could not find "IN/OUT".'
+    );
+  }
+
+  const date =
+    inOut
+      .getRange("A3")
+      .getDisplayValue();
+
+  const performance =
+    inOut
+      .getRange("A4")
+      .getDisplayValue();
+
+  const testAssignments = {
+    values: {
+      calling:
+        "Rachel A. Zucker",
+
+      deck:
+        "Chris Steckel",
+
+      conductor:
+        inOut
+          .getRange("A24")
+          .getDisplayValue() ||
+        "Liz Doran",
+
+      audio:
+        "Corbin Lenard"
+    },
+
+    officeShow:
+      false,
+
+    training: {}
+  };
+
+  const saved =
+    PerformanceStaffingOS()
+      .save(
+        date,
+        performance,
+        testAssignments
+      );
+
+  const loaded =
+    PerformanceStaffingOS()
+      .load(
+        date,
+        performance
+      );
+
+  const passed =
+    Boolean(
+      loaded &&
+      loaded.values.calling ===
+        testAssignments.values.calling &&
+      loaded.values.deck ===
+        testAssignments.values.deck &&
+      loaded.values.audio ===
+        testAssignments.values.audio
+    );
+
+  Logger.log(
+    "PERFORMANCESTAFFINGOS TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      {
+        passed:
+          passed,
+
+        saved:
+          saved,
+
+        loaded:
+          loaded
+      },
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      [
+        "PerformanceStaffingOS test " +
+          (
+            passed
+              ? "passed."
+              : "found issues."
+          ),
+        "",
+        "Date: " +
+          saved.date,
+        "Performance: " +
+          saved.performance,
+        "Calling SM: " +
+          saved.values.calling,
+        "Deck SM: " +
+          saved.values.deck,
+        "Conductor: " +
+          saved.values.conductor,
+        "A1: " +
+          saved.values.audio
+      ].join("\n")
+    );
+
+  return {
+    passed:
+      passed,
+
+    saved:
+      saved,
+
+    loaded:
+      loaded
+  };
+}

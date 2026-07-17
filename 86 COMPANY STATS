@@ -1,0 +1,84 @@
+/**********************
+ * 86 COMPANY STATS
+ * COMPANY STATS
+ *************************/
+
+function updateLastFullCompanyPerformance() {
+  const ss = SpreadsheetApp.getActive();
+  const trackerSheet = ss.getSheetByName("U/S Tracker");
+  const expandedCal = ss.getSheetByName("Expanded Calendar");
+
+  const currentShow = Number(trackerSheet.getRange("U1").getDisplayValue());
+
+  if (!currentShow) {
+    throw new Error("Could not read Current Show # from U1.");
+  }
+
+  const allData = trackerSheet.getDataRange().getDisplayValues();
+
+  const trackerData = [];
+  for (const row of allData) {
+    if (
+      String(row[0]).trim().toUpperCase() === "UNDERSTUDY OUTS"
+    ) {
+      break;
+    }
+    trackerData.push(row);
+  }
+  const expandedData = expandedCal.getDataRange().getDisplayValues();
+
+  const performancesWithAbsences = new Set();
+
+  trackerData.forEach(row => {
+    const text = String(row[10]); // Column K
+    const matches = text.matchAll(/Perf\. #(\d+)/gi);
+
+    for (const match of matches) {
+      performancesWithAbsences.add(Number(match[1]));
+    }
+  });
+
+  let lastFullCompany = "";
+
+  for (let show = currentShow - 1; show >= 1; show--) {
+    if (!performancesWithAbsences.has(show)) {
+      lastFullCompany = show;
+      break;
+    }
+  }
+
+  if (!lastFullCompany) {
+    trackerSheet.getRange("A3").setValue("");
+    return;
+  }
+
+  const dateText = findPerformanceDateFromExpandedCalendar_(
+    expandedData,
+    lastFullCompany
+  );
+
+  const output = dateText
+    ? `Perf. #${lastFullCompany} — ${dateText}`
+    : `Perf. #${lastFullCompany}`;
+
+  trackerSheet.getRange("A3").setValue(output);
+}
+
+function findPerformanceDateFromExpandedCalendar_(expandedData, perfNumber) {
+  let currentDate = "";
+
+  for (let i = 1; i < expandedData.length; i++) {
+    const dateCell = expandedData[i][0]; // Column A
+    const whatCell = expandedData[i][1]; // Column B
+
+    if (dateCell) currentDate = dateCell;
+
+    const match = String(whatCell).match(/PERFORMANCE #(\d+)/i);
+
+    if (match && Number(match[1]) === perfNumber) {
+      return currentDate;
+    }
+  }
+
+  return "";
+}

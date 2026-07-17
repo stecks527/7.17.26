@@ -1,0 +1,1473 @@
+/*************************************************
+ * 15 PREPOS - REPORT WRITERS
+ * Version: 0.3.0
+ * Status: ACTIVE
+ *
+ * Responsibilities:
+ * - Write cast IN/OUT to Performance Report
+ * - Write Guest Speller information safely
+ * - Route Prep notes by department
+ * - Use the shared ReportLayoutIndex
+ * - Preserve one multiline note cell per section
+ * - Never overwrite protected report headers
+ *
+ * Architecture:
+ *
+ * Prep payload
+ *      ↓
+ * Performance Report Writers
+ *      ↓
+ * ReportLayoutIndex
+ *      ↓
+ * Safe destination cells
+ *************************************************/
+
+
+/* =========================================================
+ * GUEST SPELLER
+ * ========================================================= */
+
+function writeGuestSpellerToPerformanceReportFromPayload_(
+  payload
+) {
+  payload =
+    payload || {};
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    return;
+  }
+
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      false
+    );
+
+  /*
+   * Guest group-photo information belongs in the
+   * GENERAL NOTES content cell.
+   */
+  const generalNotesCell =
+    reportOSRequireContentCell_(
+      report,
+      index,
+      "GENERAL NOTES:",
+      1,
+      1
+    );
+
+  /*
+   * SPOTTED currently lives directly beneath
+   * IMPROV HIGHLIGHTS.
+   */
+  const spottedCell =
+    reportOSFindOptionalContentCell_(
+      report,
+      index,
+      "IMPROV HIGHLIGHTS:",
+      1,
+      1
+    );
+
+  const name =
+    String(
+      payload.guestSpellerName || ""
+    ).trim();
+
+  /*
+   * No Guest Speller:
+   *
+   * Do not clear GENERAL NOTES, because that cell can
+   * contain unrelated report notes.
+   *
+   * Only clear the dedicated SPOTTED destination.
+   */
+  if (!name) {
+    if (spottedCell) {
+      spottedCell.clearContent();
+    }
+
+    return;
+  }
+
+  const number =
+    extractGuestSpellerNumberFromPayload_(
+      payload
+    );
+
+  const label =
+    number
+      ? (
+          " (Guest Speller #" +
+          number +
+          ")"
+        )
+      : "";
+
+  const groupPhotoLine =
+    "– Group Photo with " +
+    name +
+    label +
+    " attached to this report.";
+
+  const spottedLine =
+    "SPOTTED: " +
+    name +
+    label;
+
+  /*
+   * Merge the group-photo line into GENERAL NOTES
+   * without deleting preserved or Prep-generated notes.
+   */
+  const existingGeneralLines =
+    getCleanExistingReportLines_(
+      generalNotesCell
+        .getDisplayValue()
+    );
+
+  const mergedGeneralLines =
+    mergeUniqueReportLinesFromPayload_(
+      existingGeneralLines,
+      [
+        groupPhotoLine
+      ]
+    );
+
+  generalNotesCell
+    .setValue(
+      mergedGeneralLines.join("\n")
+    )
+    .setFontFamily(
+      "Arial"
+    )
+    .setFontSize(
+      11
+    )
+    .setWrap(
+      true
+    );
+
+  if (spottedCell) {
+    spottedCell
+      .setValue(
+        spottedLine
+      )
+      .setFontFamily(
+        "Arial"
+      )
+      .setFontSize(
+        11
+      );
+  }
+
+  Logger.log(
+    "PrepOS Guest Speller report information written."
+  );
+}
+
+
+function extractGuestSpellerNumberFromPayload_(
+  payload
+) {
+  payload =
+    payload || {};
+
+  const text = [
+    payload.guestSpellerNote,
+    payload.guestDateTimeText,
+    payload.performance
+  ].join(" ");
+
+  const match =
+    text.match(
+      /Guest\s*Speller\s*#?\s*(\d+)/i
+    );
+
+  return match
+    ? match[1]
+    : "";
+}
+
+
+/* =========================================================
+ * REPORT NOTES
+ * ========================================================= */
+
+function writeReportNotesFromPayload_(
+  payload
+) {
+  payload =
+    payload || {};
+
+  const timer =
+    typeof TimerOS ===
+      "function"
+      ? TimerOS(
+          "Prep Performance Report Notes"
+        )
+      : null;
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    throw new Error(
+      'Could not find the "Performance Report" tab.'
+    );
+  }
+
+  const notesText =
+    String(
+      payload.notes || ""
+    ).trim();
+
+  if (!notesText) {
+    if (timer) {
+      timer.finish({
+        success:
+          true,
+
+        skipped:
+          true,
+
+        reason:
+          "no-notes"
+      });
+    }
+
+    return {
+      written:
+        [],
+
+      skipped:
+        true
+    };
+  }
+
+  /*
+   * Categorize the payload entirely in memory.
+   */
+  const routed =
+    routeReportNotesFromText_(
+      notesText
+    );
+
+  const categories =
+    Object.keys(
+      routed
+    ).filter(function (category) {
+      return (
+        Array.isArray(
+          routed[category]
+        ) &&
+        routed[category].length
+      );
+    });
+
+  if (timer) {
+    timer.mark(
+      "Route payload notes",
+      {
+        categories:
+          categories.length
+      }
+    );
+  }
+
+  if (!categories.length) {
+    if (timer) {
+      timer.finish({
+        success:
+          true,
+
+        skipped:
+          true,
+
+        reason:
+          "all-notes-filtered"
+      });
+    }
+
+    return {
+      written:
+        [],
+
+      skipped:
+        true
+    };
+  }
+
+  /*
+   * Use the shared ReportLayoutIndex.
+   *
+   * No full Performance Report read or section scan
+   * happens here.
+   */
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      false
+    );
+
+  if (timer) {
+    timer.mark(
+      "Get shared layout index",
+      {
+        indexBuildMs:
+          index.durationMs || 0
+      }
+    );
+  }
+
+  const preparedWrites = [];
+  const errors = [];
+
+  categories.forEach(
+    function (category) {
+      const headerText =
+        getReportHeaderForCategory_(
+          category
+        );
+
+      let cell;
+
+      try {
+        cell =
+          reportOSRequireContentCell_(
+            report,
+            index,
+            headerText,
+            1,
+            1
+          );
+
+      } catch (err) {
+        errors.push(
+          String(
+            err &&
+            err.message
+              ? err.message
+              : err
+          )
+        );
+
+        return;
+      }
+
+      const newLines =
+        routed[category]
+          .map(
+            normalizeReportNoteForWriting_
+          )
+          .filter(Boolean);
+
+      if (!newLines.length) {
+        return;
+      }
+
+      preparedWrites.push({
+        category:
+          category,
+
+        header:
+          headerText,
+
+        cell:
+          cell,
+
+        address:
+          cell.getA1Notation(),
+
+        newLines:
+          newLines
+      });
+    }
+  );
+
+  /*
+   * Never partially apply notes when a destination
+   * cannot be resolved safely.
+   */
+  if (errors.length) {
+    throw new Error(
+      "Some Performance Report notes could not be placed safely:\n\n" +
+      errors.join("\n\n")
+    );
+  }
+
+  if (timer) {
+    timer.mark(
+      "Resolve note destinations",
+      {
+        destinations:
+          preparedWrites.length
+      }
+    );
+  }
+
+  /*
+   * Read only the destination cells—not the entire report.
+   */
+  const destinationAddresses =
+    preparedWrites.map(
+      function (write) {
+        return write.address;
+      }
+    );
+
+  const destinationValues = {};
+
+  if (destinationAddresses.length) {
+    const destinationRanges =
+      report
+        .getRangeList(
+          destinationAddresses
+        )
+        .getRanges();
+
+    destinationRanges.forEach(
+      function (range) {
+        destinationValues[
+          range.getA1Notation()
+        ] =
+          range.getDisplayValue();
+      }
+    );
+  }
+
+  if (timer) {
+    timer.mark(
+      "Read destination cells",
+      {
+        cells:
+          destinationAddresses.length
+      }
+    );
+  }
+
+  const written = [];
+
+  preparedWrites.forEach(
+    function (write) {
+      const existingLines =
+        getCleanExistingReportLines_(
+          destinationValues[
+            write.address
+          ] || ""
+        );
+
+      const merged =
+        mergeUniqueReportLinesFromPayload_(
+          existingLines,
+          write.newLines
+        );
+
+      if (!merged.length) {
+        return;
+      }
+
+      write.cell
+        .setValue(
+          merged.join("\n")
+        )
+        .setFontFamily(
+          "Arial"
+        )
+        .setFontSize(
+          11
+        )
+        .setWrap(
+          true
+        );
+
+      written.push({
+        category:
+          write.category,
+
+        header:
+          write.header,
+
+        cell:
+          write.address,
+
+        lines:
+          merged.length
+      });
+    }
+  );
+
+  Logger.log(
+    "PrepOS Performance Report notes written: " +
+    written.length +
+    " section(s)."
+  );
+
+  if (timer) {
+    timer.mark(
+      "Write report notes",
+      {
+        sections:
+          written.length
+      }
+    );
+
+    timer.finish({
+      success:
+        true,
+
+      written:
+        written
+    });
+  }
+
+  return {
+    written:
+      written,
+
+    skipped:
+      false
+  };
+}
+
+
+/* =========================================================
+ * PERFORMANCE REPORT IN/OUT
+ * ========================================================= */
+
+function writeInOutChangesToPerformanceReportFromPayload_(
+  payload
+) {
+  payload =
+    payload || {};
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    return;
+  }
+
+  const layout =
+    PrepLayout()
+      .performanceReport;
+
+  const START_ROW =
+    layout.firstCastRow;
+
+  const END_ROW =
+    layout.lastCastRow;
+
+  const NUM_ROWS =
+    END_ROW -
+    START_ROW +
+    1;
+
+  const LAST_NEEDED_COL =
+    Math.max(
+      layout.outCol,
+      layout.inCol,
+      layout.roleCol,
+      layout.reasonCol
+    );
+
+  const castOuts =
+    (
+      payload.castOuts || []
+    ).filter(function (item) {
+      item =
+        item || {};
+
+      return (
+        item.out ||
+        item.in ||
+        item.role ||
+        item.reason
+      );
+    });
+
+  /*
+   * Read the complete cast block once for safety.
+   */
+  const blockValues =
+    report
+      .getRange(
+        START_ROW,
+        1,
+        NUM_ROWS,
+        LAST_NEEDED_COL
+      )
+      .getDisplayValues();
+
+  for (
+    let offset = 0;
+    offset < blockValues.length;
+    offset++
+  ) {
+    if (
+      isProtectedPerformanceReportRowFromValues_(
+        blockValues[offset]
+      )
+    ) {
+      throw new Error(
+        "Performance Report IN/OUT safety check failed.\n\n" +
+        "Configured writable row " +
+        (
+          START_ROW +
+          offset
+        ) +
+        " contains a protected report header.\n\n" +
+        "No IN/OUT information was written."
+      );
+    }
+  }
+
+  const writable =
+    castOuts.slice(
+      0,
+      NUM_ROWS
+    );
+
+  /*
+   * Build the complete A:G cast block in memory.
+   *
+   * This allows one setValues() call instead of four
+   * separate column writes.
+   */
+  const output =
+    [];
+
+  for (
+    let offset = 0;
+    offset < NUM_ROWS;
+    offset++
+  ) {
+    const item =
+      writable[offset] ||
+      {};
+
+    const row =
+      new Array(
+        LAST_NEEDED_COL
+      ).fill("");
+
+    row[
+      layout.outCol - 1
+    ] =
+      item.out || "";
+
+    row[
+      layout.inCol - 1
+    ] =
+      item.in || "";
+
+    row[
+      layout.roleCol - 1
+    ] =
+      item.role || "";
+
+    row[
+      layout.reasonCol - 1
+    ] =
+      item.reason || "";
+
+    output.push(
+      row
+    );
+  }
+
+  report.showRows(
+    START_ROW,
+    NUM_ROWS
+  );
+
+  report
+    .getRange(
+      START_ROW,
+      1,
+      NUM_ROWS,
+      LAST_NEEDED_COL
+    )
+    .setValues(
+      output
+    )
+    .setFontFamily(
+      "Arial"
+    )
+    .setFontSize(
+      11
+    )
+    .setVerticalAlignment(
+      "middle"
+    );
+
+  if (!writable.length) {
+    report.hideRows(
+      START_ROW,
+      NUM_ROWS
+    );
+
+    Logger.log(
+      "PrepOS Performance Report IN/OUT cleared."
+    );
+
+    return;
+  }
+
+  const lastUsedRow =
+    START_ROW +
+    writable.length -
+    1;
+
+  if (
+    lastUsedRow <
+    END_ROW
+  ) {
+    report.hideRows(
+      lastUsedRow + 1,
+      END_ROW -
+      lastUsedRow
+    );
+  }
+
+  Logger.log(
+    "PrepOS Performance Report IN/OUT written: " +
+    writable.length
+  );
+}
+
+
+/* =========================================================
+ * PROTECTED REPORT STRUCTURE
+ * ========================================================= */
+
+function getProtectedReportHeaders_() {
+  return [
+    "LATE / NOTICES:",
+    "ACCIDENTS / INJURIES / ILLNESS:",
+    "DAILY SCHEDULE:",
+    "TECHNICAL NOTES:",
+
+    "SCENIC:",
+    "PROPS:",
+    "COSTUMES:",
+    "WIGS/HAIR:",
+    "SOUND:",
+    "LIGHTING:",
+    "SCRIPT:",
+    "MUSIC:",
+    "CHOREO:",
+
+    "GENERAL NOTES:",
+    "GENERAL/COMPANY MANAGEMENT:",
+    "PRODUCTION MANAGEMENT:",
+    "PRODUCING:",
+    "FACILITIES:",
+
+    "UPCOMING:",
+    "REHEARSAL NOTES:",
+    "PERFORMANCE NOTES:",
+    "WORDS USED:",
+    "IMPROV HIGHLIGHTS:"
+  ];
+}
+
+
+function isProtectedPerformanceReportRow_(
+  report,
+  row
+) {
+  const lastColumn =
+    Math.max(
+      report.getLastColumn(),
+      7
+    );
+
+  const values =
+    report
+      .getRange(
+        row,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+  return (
+    isProtectedPerformanceReportRowFromValues_(
+      values
+    )
+  );
+}
+
+
+function isProtectedPerformanceReportRowFromValues_(
+  values
+) {
+  const normalizedValues =
+    (
+      values || []
+    ).map(function (value) {
+      return normalizeReportHeaderKey_(
+        value
+      );
+    });
+
+  const protectedKeys =
+    getProtectedReportHeaders_()
+      .map(
+        normalizeReportHeaderKey_
+      );
+
+  const containsSectionHeader =
+    normalizedValues.some(
+      function (value) {
+        return (
+          value &&
+          protectedKeys.indexOf(
+            value
+          ) !== -1
+        );
+      }
+    );
+
+  if (containsSectionHeader) {
+    return true;
+  }
+
+  /*
+   * Protect the cast-table header:
+   *
+   * OUT | IN | ROLE | REASON
+   */
+  const hasOut =
+    normalizedValues.indexOf(
+      "OUT"
+    ) !== -1;
+
+  const hasIn =
+    normalizedValues.indexOf(
+      "IN"
+    ) !== -1;
+
+  const hasRole =
+    normalizedValues.indexOf(
+      "ROLE"
+    ) !== -1;
+
+  const hasReason =
+    normalizedValues.indexOf(
+      "REASON"
+    ) !== -1;
+
+  return (
+    hasOut &&
+    hasIn &&
+    hasRole &&
+    hasReason
+  );
+}
+
+
+/* =========================================================
+ * NOTE CLEANUP / MERGING
+ * ========================================================= */
+
+function getCleanExistingReportLines_(
+  cellValue
+) {
+  return String(
+    cellValue || ""
+  )
+    .split(/\n+/)
+    .map(function (line) {
+      return String(
+        line || ""
+      ).trim();
+    })
+    .filter(function (line) {
+      return (
+        line &&
+        line !== "–" &&
+        line !== "-" &&
+        !isDefaultReportNoteForPayload_(
+          line
+        )
+      );
+    });
+}
+
+
+function normalizeReportNoteForWriting_(
+  note
+) {
+  const text =
+    String(
+      note || ""
+    )
+      .replace(
+        /^[-–]\s*/,
+        ""
+      )
+      .trim();
+
+  return text
+    ? "– " + text
+    : "";
+}
+
+
+function normalizeReportHeaderKey_(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim()
+    .toUpperCase();
+}
+
+
+/* =========================================================
+ * NOTE ROUTING
+ * ========================================================= */
+
+function routeReportNotesFromText_(
+  notesText
+) {
+  const routed = {
+    scenic:
+      [],
+
+    props:
+      [],
+
+    costumes:
+      [],
+
+    wigs:
+      [],
+
+    sound:
+      [],
+
+    lighting:
+      [],
+
+    script:
+      [],
+
+    music:
+      [],
+
+    choreo:
+      [],
+
+    general:
+      [],
+
+    company:
+      [],
+
+    production:
+      [],
+
+    producing:
+      [],
+
+    facilities:
+      []
+  };
+
+  String(
+    notesText || ""
+  )
+    .split(/\n+/)
+    .map(function (line) {
+      return String(
+        line || ""
+      )
+        .replace(
+          /^[-–]\s*/,
+          ""
+        )
+        .trim();
+    })
+    .filter(Boolean)
+    .forEach(function (note) {
+      if (
+        shouldIgnoreReportNoteFromPayload_(
+          note
+        )
+      ) {
+        return;
+      }
+
+      const transformed =
+        transformReportNoteFromPayload_(
+          note
+        );
+
+      const category =
+        getReportNoteCategoryFromPayload_(
+          note
+        );
+
+      if (
+        routed[category]
+      ) {
+        routed[category].push(
+          transformed
+        );
+      }
+    });
+
+  return routed;
+}
+
+
+function getReportHeaderForCategory_(
+  category
+) {
+  const map = {
+    scenic:
+      "SCENIC:",
+
+    props:
+      "PROPS:",
+
+    costumes:
+      "COSTUMES:",
+
+    wigs:
+      "WIGS/HAIR:",
+
+    sound:
+      "SOUND:",
+
+    lighting:
+      "LIGHTING:",
+
+    script:
+      "SCRIPT:",
+
+    music:
+      "MUSIC:",
+
+    choreo:
+      "CHOREO:",
+
+    general:
+      "GENERAL NOTES:",
+
+    company:
+      "GENERAL/COMPANY MANAGEMENT:",
+
+    production:
+      "PRODUCTION MANAGEMENT:",
+
+    producing:
+      "PRODUCING:",
+
+    facilities:
+      "FACILITIES:"
+  };
+
+  return (
+    map[category] ||
+    "GENERAL NOTES:"
+  );
+}
+
+
+function getReportNoteCategoryFromPayload_(
+  note
+) {
+  const text =
+    String(
+      note || ""
+    )
+      .toLowerCase();
+
+  if (
+    /\bpt\b/.test(
+      text
+    )
+  ) {
+    return "general";
+  }
+
+  if (
+    text.includes(
+      "guest speller"
+    ) ||
+    text.includes(
+      "group photo"
+    )
+  ) {
+    return "general";
+  }
+
+  if (
+    text.includes(
+      "scenic"
+    ) ||
+    text.includes(
+      "set "
+    )
+  ) {
+    return "scenic";
+  }
+
+  if (
+    text.includes(
+      "prop"
+    ) ||
+    text.includes(
+      "lanyard"
+    ) ||
+    text.includes(
+      "flick stick"
+    ) ||
+    text.includes(
+      "ribbon"
+    ) ||
+    text.includes(
+      "chair"
+    )
+  ) {
+    return "props";
+  }
+
+  if (
+    text.includes(
+      "wardrobe"
+    ) ||
+    text.includes(
+      "costume"
+    ) ||
+    text.includes(
+      "fitting"
+    )
+  ) {
+    return "costumes";
+  }
+
+  if (
+    text.includes(
+      "wig"
+    ) ||
+    text.includes(
+      "hair"
+    )
+  ) {
+    return "wigs";
+  }
+
+  if (
+    text.includes(
+      "sound"
+    ) ||
+    text.includes(
+      "audio"
+    ) ||
+    text.includes(
+      "mic"
+    ) ||
+    text.includes(
+      "rf"
+    ) ||
+    text.includes(
+      "a1"
+    ) ||
+    text.includes(
+      "a2"
+    )
+  ) {
+    return "sound";
+  }
+
+  if (
+    text.includes(
+      "spot op"
+    ) ||
+    text.includes(
+      "spotlight"
+    ) ||
+    text.includes(
+      "lighting"
+    ) ||
+    text.includes(
+      "light board"
+    ) ||
+    /\blx\b/.test(
+      text
+    )
+  ) {
+    return "lighting";
+  }
+
+  if (
+    text.includes(
+      "script"
+    ) ||
+    text.includes(
+      "line"
+    ) ||
+    text.includes(
+      "rant"
+    )
+  ) {
+    return "script";
+  }
+
+  if (
+    text.includes(
+      "music"
+    ) ||
+    text.includes(
+      "conductor"
+    ) ||
+    text.includes(
+      "pianist"
+    ) ||
+    text.includes(
+      "vocal"
+    )
+  ) {
+    return "music";
+  }
+
+  if (
+    text.includes(
+      "choreo"
+    ) ||
+    text.includes(
+      "dance"
+    )
+  ) {
+    return "choreo";
+  }
+
+  if (
+    text.includes(
+      "company management"
+    ) ||
+    text.includes(
+      "company manager"
+    )
+  ) {
+    return "company";
+  }
+
+  if (
+    text.includes(
+      "production management"
+    ) ||
+    /\bpm\b/.test(
+      text
+    )
+  ) {
+    return "production";
+  }
+
+  if (
+    text.includes(
+      "producing"
+    ) ||
+    text.includes(
+      "producer"
+    )
+  ) {
+    return "producing";
+  }
+
+  if (
+    text.includes(
+      "facilities"
+    ) ||
+    text.includes(
+      "bathroom"
+    ) ||
+    text.includes(
+      "building"
+    ) ||
+    text.includes(
+      "outlet"
+    )
+  ) {
+    return "facilities";
+  }
+
+  return "general";
+}
+
+
+function transformReportNoteFromPayload_(
+  note
+) {
+  const cleanNote =
+    String(
+      note || ""
+    )
+      .replace(
+        /^[-–]\s*/,
+        ""
+      )
+      .trim();
+
+  const ptMatch =
+    cleanNote.match(
+      /^PT\s+(.+?)\s*\((.+?)\)\.?$/i
+    );
+
+  if (ptMatch) {
+    const time =
+      ptMatch[1].trim();
+
+    const location =
+      ptMatch[2]
+        .trim()
+        .toLowerCase();
+
+    return (
+      "PT occurred for the company today in the " +
+      location +
+      " " +
+      time +
+      "."
+    );
+  }
+
+  return cleanNote;
+}
+
+
+function shouldIgnoreReportNoteFromPayload_(
+  note
+) {
+  const text =
+    String(
+      note || ""
+    )
+      .toLowerCase();
+
+  return (
+    text.includes(
+      "dollar friday"
+    ) ||
+    text.includes(
+      "cello"
+    ) ||
+    text.includes(
+      "drums"
+    ) ||
+    text.includes(
+      "reeds"
+    ) ||
+    text.includes(
+      "keys 2"
+    ) ||
+    text.includes(
+      "sub keys"
+    )
+  );
+}
+
+
+function isDefaultReportNoteForPayload_(
+  text
+) {
+  const value =
+    String(
+      text || ""
+    )
+      .toLowerCase();
+
+  return (
+    value.includes(
+      "no notes today"
+    ) ||
+    value.includes(
+      "no notes tonight"
+    ) ||
+    value.includes(
+      "no notes, thank you"
+    )
+  );
+}
+
+
+function mergeUniqueReportLinesFromPayload_(
+  existingLines,
+  newLines
+) {
+  const seen =
+    new Set();
+
+  const output =
+    [];
+
+  (
+    existingLines || []
+  )
+    .concat(
+      newLines || []
+    )
+    .forEach(function (line) {
+      const cleaned =
+        String(
+          line || ""
+        ).trim();
+
+      const key =
+        cleaned
+          .replace(
+            /^[-–]\s*/,
+            ""
+          )
+          .replace(
+            /\s+/g,
+            " "
+          )
+          .trim()
+          .toLowerCase();
+
+      if (
+        !key ||
+        seen.has(
+          key
+        )
+      ) {
+        return;
+      }
+
+      seen.add(
+        key
+      );
+
+      output.push(
+        cleaned
+      );
+    });
+
+  return output;
+}

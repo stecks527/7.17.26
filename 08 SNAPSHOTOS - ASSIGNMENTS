@@ -1,0 +1,162 @@
+/*************************************************
+ * 08 SNAPSHOTOS - ASSIGNMENTS
+ * Version: 1.0.0
+ * Status: ENGINE-FIRST
+ *************************************************/
+
+function snapshotOSv2CaptureAssignmentSnapshotFromPrep(payload) {
+  const sh = snapshotOSv2GetOrCreateSheet_("Assignment Snapshots");
+  snapshotOSv2EnsureAssignmentHeaders_(sh);
+
+  const capturedAt = new Date();
+  const snapshotId = snapshotOSv2BuildAssignmentSnapshotId_(payload, capturedAt);
+  const rows = snapshotOSv2BuildAssignmentRows_(payload, snapshotId, capturedAt);
+
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length)
+      .setValues(rows);
+  }
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "SnapshotOS",
+      "Assignment Snapshot",
+      "Assignment snapshot written to Engine.",
+      {
+        snapshotId: snapshotId,
+        performance: payload.performance || "",
+        rowsWritten: rows.length
+      }
+    );
+  }
+
+  return {
+    snapshotId,
+    rowsWritten: rows.length
+  };
+}
+
+function snapshotOSv2EnsureAssignmentHeaders_(sh) {
+  const headers = [
+    "Snapshot ID",
+    "Captured At",
+    "Performance Date",
+    "Performance Label",
+    "Performance Number",
+    "Performance Type",
+    "Department",
+    "Track ID",
+    "Track Label",
+    "Assigned Person",
+    "Person Title",
+    "Status",
+    "Details"
+  ];
+
+  snapshotOSv2EnsureHeaders_(sh, headers, "#d9ead3");
+}
+
+function snapshotOSv2BuildAssignmentRows_(payload, snapshotId, capturedAt) {
+  const assignments = payload.assignments || {};
+  const tracks = assignments.tracks || [];
+  const values = assignments.values || {};
+  const training = assignments.training || {};
+
+  const dateText = snapshotOSv2GetInOutDate_();
+  const performanceLabel = payload.performance || "";
+  const performanceNumber = snapshotOSv2ExtractPerformanceNumber_(performanceLabel);
+  const performanceType = snapshotOSv2ExtractPerformanceType_(performanceLabel);
+
+  const rows = [];
+
+  tracks.forEach(track => {
+    const personName = values[track.id] || "";
+    const person = snapshotOSv2FindAssignmentPerson_(payload, track.id, personName);
+
+    rows.push([
+      snapshotId,
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      track.departmentGroup || "",
+      track.id || "",
+      track.label || "",
+      personName,
+      person.title || "",
+      assignments.officeShow && track.departmentGroup === "stageManagement"
+        ? "OFFICE_SHOW_CONTEXT"
+        : "ASSIGNED",
+      ""
+    ]);
+  });
+
+  Object.keys(training).forEach(groupId => {
+    const item = training[groupId];
+    if (!item || !item.enabled) return;
+
+    const track = tracks.find(t => t.id === item.trackId);
+    const trainer = item.trainer || "";
+    const trainee = item.trainee || "";
+
+    const details = [
+      trainee ? "Trainee: " + trainee : "",
+      trainer ? "Trainer: " + trainer : "",
+      item.note ? "Note: " + item.note : ""
+    ].filter(Boolean).join(" | ");
+
+    rows.push([
+      snapshotId,
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      groupId,
+      item.trackId || "",
+      track ? track.label : "",
+      trainee || trainer || "",
+      "",
+      "TRAINING",
+      details
+    ]);
+  });
+
+  if (assignments.officeShow) {
+    rows.push([
+      snapshotId,
+      capturedAt,
+      dateText,
+      performanceLabel,
+      performanceNumber,
+      performanceType,
+      "stageManagement",
+      "officeShow",
+      "Office Show",
+      "",
+      "",
+      "OFFICE_SHOW",
+      "Office Show checked during Prep IN/OUT."
+    ]);
+  }
+
+  return rows;
+}
+
+function snapshotOSv2FindAssignmentPerson_(payload, trackId, personName) {
+  const assignments = payload.assignments || {};
+  const dropdowns = assignments.dropdowns || {};
+  const peopleByTrack = dropdowns.peopleByTrack || {};
+  const people = peopleByTrack[trackId] || [];
+
+  const found = people.find(person => {
+    const name = person.name || person;
+    return name === personName;
+  });
+
+  if (!found) return { name: personName, title: "" };
+  if (typeof found === "string") return { name: found, title: "" };
+
+  return found;
+}

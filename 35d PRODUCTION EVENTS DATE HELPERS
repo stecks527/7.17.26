@@ -1,0 +1,229 @@
+/*************************************************
+ * 35d PRODUCTION EVENTS DATE HELPERS
+ * Version: 2.0.0
+ *************************************************/
+
+function productionEventsPartFromLineV1_(line, defaultPart) {
+  if (/mat\s*&\s*eve/i.test(line)) return "MatEve";
+  if (/\bmat\b/i.test(line)) return "Mat";
+  if (/\beve\b/i.test(line)) return "Eve";
+  return defaultPart || "";
+}
+
+function productionEventsMakeDateEntryV1_(index, part, dateDisplays) {
+  return {
+    base: productionEventsFormatDateV1_(index, dateDisplays),
+    part: part
+  };
+}
+
+function productionEventsFormatDateV1_(index, dateDisplays) {
+  const display = String(dateDisplays[index] || "");
+  const months = {
+    January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+    July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
+  };
+
+  const match = display.match(/^(\w+),\s+(\w+)\s+(\d+)/);
+  if (match) return match[1].slice(0, 3) + " " + months[match[2]] + "/" + match[3];
+
+  return display;
+}
+
+function productionEventsSameDateEntryV1_(a, b) {
+  return String(a.base || "") === String(b.base || "") &&
+    String(a.part || "") === String(b.part || "");
+}
+
+function productionEventsDateSummaryV1_(entries) {
+  if (!entries || !entries.length) return "";
+
+  const days = productionEventsGroupEntriesByDayV1_(entries);
+  const units = [];
+
+  days.forEach(function (day) {
+    if (day.hasMat && day.hasEve) {
+      units.push({
+        base: day.base,
+        part: "MatEve",
+        sort: productionEventsPerformanceSortValueV1_(day.base, "Mat"),
+        display: day.base + " (Mat & Eve)"
+      });
+    } else if (day.hasMat) {
+      units.push({
+        base: day.base,
+        part: "Mat",
+        sort: productionEventsPerformanceSortValueV1_(day.base, "Mat"),
+        display: day.base + " Mat"
+      });
+    } else if (day.hasEve) {
+      units.push({
+        base: day.base,
+        part: "Eve",
+        sort: productionEventsPerformanceSortValueV1_(day.base, "Eve"),
+        display: day.base + " Eve"
+      });
+    } else {
+      units.push({
+        base: day.base,
+        part: "",
+        sort: productionEventsPerformanceSortValueV1_(day.base, ""),
+        display: day.base
+      });
+    }
+  });
+
+  units.sort(function (a, b) { return a.sort - b.sort; });
+
+  const ranges = [];
+  let start = units[0];
+  let prev = units[0];
+
+  for (let i = 1; i < units.length; i++) {
+    const current = units[i];
+
+    if (productionEventsAreConsecutiveSummaryUnitsV1_(prev, current)) {
+      prev = current;
+      continue;
+    }
+
+    ranges.push(productionEventsFormatSummaryRangeV1_(start, prev));
+    start = current;
+    prev = current;
+  }
+
+  ranges.push(productionEventsFormatSummaryRangeV1_(start, prev));
+
+  if (ranges.length === 1) return ranges[0];
+  if (ranges.length === 2) return productionEventsMaybeMergePayrollWeekRangesV1_(ranges);
+
+  return ranges.slice(0, -1).join(", ") + " & " + ranges[ranges.length - 1];
+}
+
+function productionEventsGroupEntriesByDayV1_(entries) {
+  const map = {};
+  const order = [];
+
+  entries.forEach(function (entry) {
+    const base = String(entry.base || "").trim();
+    const part = String(entry.part || "").trim();
+    if (!base) return;
+
+    if (!map[base]) {
+      map[base] = { base: base, hasMat: false, hasEve: false, hasPlain: false };
+      order.push(base);
+    }
+
+    if (part === "MatEve") {
+      map[base].hasMat = true;
+      map[base].hasEve = true;
+    } else if (part === "Mat") {
+      map[base].hasMat = true;
+    } else if (part === "Eve") {
+      map[base].hasEve = true;
+    } else {
+      map[base].hasPlain = true;
+    }
+  });
+
+  return order.map(function (base) { return map[base]; });
+}
+
+function productionEventsMaybeMergePayrollWeekRangesV1_(ranges) {
+  return ranges.join(" & ").replace(
+    /Mon (\d+\/\d+) & Wed (\d+\/\d+) - Sun (\d+\/\d+) \(Mat & Eve\)/,
+    "Mon $1 - Sun $3 (Mat & Eve)"
+  );
+}
+
+function productionEventsPerformanceSortValueV1_(base, part) {
+  const match = String(base || "").match(/^(\w+)\s+(\d+)\/(\d+)/);
+  if (!match) return 999999;
+
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  let partSort = 0.15;
+  if (part === "Mat" || part === "MatEve") partSort = 0.1;
+  if (part === "Eve") partSort = 0.2;
+
+  return month * 1000 + day * 10 + partSort;
+}
+
+function productionEventsAreConsecutiveSummaryUnitsV1_(prev, current) {
+  if (!prev || !current) return false;
+
+  const prevDate = productionEventsBaseToDateKeyV1_(prev.base);
+  const currDate = productionEventsBaseToDateKeyV1_(current.base);
+
+  if (!prevDate || !currDate) return false;
+  if (prev.base === current.base) return true;
+  if (currDate - prevDate === 1) return true;
+
+  if (
+    productionEventsDayNameV1_(prev.base) === "Mon" &&
+    productionEventsDayNameV1_(current.base) === "Wed" &&
+    currDate - prevDate === 2
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function productionEventsBaseToDateKeyV1_(base) {
+  const match = String(base || "").match(/^(\w+)\s+(\d+)\/(\d+)/);
+  if (!match) return null;
+  return Number(match[2]) * 31 + Number(match[3]);
+}
+
+function productionEventsDayNameV1_(base) {
+  const match = String(base || "").match(/^(\w+)/);
+  return match ? match[1] : "";
+}
+
+function productionEventsFormatSummaryRangeV1_(start, end) {
+  if (!start || !end) return "";
+
+  if (start.display === end.display) {
+    return productionEventsSingleUnitDisplayV1_(start);
+  }
+
+  return productionEventsRangeEndpointDisplayV1_(start) +
+    " - " +
+    productionEventsRangeEndpointDisplayV1_(end);
+}
+
+function productionEventsRangeEndpointDisplayV1_(unit) {
+  if (!unit) return "";
+  if (unit.part === "Mat" || unit.part === "Eve") return unit.base;
+  return unit.display;
+}
+
+function productionEventsSingleUnitDisplayV1_(unit) {
+  if (!unit) return "";
+  if (unit.part === "Mat" || unit.part === "Eve") return unit.base;
+  return unit.display;
+}
+
+function productionEventsFirstDateSortV1_(entries) {
+  if (!entries || !entries.length) return 99999;
+
+  let earliest = 99999;
+
+  entries.forEach(function (entry) {
+    const parts = String(entry.base || "").split(" ");
+    if (parts.length < 2) return;
+
+    const dateParts = parts[1].split("/");
+    if (dateParts.length < 2) return;
+
+    let sortValue = Number(dateParts[0]) * 100 + Number(dateParts[1]);
+    if (entry.part === "Mat") sortValue += 0.1;
+    if (entry.part === "Eve") sortValue += 0.5;
+
+    earliest = Math.min(earliest, sortValue);
+  });
+
+  return earliest;
+}

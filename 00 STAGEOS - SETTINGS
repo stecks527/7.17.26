@@ -1,0 +1,1021 @@
+/*************************************************
+ * 00 STAGEOS - SETTINGS
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Single source of truth for:
+ * - StageOS configuration
+ * - Production Settings
+ * - Sheet names
+ * - Settings caching
+ * - Boolean parsing
+ * - Drive ID extraction
+ *
+ * Compatibility wrappers preserve existing callers:
+ * - getStageOSSettings()
+ * - getStageOSSetting()
+ * - getProductionSettings_()
+ * - getShowOSSettings()
+ * - SettingsCacheOS()
+ *************************************************/
+
+
+/* =========================================================
+ * STAGEOS CONFIGURATION
+ * ========================================================= */
+
+const STAGEOS = {
+  VERSION: "3.0.0",
+  NAME: "StageOS",
+  BUILD: "Alpha",
+
+  SETTINGS_SHEET: "Production Settings",
+  DASHBOARD_SHEET: "Home",
+
+  SHEETS: {
+    home: "Home",
+    dashboard: "Home",
+
+    settings: "Production Settings",
+    productionSettings: "Production Settings",
+
+    inOut: "IN/OUT",
+    castList: "Cast List",
+    contactSheet: "Contact Sheet",
+
+    performanceReport: "Performance Report",
+    performanceHighlights: "Performance Highlights",
+
+    expandedCalendar: "Expanded Calendar",
+    productionCalendar: "Production Cal w/Conflicts",
+
+    payroll: "Payroll",
+
+    resolvedCast: "Resolved Cast",
+    resolverValidation: "Resolver Validation",
+    resolvedSnapshots: "Resolved Cast Snapshots",
+
+    logs: "StageOS Logs"
+  },
+
+  /*
+   * Temporary compatibility alias.
+   *
+   * Older code may still reference STAGEOS.DEFAULT_SHEETS.
+   * Both registries now resolve from the same canonical list.
+   */
+  DEFAULT_SHEETS: {
+    home: "Home",
+    dashboard: "Home",
+
+    settings: "Production Settings",
+    productionSettings: "Production Settings",
+
+    inOut: "IN/OUT",
+    castList: "Cast List",
+    contactSheet: "Contact Sheet",
+
+    performanceReport: "Performance Report",
+    performanceHighlights: "Performance Highlights",
+
+    expandedCalendar: "Expanded Calendar",
+    productionCalendar: "Production Cal w/Conflicts",
+
+    payroll: "Payroll",
+
+    resolvedCast: "Resolved Cast",
+    resolverValidation: "Resolver Validation",
+    resolvedSnapshots: "Resolved Cast Snapshots",
+
+    logs: "StageOS Logs"
+  },
+
+  ENGINE: {
+    enabled: false,
+    workbookId: ""
+  },
+
+  SERVICES: {
+    home: true,
+    intelligence: true,
+    snapshot: true,
+    castResolver: true,
+    showState: true
+  }
+};
+
+
+/* =========================================================
+ * SETTINGS SERVICE CONSTANTS
+ * ========================================================= */
+
+const STAGEOS_SETTINGS_CACHE_KEY =
+  "SETTINGS_CACHE_OS_DATA";
+
+let STAGEOS_SETTINGS_MEMORY_CACHE_ = null;
+
+
+/* =========================================================
+ * PUBLIC SETTINGS SERVICE
+ * ========================================================= */
+
+function StageOSSettings() {
+  return {
+    all: function () {
+      return stageOSSettingsLoad_();
+    },
+
+    get: function (labelOrKey, fallback) {
+      return stageOSSettingsGet_(
+        labelOrKey,
+        fallback
+      );
+    },
+
+    boolean: function (labelOrKey, fallback) {
+      return stageOSSettingsBoolean_(
+        labelOrKey,
+        fallback
+      );
+    },
+
+    sheetName: function (sheetKey) {
+      return stageOSResolveSheetName_(sheetKey);
+    },
+
+    sheet: function (sheetKey) {
+      return stageOSGetSheet_(sheetKey);
+    },
+
+    driveId: function (labelOrKey) {
+      return stageOSSettingsDriveId_(
+        labelOrKey
+      );
+    },
+
+    refresh: function () {
+      return stageOSSettingsRefresh_();
+    },
+
+    clear: function () {
+      return stageOSSettingsClear_();
+    },
+
+    status: function () {
+      return stageOSSettingsStatus_();
+    }
+  };
+}
+
+
+/* =========================================================
+ * SETTINGS LOAD / CACHE
+ * ========================================================= */
+
+function stageOSSettingsLoad_() {
+  if (STAGEOS_SETTINGS_MEMORY_CACHE_) {
+    return STAGEOS_SETTINGS_MEMORY_CACHE_;
+  }
+
+  const props =
+    PropertiesService.getDocumentProperties();
+
+  const raw =
+    props.getProperty(
+      STAGEOS_SETTINGS_CACHE_KEY
+    );
+
+  if (raw) {
+    try {
+      const cached = JSON.parse(raw);
+
+      if (
+        cached &&
+        cached.stageKeys
+      ) {
+        STAGEOS_SETTINGS_MEMORY_CACHE_ =
+          stageOSSettingsBuildPublicObject_(cached);
+
+        return STAGEOS_SETTINGS_MEMORY_CACHE_;
+      }
+    } catch (err) {
+      Logger.log(
+        "StageOS settings cache could not be parsed. Rebuilding."
+      );
+    }
+  }
+
+  return stageOSSettingsRefresh_();
+}
+
+function stageOSSettingsRefresh_() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheet =
+    ss.getSheetByName(
+      STAGEOS.SETTINGS_SHEET
+    );
+
+  if (!sheet) {
+    throw new Error(
+      'Could not find "' +
+      STAGEOS.SETTINGS_SHEET +
+      '" tab.'
+    );
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  const values = lastRow
+    ? sheet
+        .getRange(1, 1, lastRow, 2)
+        .getDisplayValues()
+    : [];
+
+  const rawValues = {};
+  const stageKeys = {};
+
+  values.forEach(function (row) {
+    const label =
+      String(row[0] || "").trim();
+
+    const rawValue =
+      String(row[1] || "").trim();
+
+    if (!label) return;
+    if (stageOSSettingsIsHeader_(label)) return;
+
+    const normalizedLabel =
+      label.toLowerCase();
+
+    const stageKey =
+      toStageOSKey_(label);
+
+    const parsedValue =
+      parseStageOSValue_(rawValue);
+
+    rawValues[normalizedLabel] =
+      parsedValue;
+
+    if (stageKey) {
+      stageKeys[stageKey] =
+        parsedValue;
+    }
+  });
+
+  const cache = {
+    cachedAt: new Date().toISOString(),
+    values: rawValues,
+    stageKeys: stageKeys
+  };
+
+  PropertiesService
+    .getDocumentProperties()
+    .setProperty(
+      STAGEOS_SETTINGS_CACHE_KEY,
+      JSON.stringify(cache)
+    );
+
+  STAGEOS_SETTINGS_MEMORY_CACHE_ =
+    stageOSSettingsBuildPublicObject_(cache);
+
+  return STAGEOS_SETTINGS_MEMORY_CACHE_;
+}
+
+function stageOSSettingsClear_() {
+  STAGEOS_SETTINGS_MEMORY_CACHE_ = null;
+
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      STAGEOS_SETTINGS_CACHE_KEY
+    );
+
+  return true;
+}
+
+function stageOSSettingsBuildPublicObject_(cache) {
+  const settings = Object.assign(
+    {},
+    cache && cache.stageKeys
+      ? cache.stageKeys
+      : {}
+  );
+
+  settings.sheets = Object.assign(
+    {},
+    STAGEOS.SHEETS
+  );
+
+  settings.cachedAt =
+    cache && cache.cachedAt
+      ? cache.cachedAt
+      : "";
+
+  return settings;
+}
+
+function stageOSSettingsStatus_() {
+  const props =
+    PropertiesService.getDocumentProperties();
+
+  const raw =
+    props.getProperty(
+      STAGEOS_SETTINGS_CACHE_KEY
+    ) || "";
+
+  let parsed = {};
+
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      parsed = {};
+    }
+  }
+
+  return {
+    exists: Boolean(raw),
+    cachedAt: parsed.cachedAt || "",
+    settingsCount: Object.keys(
+      parsed.stageKeys || {}
+    ).length,
+    rawLabelCount: Object.keys(
+      parsed.values || {}
+    ).length,
+    size: raw.length,
+    memoryLoaded:
+      Boolean(
+        STAGEOS_SETTINGS_MEMORY_CACHE_
+      )
+  };
+}
+
+
+/* =========================================================
+ * SETTING ACCESS
+ * ========================================================= */
+
+function stageOSSettingsGet_(
+  labelOrKey,
+  fallback
+) {
+  const key =
+    toStageOSKey_(labelOrKey);
+
+  const settings =
+    stageOSSettingsLoad_();
+
+  if (
+    key &&
+    settings[key] !== undefined &&
+    settings[key] !== ""
+  ) {
+    return settings[key];
+  }
+
+  /*
+   * Also check the original lower-case label map.
+   * This supports SettingsCacheOS().get("Engine Enabled")
+   * and similar legacy calls.
+   */
+  const props =
+    PropertiesService.getDocumentProperties();
+
+  const raw =
+    props.getProperty(
+      STAGEOS_SETTINGS_CACHE_KEY
+    );
+
+  if (raw) {
+    try {
+      const cache = JSON.parse(raw);
+
+      const rawKey =
+        String(labelOrKey || "")
+          .trim()
+          .toLowerCase();
+
+      const value =
+        cache.values &&
+        cache.values[rawKey];
+
+      if (
+        value !== undefined &&
+        value !== ""
+      ) {
+        return value;
+      }
+    } catch (err) {}
+  }
+
+  return fallback;
+}
+
+function stageOSSettingsBoolean_(
+  labelOrKey,
+  fallback
+) {
+  const value =
+    stageOSSettingsGet_(
+      labelOrKey,
+      fallback
+    );
+
+  return stageOSParseBoolean_(
+    value,
+    fallback
+  );
+}
+
+function stageOSSettingsDriveId_(
+  labelOrKey
+) {
+  const value =
+    stageOSSettingsGet_(
+      labelOrKey,
+      ""
+    );
+
+  if (!value) {
+    throw new Error(
+      'Could not find "' +
+      labelOrKey +
+      '" in Production Settings.'
+    );
+  }
+
+  return extractStageOSDriveId_(value);
+}
+
+
+/* =========================================================
+ * SHEET ACCESS
+ * ========================================================= */
+
+function stageOSResolveSheetName_(sheetKey) {
+  const key =
+    String(sheetKey || "").trim();
+
+  if (!key) return "";
+
+  const settings =
+    stageOSSettingsLoad_();
+
+  const configuredSheets =
+    settings.sheets || {};
+
+  return (
+    configuredSheets[key] ||
+    STAGEOS.SHEETS[key] ||
+    key
+  );
+}
+
+function stageOSGetSheet_(sheetKey) {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheetName =
+    stageOSResolveSheetName_(sheetKey);
+
+  const sheet =
+    ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error(
+      'Could not find "' +
+      sheetName +
+      '" tab.'
+    );
+  }
+
+  return sheet;
+}
+
+
+/* =========================================================
+ * SHARED PARSERS
+ * ========================================================= */
+
+function toStageOSKey_(label) {
+  return String(label || "")
+    .trim()
+    .replace(/[^\w\s]/g, "")
+    .replace(
+      /\s+(.)/g,
+      function (_, chr) {
+        return chr.toUpperCase();
+      }
+    )
+    .replace(
+      /^\w/,
+      function (chr) {
+        return chr.toLowerCase();
+      }
+    );
+}
+
+function parseStageOSValue_(value) {
+  const text =
+    String(value || "").trim();
+
+  const upper =
+    text.toUpperCase();
+
+  if (
+    upper === "TRUE" ||
+    upper === "YES"
+  ) {
+    return true;
+  }
+
+  if (
+    upper === "FALSE" ||
+    upper === "NO"
+  ) {
+    return false;
+  }
+
+  return text;
+}
+
+function stageOSParseBoolean_(
+  value,
+  fallback
+) {
+  if (
+    value === true ||
+    value === false
+  ) {
+    return value;
+  }
+
+  const text =
+    String(value || "")
+      .trim()
+      .toUpperCase();
+
+  if (
+    [
+      "TRUE",
+      "YES",
+      "Y",
+      "1",
+      "CHECKED"
+    ].includes(text)
+  ) {
+    return true;
+  }
+
+  if (
+    [
+      "FALSE",
+      "NO",
+      "N",
+      "0",
+      "UNCHECKED"
+    ].includes(text)
+  ) {
+    return false;
+  }
+
+  return Boolean(fallback);
+}
+
+function extractStageOSDriveId_(input) {
+  const text =
+    String(input || "").trim();
+
+  if (!text) return "";
+
+  const fileMatch =
+    text.match(
+      /\/d\/([a-zA-Z0-9_-]+)/
+    );
+
+  if (fileMatch) {
+    return fileMatch[1];
+  }
+
+  const folderMatch =
+    text.match(
+      /\/folders\/([a-zA-Z0-9_-]+)/
+    );
+
+  if (folderMatch) {
+    return folderMatch[1];
+  }
+
+  const queryMatch =
+    text.match(
+      /[?&]id=([a-zA-Z0-9_-]+)/
+    );
+
+  if (queryMatch) {
+    return queryMatch[1];
+  }
+
+  const genericMatch =
+    text.match(
+      /[a-zA-Z0-9_-]{20,}/
+    );
+
+  return genericMatch
+    ? genericMatch[0]
+    : text;
+}
+
+function stageOSSettingsIsHeader_(label) {
+  const text =
+    String(label || "")
+      .trim()
+      .toLowerCase();
+
+  return [
+    "production settings",
+    "value",
+    "production",
+    "branding",
+    "assets",
+    "default email signature",
+    "stageos"
+  ].includes(text);
+}
+
+
+/* =========================================================
+ * OFFICIAL COMPATIBILITY FUNCTIONS
+ * ========================================================= */
+
+function getStageOSSettings() {
+  return StageOSSettings().all();
+}
+
+function getStageOSSetting(
+  labelOrKey,
+  fallback
+) {
+  return StageOSSettings().get(
+    labelOrKey,
+    fallback
+  );
+}
+
+function getStageOSSheet(sheetKey) {
+  return StageOSSettings().sheet(
+    sheetKey
+  );
+}
+
+function getStageOSFolderId(
+  labelOrKey
+) {
+  return StageOSSettings().driveId(
+    labelOrKey
+  );
+}
+
+function getStageOSSettingValue_(
+  labelOrKey,
+  fallback
+) {
+  return StageOSSettings().get(
+    labelOrKey,
+    fallback
+  );
+}
+
+function getStageOSSettingBool_(
+  labelOrKey,
+  fallback
+) {
+  return StageOSSettings().boolean(
+    labelOrKey,
+    fallback
+  );
+}
+
+
+/* =========================================================
+ * STAGEOS CORE COMPATIBILITY HELPERS
+ * ========================================================= */
+
+function stageOSSetting_(
+  key,
+  fallback
+) {
+  return StageOSSettings().get(
+    key,
+    fallback
+  );
+}
+
+function stageOSRule_(
+  key,
+  fallback
+) {
+  return StageOSSettings().get(
+    key,
+    fallback
+  );
+}
+
+function stageOSBoolean_(
+  key,
+  fallback
+) {
+  return StageOSSettings().boolean(
+    key,
+    fallback
+  );
+}
+
+function stageOSNormalAeaDayOff_() {
+  return String(
+    StageOSSettings().get(
+      "normalAeaDayOff",
+      "Tuesday"
+    ) || "Tuesday"
+  ).trim();
+}
+
+
+/* =========================================================
+ * SETTINGS CACHE OS COMPATIBILITY
+ * ========================================================= */
+
+function SettingsCacheOS() {
+  return {
+    get: function (label) {
+      return StageOSSettings().get(
+        label,
+        ""
+      );
+    },
+
+    getAll: function () {
+      const status =
+        stageOSSettingsReadRawCache_();
+
+      return {
+        cachedAt:
+          status.cachedAt || "",
+
+        values:
+          status.values || {},
+
+        stageKeys:
+          status.stageKeys || {}
+      };
+    },
+
+    refresh: function () {
+      StageOSSettings().refresh();
+
+      return stageOSSettingsReadRawCache_();
+    },
+
+    clear: function () {
+      return StageOSSettings().clear();
+    }
+  };
+}
+
+function stageOSSettingsReadRawCache_() {
+  /*
+   * Ensure a cache exists before reading it.
+   */
+  stageOSSettingsLoad_();
+
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        STAGEOS_SETTINGS_CACHE_KEY
+      );
+
+  if (!raw) {
+    return {
+      cachedAt: "",
+      values: {},
+      stageKeys: {}
+    };
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return {
+      cachedAt: "",
+      values: {},
+      stageKeys: {}
+    };
+  }
+}
+
+function refreshSettingsCacheOS() {
+  const cache =
+    SettingsCacheOS().refresh();
+
+  SpreadsheetApp.getUi().alert(
+    "StageOS settings refreshed.\n\n" +
+    "Settings cached: " +
+    Object.keys(
+      cache.stageKeys || {}
+    ).length
+  );
+
+  return cache;
+}
+
+
+/* =========================================================
+ * LEGACY SHOWOS SETTINGS COMPATIBILITY
+ * ========================================================= */
+
+function getShowOSSettings() {
+  return StageOSSettings().all();
+}
+
+function toShowOSSettingKey_(label) {
+  return toStageOSKey_(label);
+}
+
+function parseShowOSSettingValue_(value) {
+  return parseStageOSValue_(value);
+}
+
+
+/* =========================================================
+ * LEGACY PRODUCTION SETTINGS COMPATIBILITY
+ * ========================================================= */
+
+function getProductionSettings_() {
+  const settings =
+    StageOSSettings().all();
+
+  return {
+    productionName:
+      settings.productionName || "",
+
+    shortName:
+      settings.shortName || "",
+
+    organization:
+      settings.organization || "",
+
+    season:
+      settings.season || "",
+
+    logo:
+      settings.logo || "",
+
+    accentColor:
+      settings.accentColor ||
+      "#2F5DAA",
+
+    secondaryColor:
+      settings.secondaryColor ||
+      "#F4C542",
+
+    castHeadshotFolder:
+      settings.headshotFolderCast ||
+      settings.castHeadshotFolder ||
+      "",
+
+    crewHeadshotFolder:
+      settings.headshotFolderCrew ||
+      settings.crewHeadshotFolder ||
+      "",
+
+    coverPageSlidesId:
+      settings.coverPageSlidesId ||
+      "",
+
+    waterBottleSlidesId:
+      settings.waterBottleSlidesId ||
+      "",
+
+    dressingRoomSlidesId:
+      settings.dressingRoomSlidesId ||
+      "",
+
+    defaultEmailSignature:
+      settings.defaultEmailSignature ||
+      "AUTO",
+
+    stageOSVersion:
+      settings.stageosVersion ||
+      settings.stageOSVersion ||
+      STAGEOS.VERSION,
+
+    testMode:
+      StageOSSettings().boolean(
+        "testMode",
+        true
+      ),
+
+    debugMode:
+      StageOSSettings().boolean(
+        "debugMode",
+        false
+      )
+  };
+}
+
+function isProductionSettingsHeader_(key) {
+  return stageOSSettingsIsHeader_(key);
+}
+
+function normalizeSettingKey_(key) {
+  return String(key || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function parseBoolStageOS_(
+  value,
+  fallback
+) {
+  return stageOSParseBoolean_(
+    value,
+    fallback
+  );
+}
+
+
+/* =========================================================
+ * TESTS
+ * ========================================================= */
+
+function testStageOSSettingsConsolidation() {
+  const settings =
+    StageOSSettings().refresh();
+
+  const status =
+    StageOSSettings().status();
+
+  const results = {
+    productionName:
+      settings.productionName || "",
+
+    shortName:
+      settings.shortName || "",
+
+    payrollSheet:
+      StageOSSettings()
+        .sheet("payroll")
+        .getName(),
+
+    inOutSheet:
+      StageOSSettings()
+        .sheet("inOut")
+        .getName(),
+
+    normalAeaDayOff:
+      StageOSSettings().get(
+        "normalAeaDayOff",
+        "Tuesday"
+      ),
+
+    engineEnabled:
+      StageOSSettings().boolean(
+        "Engine Enabled",
+        false
+      ),
+
+    cacheStatus:
+      status
+  };
+
+  Logger.log(
+    "STAGEOS SETTINGS CONSOLIDATION TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "StageOS settings test passed.\n\n" +
+    "Production: " +
+    (results.productionName || "(blank)") +
+    "\n" +
+    "Payroll: " +
+    results.payrollSheet +
+    "\n" +
+    "IN/OUT: " +
+    results.inOutSheet +
+    "\n" +
+    "Settings cached: " +
+    results.cacheStatus.settingsCount
+  );
+
+  return results;
+}

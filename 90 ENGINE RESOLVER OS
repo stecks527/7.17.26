@@ -1,0 +1,119 @@
+/*************************************************
+ * 90 ENGINE RESOLVER OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Storage API for ResolverOS data in Engine Workbook
+ *************************************************/
+
+const ENGINE_RESOLVER_OS_HEADERS = [
+  "Timestamp",
+  "Action",
+  "Role",
+  "Actor",
+  "Out",
+  "In",
+  "Source",
+  "Confidence",
+  "Notes",
+  "Payload JSON"
+];
+
+function EngineResolverOS() {
+  return {
+    sheet: function () {
+      return EngineOS().sheet("resolver");
+    },
+
+    append: function (entry) {
+      return engineResolverOSAppend_(entry);
+    },
+
+    migrateFromProduction: function () {
+      return engineResolverOSMigrateFromProduction_();
+    }
+  };
+}
+
+function engineResolverOSAppend_(entry) {
+  const api = EngineResolverOS().sheet();
+  api.ensureHeaders(ENGINE_RESOLVER_OS_HEADERS);
+
+  const obj = entry || {};
+
+  const row = ENGINE_RESOLVER_OS_HEADERS.map(header => {
+    if (obj[header] !== undefined) return obj[header];
+
+    const key = header
+      .replace(/[^\w\s]/g, "")
+      .replace(/\s+(.)/g, (_, chr) => chr.toUpperCase())
+      .replace(/^\w/, chr => chr.toLowerCase());
+
+    if (obj[key] !== undefined) return obj[key];
+
+    if (header === "Timestamp") return new Date();
+    if (header === "Payload JSON") return JSON.stringify(obj);
+
+    return "";
+  });
+
+  api.sheet().appendRow(row);
+  return row;
+}
+
+function engineResolverOSMigrateFromProduction_() {
+  const ss = SpreadsheetApp.getActive();
+  const possibleNames = [
+    "Resolver History",
+    "Resolved Cast",
+    "Resolver Validation",
+    "Resolved Cast Snapshots"
+  ];
+
+  let total = 0;
+
+  possibleNames.forEach(name => {
+    const source = ss.getSheetByName(name);
+    if (!source) return;
+
+    const lastRow = source.getLastRow();
+    const lastCol = source.getLastColumn();
+
+    if (lastRow < 2 || lastCol < 1) return;
+
+    const values = source.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+    const headers = values[0];
+    const body = values.slice(1).filter(row => row.some(Boolean));
+
+    body.forEach(row => {
+      const obj = {
+        Timestamp: new Date(),
+        Action: "Migrated from " + name,
+        Source: name
+      };
+
+      headers.forEach((header, i) => {
+        obj[String(header || "").trim()] = row[i];
+      });
+
+      engineResolverOSAppend_(obj);
+      total++;
+    });
+  });
+
+  return total;
+}
+
+function migrateResolverDataToEngine() {
+  const count = EngineResolverOS().migrateFromProduction();
+
+  EngineLogOS().info(
+    "EngineResolverOS",
+    "Migrate Resolver Data",
+    "Resolver data migrated to Engine workbook.",
+    { rows: count }
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "Resolver data migrated to Engine.\n\nRows written: " + count
+  );
+}

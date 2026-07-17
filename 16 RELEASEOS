@@ -1,0 +1,147 @@
+/*************************************************
+ * 16 RELEASEOS
+ * Version: 0.1.0
+ *
+ * Pre-show cleanup + health checks.
+ *************************************************/
+
+function ReleaseOS() {
+  return {
+    check: function () {
+      return releaseOSRunHealthCheck_();
+    },
+
+    cleanup: function () {
+      return releaseOSCleanupShowWorkbookPrompt();
+    }
+  };
+}
+
+/*************************************************
+ * HEALTH CHECK
+ *************************************************/
+
+function releaseOSRunHealthCheckPrompt() {
+  const result = releaseOSRunHealthCheck_();
+
+  SpreadsheetApp.getUi().alert(
+    "ReleaseOS Health Check\n\n" +
+    "Engine: " + result.engine.status + "\n" +
+    "Helper Sheets Found: " + result.helperSheets.length + "\n" +
+    "Required Sheets Missing: " + result.missingRequiredSheets.length + "\n\n" +
+    result.summary
+  );
+}
+
+function releaseOSRunHealthCheck_() {
+  const show = SpreadsheetApp.getActiveSpreadsheet();
+
+  const engine = releaseOSCheckEngine_();
+  const helperSheets = releaseOSFindHelperSheets_(show);
+  const missingRequiredSheets = releaseOSFindMissingRequiredSheets_(show);
+
+  const ok =
+    engine.ok &&
+    helperSheets.length === 0 &&
+    missingRequiredSheets.length === 0;
+
+  return {
+    ok,
+    engine,
+    helperSheets,
+    missingRequiredSheets,
+    summary: ok
+      ? "StageOS looks show-ready."
+      : "StageOS needs review before show mode."
+  };
+}
+
+function releaseOSCheckEngine_() {
+  try {
+    const engine = snapshotOSv2GetStorageWorkbook();
+
+    return {
+      ok: true,
+      status: "Connected — " + engine.getName(),
+      url: engine.getUrl()
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: "Not connected",
+      error: err.message
+    };
+  }
+}
+
+/*************************************************
+ * CLEANUP
+ *************************************************/
+
+function releaseOSCleanupShowWorkbookPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const show = SpreadsheetApp.getActiveSpreadsheet();
+
+  const helpers = releaseOSFindHelperSheets_(show);
+
+  if (!helpers.length) {
+    ui.alert("No helper sheets found. Show workbook is clean.");
+    return;
+  }
+
+  const response = ui.alert(
+    "ReleaseOS Cleanup",
+    "These helper sheets will be moved to Engine and removed from the show workbook:\n\n" +
+    helpers.join("\n") +
+    "\n\nContinue?",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response !== ui.Button.OK) return;
+
+  const result = moveHelperSheetsToEngine_();
+
+  ui.alert(
+    "Cleanup complete.\n\n" +
+    "Moved: " + result.moved.length + "\n" +
+    "Skipped: " + result.skipped.length
+  );
+}
+
+/*************************************************
+ * SHEET DETECTION
+ *************************************************/
+
+function releaseOSFindHelperSheets_(show) {
+  const helperNames = [
+    "Resolved Cast",
+    "Resolver Validation",
+    "Resolved Cast Snapshots",
+    "Assignment Snapshots",
+    "Show State Snapshots",
+    "SnapshotOS v2 - Show State",
+    "SnapshotOS v2 - Show State History",
+    "Decision History",
+    "System Logs",
+    "Performance Timeline",
+    "Analytics",
+    "Show State History"
+  ];
+
+  return helperNames.filter(name => show.getSheetByName(name));
+}
+
+function releaseOSFindMissingRequiredSheets_(show) {
+  const required = [
+    "Home",
+    "Production Settings",
+    "IN/OUT",
+    "Performance Report",
+    "Performance Highlights",
+    "Cast List",
+    "Contact Sheet",
+    "Expanded Calendar"
+  ];
+
+  return required.filter(name => !show.getSheetByName(name));
+}

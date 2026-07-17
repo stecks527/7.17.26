@@ -1,0 +1,38 @@
+/*************************************************
+ * 30 REPORT OS
+ * Version: 0.4.0
+ *
+ * Public API only.
+ * All logic lives in the ReportOS modules.
+ *************************************************/
+
+function ReportOS() {
+  return {
+    preview: reportOSPreview_,
+    reset: reportOSReset_
+  };
+}
+
+/*************************************************
+ * TEST HELPERS
+ *************************************************/
+
+function reportOSPreviewAuto() {
+  const state = ReportOS().preview("AUTO");
+
+  Logger.log(JSON.stringify(state, null, 2));
+
+  return state;
+}
+
+function reportOSResetAuto_TEST() {
+  return ReportOS().reset("AUTO");
+}
+
+/*************************************************
+ * RESET
+ *************************************************/
+
+function reportOSReset_(mode) {
+  return ReportResetOS().run(mode);
+}

@@ -1,0 +1,209 @@
+/*************************************************
+ * 70 INTELLIGENCEOS - INOUT SNAPSHOT
+ * StageOS v0.5
+ *************************************************/
+
+function saveInOutSnapshotFromExport_(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const sh = getOrCreateInOutSnapshotSheet_();
+
+  if (!inOut) return;
+
+  const date = inOut.getRange("A3").getDisplayValue();
+  const performance = inOut.getRange("A4").getDisplayValue();
+  const conductor = inOut.getRange("A26").getDisplayValue();
+
+  const rows = inOut.getRange("A6:G23").getDisplayValues()
+    .filter(row => row.join("").trim());
+
+  const key = makeInOutSnapshotKey_(date, performance);
+
+  const snapshot = {
+    key,
+    date,
+    performance,
+    conductor,
+    savedAt: new Date(),
+    rows
+  };
+
+  const values = [
+    key,
+    date,
+    performance,
+    conductor,
+    new Date(),
+    JSON.stringify(snapshot)
+  ];
+
+  const existingRow = findInOutSnapshotRow_(sh, key);
+
+  if (existingRow) {
+    sh.getRange(existingRow, 1, 1, values.length).setValues([values]);
+  } else {
+    sh.appendRow(values);
+  }
+}
+
+function getOrCreateInOutSnapshotSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName("InOut Snapshots");
+
+  if (!sh) {
+    sh = ss.insertSheet("InOut Snapshots");
+    sh.hideSheet();
+    sh.getRange(1, 1, 1, 6).setValues([[
+      "Key",
+      "Date",
+      "Performance",
+      "Conductor",
+      "Saved At",
+      "Snapshot JSON"
+    ]]);
+  }
+
+  return sh;
+}
+
+function makeInOutSnapshotKey_(date, performance) {
+  return String(date || "").trim() + " | " + String(performance || "").trim();
+}
+
+function findInOutSnapshotRow_(sh, key) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return null;
+
+  const values = sh.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] === key) return i + 2;
+  }
+
+  return null;
+}
+
+function getInOutSnapshot_(date, performance) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("InOut Snapshots");
+  if (!sh) return null;
+
+  const key = makeInOutSnapshotKey_(date, performance);
+  const row = findInOutSnapshotRow_(sh, key);
+  if (!row) return null;
+
+  const json = sh.getRange(row, 6).getDisplayValue();
+  if (!json) return null;
+
+  try {
+    return JSON.parse(json);
+  } catch (err) {
+    return null;
+  }
+}
+
+/*************************************************
+ * SNAPSHOT READERS
+ *************************************************/
+
+function getLatestInOutSnapshot_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("InOut Snapshots");
+  if (!sh || sh.getLastRow() < 2) return null;
+
+  const json = sh.getRange(sh.getLastRow(), 6).getDisplayValue();
+  if (!json) return null;
+
+  try {
+    return JSON.parse(json);
+  } catch (err) {
+    return null;
+  }
+}
+
+function getAllInOutSnapshots_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("InOut Snapshots");
+  if (!sh || sh.getLastRow() < 2) return [];
+
+  const values = sh.getRange(2, 6, sh.getLastRow() - 1, 1).getDisplayValues();
+
+  return values
+    .map(row => {
+      try {
+        return JSON.parse(row[0]);
+      } catch (err) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function getNextInOutSnapshotAfter_(snapshot) {
+  if (!snapshot) return null;
+
+  const all = getAllInOutSnapshots_();
+  const index = all.findIndex(item => item.key === snapshot.key);
+
+  if (index === -1) return null;
+
+  return all[index + 1] || null;
+}
+
+/*************************************************
+ * SNAPSHOT NORMALIZER
+ *************************************************/
+
+function normalizeInOutSnapshot_(snapshot) {
+  if (!snapshot) return null;
+
+  const rows = snapshot.rows || [];
+
+  const cast = {};
+  const crew = {};
+
+  rows.forEach(row => {
+    const outName = String(row[0] || "").trim();
+    const inName = String(row[2] || "").trim();
+    const role = String(row[5] || "").trim();
+
+    if (outName && inName && role) {
+      cast[role] = inName;
+    }
+
+    const smLeft = String(row[0] || "").trim();
+    const smRight = String(row[4] || "").trim();
+
+    if (smLeft && smLeft.toUpperCase().includes("SM")) {
+      crew[smLeft] = String(row[2] || "").trim();
+    }
+
+    if (smRight && smRight.toUpperCase().includes("SM")) {
+      crew[smRight] = String(row[6] || "").trim();
+    }
+  });
+
+  return {
+    key: snapshot.key,
+    date: snapshot.date,
+    performance: snapshot.performance,
+    conductor: snapshot.conductor,
+    cast,
+    crew,
+    raw: snapshot
+  };
+}
+
+function TEST_normalizeLatestInOutSnapshot() {
+  const latest = getLatestInOutSnapshot_();
+  Logger.log(JSON.stringify(normalizeInOutSnapshot_(latest), null, 2));
+}
+
+function TEST_latestInOutSnapshot() {
+  const latest = getLatestInOutSnapshot_();
+  Logger.log(JSON.stringify(latest, null, 2));
+
+  const next = getNextInOutSnapshotAfter_(latest);
+  Logger.log("NEXT:");
+  Logger.log(JSON.stringify(next, null, 2));
+}

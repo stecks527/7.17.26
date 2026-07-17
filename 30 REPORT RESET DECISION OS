@@ -1,0 +1,133 @@
+/*************************************************
+ * 30 REPORT RESET DECISION OS
+ * Version: 1.0.0
+ *
+ * Safety check before destructive report reset actions.
+ *************************************************/
+
+function runReportResetMatineeWithDecision() {
+  runReportResetWithDecision_("today", "matinee");
+}
+
+function runReportResetEveningWithDecision() {
+  runReportResetWithDecision_("tonight", "evening");
+}
+
+function runReportResetWithDecision_(timeWord, label) {
+  const ui = SpreadsheetApp.getUi();
+  const decision = buildReportResetDecision_();
+
+  let preserveExistingNotes = false;
+
+  if (decision.realNotes.length) {
+    const message =
+      "Existing report notes found:\n\n" +
+      decision.realNotes.map(note =>
+        "• " + note.section + "\n  " + note.preview
+      ).join("\n\n") +
+      "\n\nChoose OK to KEEP these notes during reset.\n" +
+      "Choose Cancel to RESET them to neutral.";
+
+    const response = ui.alert(
+      "Report Check",
+      message,
+      ui.ButtonSet.OK_CANCEL
+    );
+
+    preserveExistingNotes = response === ui.Button.OK;
+  }
+
+  if (label === "evening") {
+    setUpcomingDateForEveReset_();
+    forcePerformanceReportEveHeader_();
+  }
+
+  updateReportBuilder();
+
+  if (typeof copyReportBuilderScheduleToPerformanceReport_ === "function") {
+    copyReportBuilderScheduleToPerformanceReport_();
+  }
+
+  clearPerformanceHighlights();
+  clearPerformanceReport_(timeWord, {
+    preserveExistingNotes: preserveExistingNotes
+  });
+
+  if (typeof routeInOutNotesToPerformanceReport_SAFE === "function") {
+    routeInOutNotesToPerformanceReport_SAFE(false);
+  }
+
+  ui.alert("Report reset complete for " + label + ".");
+}
+
+function buildReportResetDecision_() {
+  const ss = SpreadsheetApp.getActive();
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!report) {
+    return { realNotes: [] };
+  }
+
+  const noteSections = [
+    "SCENIC:",
+    "PROPS:",
+    "COSTUMES:",
+    "WIGS/HAIR:",
+    "SOUND:",
+    "LIGHTING:",
+    "SCRIPT:",
+    "MUSIC:",
+    "CHOREO:",
+    "GENERAL/COMPANY MANAGEMENT:",
+    "PRODUCTION MANAGEMENT:",
+    "PRODUCING:",
+    "FACILITIES:",
+    "GENERAL NOTES:",
+    "REHEARSAL NOTES:",
+    "PERFORMANCE NOTES:"
+  ];
+
+  const realNotes = [];
+
+  noteSections.forEach(header => {
+    const row = findSafeReportNoteRowBelowHeader_(report, header);
+    if (!row) return;
+
+    const value = report.getRange(row, 1).getDisplayValue().trim();
+
+    if (isRealReportWork_(value)) {
+      realNotes.push({
+        section: header.replace(":", ""),
+        row: row,
+        value: value,
+        preview: shortenDecisionPreview_(value)
+      });
+    }
+  });
+
+  return { realNotes };
+}
+
+function isRealReportWork_(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+
+  const lower = text.toLowerCase();
+
+  if (lower === "–" || lower === "-") return false;
+
+  if (
+    lower.includes("no notes today") ||
+    lower.includes("no notes tonight") ||
+    lower.includes("no notes, thank you")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function shortenDecisionPreview_(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  return value.length > 140 ? value.slice(0, 140) + "..." : value;
+}

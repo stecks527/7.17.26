@@ -1,0 +1,48 @@
+/*************************************************
+ * 90 ENGINE ANALYTICS OS UI
+ * Version: 1.0.0
+ *************************************************/
+
+function rebuildEngineAnalyticsOS() {
+  const result = EngineAnalyticsOS().rebuild();
+
+  SpreadsheetApp.getUi().alert(
+    "Engine Analytics rebuilt.\n\n" +
+    "Metrics written: " + result.metrics
+  );
+}
+
+function showEngineAnalyticsSummary() {
+  const summary = EngineAnalyticsOS().summary();
+
+  if (!summary.length) {
+    SpreadsheetApp.getUi().alert(
+      "No analytics summary found.\n\nRun Rebuild Engine Analytics first."
+    );
+    return;
+  }
+
+  const lines = summary.map(row => {
+    return [
+      row.Category || "",
+      row.Metric || "",
+      row.Value || ""
+    ].filter(Boolean).join(" — ");
+  });
+
+  SpreadsheetApp.getUi().alert(
+    "Engine Analytics Summary\n\n" +
+    lines.join("\n")
+  );
+}
+
+function testEngineAnalyticsOSRecord() {
+  EngineAnalyticsOS().record(
+    "EngineAnalyticsOS",
+    "Test Metric",
+    1,
+    { test: true }
+  );
+
+  SpreadsheetApp.getUi().alert("EngineAnalyticsOS test metric recorded.");
+}

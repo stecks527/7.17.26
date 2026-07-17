@@ -1,0 +1,64 @@
+/*************************************************
+ * 30 REPORT SCHEDULE PATCH
+ *************************************************/
+
+function updateReportBuilder_SAFE(resetType) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const reportBuilder = ss.getSheetByName("Report Builder");
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!reportBuilder) throw new Error('Could not find tab "Report Builder".');
+  if (!report) throw new Error('Could not find tab "Performance Report".');
+
+  const reportDateText = reportBuilder.getRange("A2").getDisplayValue();
+  const reportDate = parseReportDate_(reportDateText);
+
+  const todayWeekly = getWeeklySheetForDate_(ss, reportDate);
+  const today = getWeeklyDaySchedule_(todayWeekly, reportDate);
+
+  const upcoming = getUpcomingSchedule_(ss, reportDate, reportDateText);
+
+  reportBuilder.getRange("A5").setValue(today.rehearsal);
+  reportBuilder.getRange("A8").setValue(today.performance);
+  reportBuilder.getRange("A11").setValue(today.final);
+
+  reportBuilder.getRange("A14").setValue(upcoming.rehearsal);
+  reportBuilder.getRange("A17").setValue(upcoming.performance);
+  reportBuilder.getRange("A20").setValue(upcoming.final);
+
+  boldUpcomingDate_(reportBuilder.getRange("A20"), upcoming.final);
+
+  report.getRange("E30")
+    .setValue(ensureTwoPartScheduleSpacing_SAFE_(today.final))
+    .setFontFamily("Arial")
+    .setFontSize(11);
+
+  report.getRange("A78")
+    .setValue(ensureTwoPartScheduleSpacing_SAFE_(upcoming.final))
+    .setFontFamily("Arial")
+    .setFontSize(11);
+
+  const a73Date = String(resetType || "").toUpperCase().includes("MAT")
+    ? reportDate
+    : addDays_(reportDate, 1);
+
+  report.getRange("A73")
+    .setValue(formatDisplayDate_(a73Date))
+    .setFontFamily("Arial")
+    .setFontSize(11)
+    .setFontWeight("bold");
+}
+
+function ensureTwoPartScheduleSpacing_SAFE_(text) {
+  let output = String(text || "").trim();
+
+  output = output.replace(
+    /(\n)(WARDROBE CREW CALL|CREW CALL|HAIR CALL|HALF HOUR|HOUSE OPEN|PERFORMANCE)/i,
+    "\n\n$2"
+  );
+
+  output = output.replace(/\n{3,}/g, "\n\n");
+
+  return output;
+}

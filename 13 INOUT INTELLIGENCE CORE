@@ -1,0 +1,55 @@
+/*************************************************
+ * 13 INOUT INTELLIGENCE CORE
+ * Version: 1.1.0
+ *************************************************/
+
+function InOutIntelligenceOS() {
+  return {
+    plannedOutsForDate: function (date) {
+      return getPlannedOutsForDate_(date);
+    },
+
+    roleForActor: function (actorName) {
+      return getRoleForActorFromCastList_(actorName);
+    },
+
+    coverOptionsForRole: function (roleName) {
+      return getCoverOptionsForRoleFromCastList_(roleName);
+    },
+
+    rolesForActor: function (actorName) {
+      return getRolesForActorFromCastList_(actorName);
+    }
+  };
+}
+
+function normalizeInOutIntelDate_(value) {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    const d = new Date(value);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  const parsed = new Date(String(value).trim());
+  if (isNaN(parsed.getTime())) return null;
+
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
+}
+
+function normalizeInOutIntelText_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCoverRole_(value) {
+  return String(value || "")
+    .replace(/é/g, "e")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}

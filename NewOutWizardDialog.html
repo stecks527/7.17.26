@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root {
+      --bg:#f6f4ef;
+      --panel:#ffffff;
+      --ink:#1f1f1f;
+      --muted:#6f6a61;
+      --line:#ded8cc;
+      --dark:#1f1b17;
+      --gold:#b58b2b;
+    }
+
+    body {
+      margin:0;
+      background:var(--bg);
+      color:var(--ink);
+      font-family:Arial, sans-serif;
+    }
+
+    header {
+      background:var(--dark);
+      color:white;
+      padding:26px;
+      text-align:center;
+    }
+
+    header h1 {
+      margin:0;
+      font-size:34px;
+      letter-spacing:.04em;
+    }
+
+    header div {
+      margin-top:8px;
+      color:#ddd;
+      font-weight:700;
+    }
+
+    main {
+      padding:22px;
+    }
+
+    .card {
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:18px;
+      margin-bottom:14px;
+    }
+
+    .row {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:14px;
+    }
+
+    label {
+      display:block;
+      font-size:12px;
+      text-transform:uppercase;
+      font-weight:900;
+      color:var(--muted);
+      margin-bottom:6px;
+      letter-spacing:.04em;
+    }
+
+    input, select, textarea {
+      width:100%;
+      box-sizing:border-box;
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:11px;
+      font-size:14px;
+      font-family:Arial, sans-serif;
+      background:white;
+    }
+
+    textarea {
+      min-height:90px;
+      resize:vertical;
+    }
+
+    .small {
+      font-size:13px;
+      color:var(--muted);
+      margin-top:6px;
+      line-height:1.35;
+    }
+
+    .performance-list {
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      margin-top:8px;
+    }
+
+    .performance-item {
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:9px 10px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:#fafafa;
+      font-size:14px;
+      font-weight:700;
+    }
+
+    .performance-item input {
+      width:auto;
+    }
+
+    .actions {
+      position:sticky;
+      bottom:0;
+      background:rgba(246,244,239,.97);
+      border-top:1px solid var(--line);
+      padding:14px 22px;
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+    }
+
+    button {
+      border:0;
+      border-radius:11px;
+      padding:11px 16px;
+      font-weight:900;
+      cursor:pointer;
+      background:var(--gold);
+      color:white;
+    }
+
+    button.secondary {
+      background:#504a42;
+    }
+
+    .status {
+      margin-right:auto;
+      align-self:center;
+      font-weight:800;
+      color:#1f4f91;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>ADD OUT</h1>
+    <div>Writes to PD/Vacation Tracker, Production Calendar, and Gmail Calendar.</div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Person</label>
+          <select id="actor" onchange="syncRoleFromActor()"></select>
+        </div>
+
+        <div>
+          <label>Role / Department</label>
+          <input id="role">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Reason</label>
+          <select id="reason"></select>
+        </div>
+
+        <div>
+          <label>Status</label>
+          <select id="statusSelect"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Start Date</label>
+          <input id="startDate" type="date" onchange="handleDateRangeChange()">
+        </div>
+
+        <div>
+          <label>End Date</label>
+          <input id="endDate" type="date" onchange="handleDateRangeChange()">
+        </div>
+      </div>
+
+      <div class="small">For a one-day out, start and end date can be the same.</div>
+    </div>
+
+    <div class="card">
+      <label>Performances Included</label>
+      <div id="performanceChecklist" class="performance-list">
+        Choose dates to load performances.
+      </div>
+      <div class="small">Uncheck any performances that should not apply to this out.</div>
+    </div>
+
+    <div class="card" id="coveringCard">
+      <label>Covering</label>
+      <select id="coveringSelect" style="display:none;"></select>
+      <input id="covering" placeholder="Cover TBD or person covering">
+      <div class="small" id="coveringHelp">For crew outs, this writes to the Cover column.</div>
+    </div>
+
+    <div class="card">
+      <label>Performances Found</label>
+      <input id="performanceCount" type="number" min="0" step="1" readonly>
+      <div class="small" id="performanceCountHelp">Choose dates to calculate affected performances.</div>
+    </div>
+
+    <div class="card">
+      <label>Internal Notes</label>
+      <textarea id="notes" placeholder="Internal only. Writes to tracker tabs only."></textarea>
+    </div>
+  </main>
+
+  <div class="actions">
+    <div class="status" id="status"></div>
+    <button class="secondary" onclick="google.script.host.close()">Cancel</button>
+    <button id="submitButton" onclick="submitNewOut()">Add Planned Out</button>
+  </div>
+
+  <script>
+    let wizardState = { actors: [], reasons: [], statuses: [] };
+    let availablePerformances = [];
+
+    google.script.run
+      .withSuccessHandler(function (state) {
+        wizardState = state || wizardState;
+        renderOptions();
+      })
+      .withFailureHandler(function (error) {
+        document.getElementById("status").textContent = "Error: " + error.message;
+      })
+      .getNewOutWizardState();
+
+    function renderOptions() {
+      document.getElementById("actor").innerHTML =
+        '<option value="">Choose person...</option>' +
+        (wizardState.actors || []).map(function (actor) {
+          return '<option value="' + escapeAttr(actor.name) + '">' +
+            escapeHtml(actor.name) +
+            '</option>';
+        }).join("");
+
+      document.getElementById("reason").innerHTML =
+        (wizardState.reasons || []).map(function (reason) {
+          return '<option value="' + escapeAttr(reason) + '">' +
+            escapeHtml(reason) +
+            '</option>';
+        }).join("");
+
+      document.getElementById("statusSelect").innerHTML =
+        (wizardState.statuses || []).map(function (status) {
+          return '<option value="' + escapeAttr(status) + '">' +
+            escapeHtml(status) +
+            '</option>';
+        }).join("");
+    }
+
+    function syncRoleFromActor() {
+      const actorName = document.getElementById("actor").value;
+      const actor = (wizardState.actors || []).find(function (item) {
+        return item.name === actorName;
+      });
+
+      document.getElementById("role").value =
+        actor && actor.role ? actor.role : "";
+
+      renderCoveringOptionsForPerson(actorName);
+    }
+
+    function renderCoveringOptionsForPerson(personName) {
+      const select = document.getElementById("coveringSelect");
+      const input = document.getElementById("covering");
+      const help = document.getElementById("coveringHelp");
+
+      const optionsByPerson = wizardState.crewCoverOptionsByPerson || {};
+      const options = optionsByPerson[personName] || [];
+
+     if (options.length) {
+      select.innerHTML = options.map(function (name) {
+          return '<option value="' + escapeAttr(name) + '">' + escapeHtml(name) + '</option>';
+        }).join("");
+
+        select.style.display = "block";
+        input.style.display = "none";
+        input.value = "";
+        help.textContent = "Choose who is covering this crew out.";
+      } else {
+        select.style.display = "none";
+        input.style.display = "block";
+        select.innerHTML = "";
+        help.textContent = "Optional. For crew outs, this writes to the Cover column.";
+      }
+    }
+
+    function handleDateRangeChange() {
+      syncEndDateDefault();
+      refreshPerformanceCountAndOptions();
+    }
+
+    function syncEndDateDefault() {
+      const start = document.getElementById("startDate").value;
+      const end = document.getElementById("endDate");
+
+      if (start && !end.value) {
+        end.value = start;
+      }
+    }
+
+    function refreshPerformanceCountAndOptions() {
+      const start = document.getElementById("startDate").value;
+      const end = document.getElementById("endDate").value || start;
+
+      if (!start) return;
+
+      document.getElementById("performanceCountHelp").textContent =
+        "Calculating performances...";
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          availablePerformances = (result && result.performances) || [];
+
+          document.getElementById("performanceCount").value =
+            availablePerformances.length;
+
+          document.getElementById("performanceCountHelp").textContent =
+            availablePerformances.length
+              ? availablePerformances.length + " performance" +
+                (availablePerformances.length === 1 ? "" : "s") +
+                " found in this range."
+              : "No performances found in this range.";
+
+          renderPerformanceChecklist();
+        })
+        .withFailureHandler(function (error) {
+          document.getElementById("performanceCountHelp").textContent =
+            "Error calculating performances: " + error.message;
+        })
+        .getNewOutWizardPerformancesForRange(start, end);
+    }
+
+    function renderPerformanceChecklist() {
+      const box = document.getElementById("performanceChecklist");
+      if (!box) return;
+
+      if (!availablePerformances.length) {
+        box.innerHTML = "No performances found in this range.";
+        return;
+      }
+
+      box.innerHTML = availablePerformances.map(function (perf) {
+        const value = perf.date + "||" + perf.label;
+
+        return '<label class="performance-item">' +
+          '<input type="checkbox" class="performanceCheck" value="' + escapeAttr(value) + '" checked onchange="syncSelectedPerformanceCount()">' +
+          '<span>' + escapeHtml(perf.dateLabel + " - " + perf.label) + '</span>' +
+          '</label>';
+      }).join("");
+
+      syncSelectedPerformanceCount();
+    }
+
+    function syncSelectedPerformanceCount() {
+      document.getElementById("performanceCount").value =
+        getSelectedPerformances_().length;
+    }
+
+    function submitNewOut() {
+      const selectedPerformances = getSelectedPerformances_();
+
+      const payload = {
+        actor: document.getElementById("actor").value,
+        role: document.getElementById("role").value,
+        startDate: document.getElementById("startDate").value,
+        endDate: document.getElementById("endDate").value,
+        reason: document.getElementById("reason").value,
+        status: document.getElementById("statusSelect").value,
+        performanceCount: document.getElementById("performanceCount").value,
+        performanceScope: "selected",
+        selectedPerformances: selectedPerformances,
+        covering: getCoveringValue_(),
+        notes: document.getElementById("notes").value
+      };
+
+      if (!payload.actor) {
+        document.getElementById("status").textContent = "Choose a person.";
+        return;
+      }
+
+      if (!payload.startDate) {
+        document.getElementById("status").textContent = "Choose a start date.";
+        return;
+      }
+
+      if (!selectedPerformances.length) {
+        document.getElementById("status").textContent = "Choose at least one performance.";
+        return;
+      }
+
+      document.getElementById("status").textContent = "Adding planned out...";
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          const written = [];
+
+          if (result && result.result) {
+            if (result.result.pdTracker) written.push("PD/Vacation Tracker");
+            if (result.result.crewOuts) written.push("Crew Outs");
+            if (result.result.productionCalendar) written.push("Production Calendar");
+            if (result.result.gmailCalendar) written.push("Gmail Calendar");
+          }
+
+          document.getElementById("status").textContent =
+            written.length ? "Added to: " + written.join(", ") + "." : "Added.";
+
+          const button = document.getElementById("submitButton");
+          button.textContent = "Done";
+          button.onclick = function () {
+            google.script.host.close();
+          };
+        })
+        .withFailureHandler(function (error) {
+          document.getElementById("status").textContent =
+            "Error: " + error.message;
+        })
+        .submitNewOutWizard(payload);
+    }
+
+    function getSelectedPerformances_() {
+      const checks = Array.prototype.slice.call(
+        document.querySelectorAll(".performanceCheck:checked")
+      );
+
+      return checks.map(function (check) {
+        const parts = String(check.value || "").split("||");
+
+        return {
+          date: parts[0] || "",
+          label: parts[1] || ""
+        };
+      });
+    }
+
+    function getCoveringValue_() {
+      const select = document.getElementById("coveringSelect");
+      const input = document.getElementById("covering");
+
+      if (select && select.style.display !== "none") {
+        return select.value || "";
+      }
+
+      return input ? input.value : "";
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value);
+    }
+  </script>
+</body>
+</html>

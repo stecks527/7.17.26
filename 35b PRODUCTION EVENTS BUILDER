@@ -1,0 +1,490 @@
+/*************************************************
+ * 35b PRODUCTION EVENTS BUILDER
+ * Version: 2.0.0
+ *************************************************/
+
+function productionEventsBuildV1_(context) {
+  const events = [];
+
+  productionEventsFromPayrollV1_(context, events);
+  productionEventsFromWizardLogV1_(context, events);
+  productionEventsFromWeeklyV1_(context, events);
+  productionEventsBuildRehearsalCalloutNotesV1_(context, events);
+
+  return productionEventsSortV1_(events);
+}
+
+function productionEventsFromPayrollV1_(context, events) {
+  const people = context.payrollPeople || [];
+
+  productionEventsBuildSMOfficeCoverageV1_(
+    people,
+    events
+  );
+
+  stageOSBuildPayrollActorOutNotes_20260711_(
+    people,
+    events
+  );
+}
+
+/*************************************************
+ * UNIQUE PAYROLL ACTOR OUT BUILDER
+ *
+ * Unique name prevents older duplicate project
+ * functions from overriding this implementation.
+ *************************************************/
+
+function stageOSBuildPayrollActorOutNotes_20260711_(
+  people,
+  events
+) {
+  (people || []).forEach(function(person) {
+    const role = String(person.role || "").trim();
+    const roleLower = role.toLowerCase();
+    const roleKey = person.roleKey;
+    const shortName = person.shortName;
+
+    if (!role) return;
+
+    if (
+      roleLower === "psm / asm sub" ||
+      roleLower.includes("stage manager sub") ||
+      roleLower.includes("sm sub")
+    ) {
+      return;
+    }
+
+    if (
+      !person.out ||
+      Number(person.out.totalShows || 0) === 0
+    ) {
+      return;
+    }
+
+    const reasonText =
+      productionEventsReasonSummaryV1_(
+        person.out.reasonCounts,
+        person.out.totalShows
+      );
+
+    const firstPart =
+      "- " +
+      shortName +
+      " OUT (" +
+      person.out.totalShows +
+      " " +
+      (
+        person.out.totalShows === 1
+          ? "show"
+          : "shows"
+      ) +
+      ") (" +
+      reasonText +
+      ")";
+
+    const isSwingOrUnderstudy =
+      roleLower === "swing" ||
+      roleLower.includes("swing") ||
+      roleLower.includes("understudy") ||
+      roleLower.includes("u/s") ||
+      roleLower === "us";
+
+    if (isSwingOrUnderstudy) {
+      events.push({
+        type: "UNDERSTUDY_OUT",
+        priority: 31,
+        affectsPayroll: true,
+        actor: person.name,
+        note:
+          firstPart +
+          ": " +
+          productionEventsDateSummaryV1_(
+            person.out.dates
+          )
+      });
+
+      return;
+    }
+
+    const coverage = [];
+
+    (people || []).forEach(function(cover) {
+      if (cover.key === person.key) return;
+
+      const data =
+        cover.ins &&
+        cover.ins[roleKey];
+
+      if (!data) return;
+
+      coverage.push({
+        sort:
+          productionEventsFirstDateSortV1_(
+            data.dates
+          ),
+
+        text:
+          cover.shortName +
+          " IN as " +
+          productionEventsDisplayRoleV1_(role) +
+          " (" +
+          data.shows +
+          " " +
+          (
+            data.shows === 1
+              ? "show"
+              : "shows"
+          ) +
+          "): " +
+          productionEventsDateSummaryV1_(
+            data.dates
+          )
+      });
+    });
+
+    if (coverage.length > 0) {
+      coverage.sort(function(a, b) {
+        return a.sort - b.sort;
+      });
+
+      events.push({
+        type: "ACTOR_OUT_COVERAGE",
+        priority: 30,
+        affectsPayroll: true,
+        actor: person.name,
+        note:
+          firstPart +
+          ": " +
+          coverage
+            .map(function(item) {
+              return item.text;
+            })
+            .join("; ")
+      });
+
+      return;
+    }
+
+    events.push({
+      type: "ACTOR_OUT",
+      priority: 30,
+      affectsPayroll: true,
+      actor: person.name,
+      note:
+        firstPart +
+        ": " +
+        productionEventsDateSummaryV1_(
+          person.out.dates
+        )
+    });
+  });
+}
+
+function productionEventsBuildSMOfficeCoverageV1_(people, events) {
+  people.forEach(function (person) {
+    Object.keys(person.ins || {}).forEach(function (roleKey) {
+      const data = person.ins[roleKey];
+
+      data.dates.forEach(function (entry) {
+        const officeShowPeople = people.filter(function (other) {
+          if (other.key === person.key) return false;
+
+          return other.officeShows.some(function (officeEntry) {
+            return productionEventsSameDateEntryV1_(officeEntry, entry);
+          });
+        });
+
+        if (!officeShowPeople.length) return;
+        if (!productionEventsIsSMSubV1_(person)) return;
+
+        const labels = officeShowPeople.map(function (other) {
+          return productionEventsOfficeLabelV1_(other.name, other.info);
+        });
+
+        events.push({
+          type: "SM_SUB_OFFICE_SHOW_COVERAGE",
+          priority: 20,
+          note:
+            "- " +
+            productionEventsOfficeLabelV1_(person.name, person.info) +
+            " IN (1 show) as " +
+            productionEventsDisplayRoleV1_(data.role || roleKey) +
+            ": " +
+            productionEventsDateSummaryV1_([entry]) +
+            " (" +
+            labels.join(" + ") +
+            " = Office Show)"
+        });
+      });
+    });
+  });
+}
+
+function productionEventsBuildActorOutCoverageV1_(people, events) {
+  people.forEach(function (person) {
+    const role = person.role;
+    const roleKey = person.roleKey;
+    const shortName = person.shortName;
+
+    if (!role) return;
+    if (role === "PSM / ASM Sub") return;
+    if (person.out.totalShows === 0) return;
+
+    const isSwingOrUnderstudy =
+      String(role || "").toLowerCase().includes("swing") ||
+      String(role || "").toLowerCase().includes("understudy") ||
+      String(role || "").toLowerCase().includes("u/s");
+
+    const reasonText = productionEventsReasonSummaryV1_(
+      person.out.reasonCounts,
+      person.out.totalShows
+    );
+
+    const firstPart =
+      "- " +
+      shortName +
+      " OUT (" +
+      person.out.totalShows +
+      " " +
+      (person.out.totalShows === 1 ? "show" : "shows") +
+      ") (" +
+      reasonText +
+      ")";
+
+    if (isSwingOrUnderstudy) {
+      events.push({
+        type: "ACTOR_OUT",
+        priority: 30,
+        note: firstPart + ": " + productionEventsDateSummaryV1_(person.out.dates)
+      });
+      return;
+    }
+
+    const coverage = [];
+
+    people.forEach(function (cover) {
+      if (cover.key === person.key) return;
+
+      const data = cover.ins[roleKey];
+      if (!data) return;
+
+      coverage.push({
+        sort: productionEventsFirstDateSortV1_(data.dates),
+        text:
+          cover.shortName +
+          " IN as " +
+          productionEventsDisplayRoleV1_(role) +
+          " (" +
+          data.shows +
+          " " +
+          (data.shows === 1 ? "show" : "shows") +
+          "): " +
+          productionEventsDateSummaryV1_(data.dates)
+      });
+    });
+
+    if (coverage.length) {
+      coverage.sort(function (a, b) {
+        return a.sort - b.sort;
+      });
+
+      events.push({
+        type: "ACTOR_OUT_COVERAGE",
+        priority: 30,
+        note:
+          firstPart +
+          ": " +
+          coverage.map(function (item) { return item.text; }).join("; ")
+      });
+
+      return;
+    }
+
+    events.push({
+      type: "ACTOR_OUT",
+      priority: 30,
+      note: firstPart + ": " + productionEventsDateSummaryV1_(person.out.dates)
+    });
+  });
+}
+
+function productionEventsFromWizardLogV1_(context, events) {
+  const sheet = context.wizardLog;
+  if (!sheet) return;
+
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return;
+
+  const headers = values[0].map(function (h) {
+    return String(h || "").trim().toLowerCase();
+  });
+
+  const nameCol = productionEventsFindHeaderColV1_(headers, ["name", "full name", "actor", "employee"]);
+  const typeCol = productionEventsFindHeaderColV1_(headers, ["type", "action", "event", "mode"]);
+  const dateCol = productionEventsFindHeaderColV1_(headers, ["date", "effective date", "start date", "end date", "contract date"]);
+
+  if (nameCol < 0 || typeCol < 0 || dateCol < 0) return;
+
+  for (let r = 1; r < values.length; r++) {
+    const name = String(values[r][nameCol] || "").trim();
+    const type = String(values[r][typeCol] || "").trim().toLowerCase();
+    const dateText = String(values[r][dateCol] || "").trim();
+
+    if (!name || !type || !dateText) continue;
+
+    if (type.includes("first") || type.includes("start") || type.includes("add")) {
+      events.push({
+        type: "FIRST_DAY",
+        priority: 40,
+        note: "- " + productionEventsShortNameV1_(name) + " first day on contract: " + dateText + "."
+      });
+    }
+
+    if (type.includes("last") || type.includes("end") || type.includes("remove")) {
+      events.push({
+        type: "LAST_DAY",
+        priority: 41,
+        note: "- " + productionEventsShortNameV1_(name) + " last day on contract: " + dateText + "."
+      });
+    }
+  }
+}
+
+function productionEventsFromWeeklyV1_(context, events) {
+  const sheet = context.weekly;
+  if (!sheet) return;
+
+  const text = sheet.getDataRange().getDisplayValues()
+    .flat()
+    .map(function (v) { return String(v || "").trim(); })
+    .filter(Boolean)
+    .join("\n");
+
+  const dayOffMatch = text.match(/AEA\s+Members?\s+Days?\s+Off[^\n.]*/i);
+
+  if (dayOffMatch) {
+    const noteText = dayOffMatch[0].trim().replace(/\.$/, "") + ".";
+
+    events.push({
+      type: "AEA_DAY_OFF_NOTE",
+      priority: 80,
+      note: "- " + noteText
+    });
+  }
+
+  if (/meal penalty/i.test(text)) {
+    events.push({
+      type: "MEAL_PENALTY",
+      priority: 60,
+      note: "- Meal Penalty Rule: 61 (B) (1) - Whenever there is less than one and one-half hours between curtain down and half hour, the Producer shall pay the Actors and Stage Managers the sum of $16.00. This also applies for between end of rehearsal and half hour."
+    });
+  }
+
+  if (/combined rehearsal\/performance|combined rehearsal.*performance/i.test(text)) {
+    events.push({
+      type: "COMBINED_REH_PERF_SUB",
+      priority: 61,
+      note: "- Combined Rehearsal/Performance Days for Subs: 68 (F) (3) (c) - Combined Rehearsal/Performance Days. Pro-rata of contractual salary for each performance or one-sixth of contractual salary, whichever is greater. If rehearsal is more than 4 hours, overtime is owed for the amount worked over 4 hours."
+    });
+  }
+}
+
+/*************************************************
+ * REHEARSAL CALLOUT NOTES
+ *************************************************/
+
+function productionEventsBuildRehearsalCalloutNotesV1_(context, events) {
+  const people = context.payrollPeople || [];
+  if (!people.length) return;
+
+  people.forEach(function(person) {
+    const rehearsalCallouts =
+      productionEventsFindRehearsalCalloutsForPersonV1_(person);
+
+    rehearsalCallouts.forEach(function(callout) {
+      events.push({
+        type: "REHEARSAL_CALLOUT",
+        priority: 90,
+        affectsPayroll: false,
+        note:
+          "- This does not affect payroll, but please note " +
+          person.shortName +
+          " called out of the " +
+          callout.rehearsalLabel +
+          " on " +
+          callout.dateText +
+          "."
+      });
+    });
+  });
+}
+
+function productionEventsFindRehearsalCalloutsForPersonV1_(person) {
+  const output = [];
+  const block = person.block || [];
+  const topRow = block[0] || [];
+  const bottomRow = block[1] || [];
+
+  for (let col = 0; col < 7; col++) {
+    [
+      topRow[col],
+      bottomRow[col]
+    ].forEach(function(cellText) {
+      const text = String(cellText || "");
+      if (!text) return;
+
+      if (!/OUT\s*\(/i.test(text)) return;
+      if (!productionEventsIsRehearsalOnlyTextV1_(text)) return;
+
+      output.push({
+        dateText: productionEventsDateFromPersonCellV1_(col),
+        rehearsalLabel: productionEventsRehearsalLabelFromTextV1_(text)
+      });
+    });
+  }
+
+  return output;
+}
+
+function productionEventsIsRehearsalOnlyTextV1_(text) {
+  const lower = String(text || "").toLowerCase();
+
+  const hasOut = /out\s*\(/i.test(text);
+
+  const hasRehearsal =
+    lower.includes("rehearsal") ||
+    lower.includes("reh") ||
+    lower.includes("put-in") ||
+    lower.includes("put in") ||
+    lower.includes("brush-up") ||
+    lower.includes("brush up");
+
+  if (!hasOut || !hasRehearsal) return false;
+
+  const hasPerformance =
+    lower.includes("show call") ||
+    lower.includes("performance #");
+
+  return !hasPerformance;
+}
+
+function productionEventsRehearsalLabelFromTextV1_(text) {
+  const lower = String(text || "").toLowerCase();
+
+  if (lower.includes("put-in") || lower.includes("put in")) return "put-in rehearsal";
+  if (lower.includes("brush-up") || lower.includes("brush up")) return "brush-up rehearsal";
+  if (lower.includes("afternoon")) return "afternoon rehearsal";
+  if (lower.includes("rehearsal")) return "rehearsal";
+
+  return "rehearsal";
+}
+
+function productionEventsDateFromPersonCellV1_(colIndex) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const payroll = ss.getSheetByName("Payroll");
+  if (!payroll) return "";
+
+  const display = payroll.getRange(3, colIndex + 2).getDisplayValue();
+  return productionEventsFormatDateV1_(colIndex, payroll.getRange("B3:H3").getDisplayValues()[0]);
+}

@@ -1,0 +1,1361 @@
+/*************************************************
+ * 30 REPORTOS - SCHEDULE FILL
+ * Version: 2.3.0
+ * Status: ACTIVE
+ *
+ * Responsibilities:
+ * - Build today's Performance Report schedule.
+ * - Build the Upcoming schedule block.
+ * - Read the matching Weekly Schedule safely.
+ *
+ * Cleanup:
+ * - Report-specific helpers are namespaced.
+ * - This file no longer defines global helpers such as
+ *   clean_(), normalizeText_(), addDays_(), or getDayName_().
+ *************************************************/
+
+function updateReportSchedulesOnly() {
+  syncInOutToPerformanceReport_();
+
+  updateReportBuilder();
+
+  SpreadsheetApp.getUi().alert("Report schedules updated.");
+}
+
+function updateReportBuilder(
+  options
+) {
+  options =
+    options || {};
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const reportBuilder =
+    ss.getSheetByName(
+      "Report Builder"
+    );
+
+  const report =
+    ss.getSheetByName(
+      "Performance Report"
+    );
+
+  if (!reportBuilder) {
+    throw new Error(
+      'Could not find tab "Report Builder".'
+    );
+  }
+
+  if (!report) {
+    throw new Error(
+      'Could not find tab "Performance Report".'
+    );
+  }
+
+  /*
+   * Canonical target:
+   * - Explicit options when intentionally supplied.
+   * - Otherwise the current IN/OUT performance context.
+   * - Report Builder!A2 is only a final compatibility fallback.
+   */
+  const context =
+    reportScheduleGetTargetContext_(
+      ss,
+      reportBuilder,
+      options
+    );
+
+  const reportDate =
+    context.date;
+
+  const reportDateText =
+    context.label;
+
+  /*
+   * Keep the visible Report Builder target synchronized
+   * with the actual operational context.
+   */
+  reportBuilder
+    .getRange("A2")
+    .setValue(
+      reportDateText
+    );
+
+  const todayWeekly =
+    getWeeklySheetForDate_(
+      ss,
+      reportDate
+    );
+
+  const today =
+    getWeeklyDaySchedule_(
+      todayWeekly,
+      reportDate
+    );
+
+  const upcoming =
+    getUpcomingSchedule_(
+      ss,
+      reportDate,
+      reportDateText
+    );
+
+  reportScheduleWriteCell_(
+    reportBuilder,
+    "A5",
+    today.rehearsal
+  );
+
+  reportScheduleWriteCell_(
+    reportBuilder,
+    "A8",
+    today.performance
+  );
+
+  reportScheduleWriteCell_(
+    reportBuilder,
+    "A11",
+    today.final
+  );
+
+  reportScheduleWriteCell_(
+    reportBuilder,
+    "A14",
+    upcoming.rehearsal
+  );
+
+  reportScheduleWriteCell_(
+    reportBuilder,
+    "A17",
+    upcoming.performance
+  );
+
+  const upcomingBuilderRange =
+    reportScheduleWriteCell_(
+      reportBuilder,
+      "A20",
+      upcoming.final
+    );
+
+  reportScheduleBoldUpcomingDate_(
+    upcomingBuilderRange,
+    upcoming.final
+  );
+
+  const todayReportRange =
+    report.getRange("E28");
+
+  reportScheduleWriteRange_(
+    todayReportRange,
+    today.final,
+    {
+      fontFamily: "Arial",
+      fontSize: 11
+    }
+  );
+
+  reportScheduleWriteUpcomingToReport_(
+    report,
+    upcoming
+  );
+
+  return {
+    success:
+      true,
+
+    source:
+      context.source,
+
+    reportDate:
+      reportScheduleDateKey_(
+        reportDate
+      ),
+
+    reportType:
+      context.type,
+
+    today:
+      today,
+
+    upcoming:
+      upcoming
+  };
+}
+
+
+/* =========================================================
+ * SCHEDULE WRITERS
+ * ========================================================= */
+
+function reportScheduleWriteCell_(
+  sheet,
+  a1Notation,
+  value
+) {
+  const range =
+    sheet.getRange(
+      a1Notation
+    );
+
+  return reportScheduleWriteRange_(
+    range,
+    value
+  );
+}
+
+
+function reportScheduleWriteRange_(
+  range,
+  value,
+  options
+) {
+  options =
+    options || {};
+
+  const text =
+    String(
+      value || ""
+    );
+
+  range
+    .setValue(text)
+    .setWrap(true);
+
+  if (
+    options.fontFamily
+  ) {
+    range.setFontFamily(
+      options.fontFamily
+    );
+  }
+
+  if (
+    options.fontSize
+  ) {
+    range.setFontSize(
+      options.fontSize
+    );
+  }
+
+  reportScheduleFitRangeHeight_(
+    range,
+    text
+  );
+
+  return range;
+}
+
+
+function reportScheduleFitRangeHeight_(
+  range,
+  text
+) {
+  if (!range) return;
+
+  const sheet =
+    range.getSheet();
+
+  const lineCount =
+    Math.max(
+      1,
+      String(
+        text || ""
+      ).split("\n").length
+    );
+
+  /*
+   * Merged schedule cells do not reliably auto-resize.
+   * Set a deliberate height so the blank separator line
+   * is visible rather than clipped.
+   */
+  const height =
+    Math.max(
+      36,
+      18 +
+      lineCount * 15
+    );
+
+  for (
+    let row = range.getRow();
+    row <
+      range.getRow() +
+      range.getNumRows();
+    row++
+  ) {
+    sheet.setRowHeight(
+      row,
+      height
+    );
+  }
+}
+
+
+function reportScheduleWriteUpcomingToReport_(
+  report,
+  upcoming
+) {
+  upcoming =
+    upcoming || {};
+
+  const locations =
+    reportScheduleResolveUpcomingRows_(
+      report
+    );
+
+  const dateRange =
+    report.getRange(
+      locations.dateRow,
+      1
+    );
+
+  dateRange
+    .setValue(
+      upcoming.headerDate ||
+      ""
+    )
+    .setFontFamily(
+      "Arial"
+    )
+    .setFontSize(
+      11
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+  const scheduleRange =
+    report.getRange(
+      locations.scheduleRow,
+      1
+    );
+
+  reportScheduleWriteRange_(
+    scheduleRange,
+    upcoming.final,
+    {
+      fontFamily:
+        "Arial",
+
+      fontSize:
+        11
+    }
+  );
+
+  reportScheduleBoldUpcomingDate_(
+    scheduleRange,
+    upcoming.final
+  );
+
+  return locations;
+}
+
+
+function reportScheduleResolveUpcomingRows_(
+  report
+) {
+  const lastRow =
+    report.getLastRow();
+
+  const values =
+    report
+      .getRange(
+        1,
+        1,
+        lastRow,
+        1
+      )
+      .getDisplayValues();
+
+  let headerRow = 0;
+
+  for (
+    let index = 0;
+    index < values.length;
+    index++
+  ) {
+    const value =
+      String(
+        values[index][0] ||
+        ""
+      )
+        .trim()
+        .toUpperCase();
+
+    if (
+      value === "UPCOMING:"
+    ) {
+      headerRow =
+        index + 1;
+      break;
+    }
+  }
+
+  if (!headerRow) {
+    throw new Error(
+      'Could not find the "UPCOMING:" section on Performance Report.'
+    );
+  }
+
+  const dateRow =
+    headerRow + 1;
+
+  const scheduleRow =
+    headerRow + 2;
+
+  const dateValue =
+    String(
+      report
+        .getRange(
+          dateRow,
+          1
+        )
+        .getDisplayValue() ||
+      ""
+    ).trim();
+
+  const scheduleValue =
+    String(
+      report
+        .getRange(
+          scheduleRow,
+          1
+        )
+        .getDisplayValue() ||
+      ""
+    ).trim();
+
+  if (
+    typeof isPerformanceReportSectionHeader_SAFE_ ===
+      "function"
+  ) {
+    if (
+      dateValue &&
+      isPerformanceReportSectionHeader_SAFE_(
+        dateValue
+      )
+    ) {
+      throw new Error(
+        "Upcoming date row resolved to another report header."
+      );
+    }
+
+    if (
+      scheduleValue &&
+      isPerformanceReportSectionHeader_SAFE_(
+        scheduleValue
+      )
+    ) {
+      throw new Error(
+        "Upcoming schedule row resolved to another report header."
+      );
+    }
+  }
+
+  return {
+    headerRow:
+      headerRow,
+
+    dateRow:
+      dateRow,
+
+    scheduleRow:
+      scheduleRow
+  };
+}
+
+
+/* =========================================================
+ * TARGET CONTEXT
+ * ========================================================= */
+
+function reportScheduleGetTargetContext_(
+  ss,
+  reportBuilder,
+  options
+) {
+  options =
+    options || {};
+
+  /*
+   * Explicit historical/manual target.
+   */
+  if (
+    options.date ||
+    options.dateText
+  ) {
+    const explicitText =
+      String(
+        options.dateText ||
+        options.date ||
+        ""
+      ).trim();
+
+    const explicitDate =
+      reportScheduleParseReportDate_(
+        options.date ||
+        explicitText
+      );
+
+    const explicitType =
+      reportScheduleNormalizePerformanceType_(
+        options.type ||
+        explicitText
+      );
+
+    return {
+      date:
+        explicitDate,
+
+      type:
+        explicitType,
+
+      label:
+        reportScheduleBuildTargetLabel_(
+          explicitDate,
+          explicitType
+        ),
+
+      source:
+        "explicit"
+    };
+  }
+
+  /*
+   * Current operational source.
+   */
+  const inOut =
+    ss.getSheetByName(
+      "IN/OUT"
+    );
+
+  if (inOut) {
+    const rawDate =
+      inOut
+        .getRange("A3")
+        .getValue();
+
+    const displayDate =
+      inOut
+        .getRange("A3")
+        .getDisplayValue();
+
+    const performanceText =
+      String(
+        inOut
+          .getRange("B4")
+          .getDisplayValue() ||
+        inOut
+          .getRange("A4")
+          .getDisplayValue() ||
+        ""
+      ).trim();
+
+    const parsedDate =
+      reportScheduleParseDateValue_(
+        rawDate,
+        displayDate
+      );
+
+    if (parsedDate) {
+      const type =
+        reportScheduleNormalizePerformanceType_(
+          performanceText
+        );
+
+      return {
+        date:
+          parsedDate,
+
+        type:
+          type,
+
+        label:
+          reportScheduleBuildTargetLabel_(
+            parsedDate,
+            type
+          ),
+
+        source:
+          "IN/OUT"
+      };
+    }
+  }
+
+  /*
+   * Compatibility fallback for intentionally prepared
+   * historical Report Builder targets.
+   */
+  const builderText =
+    reportBuilder
+      .getRange("A2")
+      .getDisplayValue();
+
+  return {
+    date:
+      reportScheduleParseReportDate_(
+        builderText
+      ),
+
+    type:
+      reportScheduleNormalizePerformanceType_(
+        builderText
+      ),
+
+    label:
+      builderText,
+
+    source:
+      "Report Builder fallback"
+  };
+}
+
+
+function reportScheduleParseDateValue_(
+  rawValue,
+  displayValue
+) {
+  if (
+    rawValue instanceof Date &&
+    !isNaN(
+      rawValue.getTime()
+    )
+  ) {
+    return new Date(
+      rawValue.getFullYear(),
+      rawValue.getMonth(),
+      rawValue.getDate()
+    );
+  }
+
+  try {
+    return reportScheduleParseReportDate_(
+      displayValue ||
+      rawValue
+    );
+  } catch (err) {
+    return null;
+  }
+}
+
+
+function reportScheduleNormalizePerformanceType_(
+  value
+) {
+  const text =
+    String(
+      value || ""
+    ).toUpperCase();
+
+  if (
+    /\bMAT(?:INEE)?\b/.test(
+      text
+    )
+  ) {
+    return "MAT";
+  }
+
+  if (
+    /\bEVE(?:NING)?\b/.test(
+      text
+    )
+  ) {
+    return "EVE";
+  }
+
+  const hour =
+    reportScheduleParseTimeHour_(
+      text
+    );
+
+  if (
+    hour !== null
+  ) {
+    return hour < 17
+      ? "MAT"
+      : "EVE";
+  }
+
+  return "";
+}
+
+
+function reportScheduleBuildTargetLabel_(
+  date,
+  type
+) {
+  const dateText =
+    reportScheduleFormatDisplayDate_(
+      date
+    );
+
+  return type
+    ? dateText +
+      " - " +
+      type
+    : dateText;
+}
+
+
+function updateReportBuilderForDate(
+  dateText,
+  performanceType
+) {
+  return updateReportBuilder({
+    dateText:
+      dateText,
+
+    type:
+      performanceType
+  });
+}
+
+
+/***********************
+ * UPCOMING LOGIC
+ ***********************/
+
+function getUpcomingSchedule_(ss, reportDate, reportDateText) {
+  const reportType =
+    reportScheduleNormalizePerformanceType_(
+      reportDateText
+    );
+
+  const isMatReport =
+    reportType === "MAT";
+
+  // Matinee report: upcoming is same-day evening show if available.
+  if (isMatReport) {
+    const weekly = getWeeklySheetForDate_(ss, reportDate);
+    const sameDay = getWeeklyDaySchedule_(weekly, reportDate, {
+      onlyAfterHour: 15
+    });
+
+    return {
+      headerDate: reportScheduleFormatDisplayDate_(reportDate),
+      rehearsal: "",
+      performance: sameDay.performance,
+      final: sameDay.performance
+    };
+  }
+
+  const tomorrow = reportScheduleAddDays_(reportDate, 1);
+  const tomorrowWeekly = getWeeklySheetForDate_(ss, tomorrow);
+  const tomorrowSchedule = getWeeklyDaySchedule_(tomorrowWeekly, tomorrow);
+
+  // Monday report: Tuesday is AEA Day Off, then show Wednesday schedule inside the block.
+  if (
+    reportScheduleGetDayName_(reportDate) === "Monday" &&
+    tomorrowSchedule.final.toUpperCase().includes("AEA DAY OFF")
+  ) {
+    const wednesday = reportScheduleAddDays_(reportDate, 2);
+    const wedWeekly = getWeeklySheetForDate_(ss, wednesday);
+    const wedSchedule = getWeeklyDaySchedule_(wedWeekly, wednesday);
+
+    const wedHeader = reportScheduleFormatDisplayDate_(wednesday);
+
+    return {
+      headerDate: reportScheduleFormatDisplayDate_(tomorrow),
+      rehearsal: "AEA DAY OFF",
+      performance: wedHeader + "\n" + wedSchedule.final,
+      final: buildReportScheduleBlock_(
+      "AEA DAY OFF",
+      wedHeader + "\n" + wedSchedule.final
+    )
+    };
+  }
+
+  // Normal report: tomorrow only.
+  return {
+    headerDate: reportScheduleFormatDisplayDate_(tomorrow),
+    rehearsal: tomorrowSchedule.rehearsal,
+    performance: tomorrowSchedule.performance,
+    final: tomorrowSchedule.final
+  };
+}
+
+/***********************
+ * WEEKLY PARSING
+ ***********************/
+
+function getWeeklySheetForDate_(ss, targetDate) {
+  const targetKey = reportScheduleDateKey_(targetDate);
+
+  const weeklySheets = ss.getSheets().filter(sheet =>
+    sheet.getName().startsWith("Weekly Schedule")
+  );
+
+  for (const sheet of weeklySheets) {
+    const name = sheet.getName();
+
+    const match = name.match(
+      /Mon\s+(\d{1,2})\.(\d{1,2})\.(\d{2})\s*-\s*Sun\s+(\d{1,2})\.(\d{1,2})\.(\d{2})/i
+    );
+
+    if (!match) continue;
+
+    const startKey = reportScheduleDateKeyFromParts_(match[1], match[2], match[3]);
+    const endKey = reportScheduleDateKeyFromParts_(match[4], match[5], match[6]);
+
+    if (targetKey >= startKey && targetKey <= endKey) {
+      return sheet;
+    }
+  }
+
+  throw new Error(
+    "Could not find weekly schedule tab for " +
+    Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "M/d/yy")
+  );
+}
+
+function getWeeklyDaySchedule_(sheet, targetDate, options) {
+  const data = sheet.getDataRange().getDisplayValues();
+  const startRow = reportScheduleGetWeeklyDayStartRow_(sheet, targetDate);
+
+  if (startRow === -1) {
+    return {
+      rehearsal: "",
+      performance: "",
+      final: ""
+    };
+  }
+
+  const rehearsalLines = [];
+  const performanceLines = [];
+
+  let inPerformanceSection = false;
+
+  for (let i = startRow; i < data.length; i++) {
+    const row = data[i];
+
+    const fullRowText = reportScheduleClean_(row.join(" "));
+    const normalized = reportScheduleNormalizeText_(fullRowText);
+
+    if (
+      i !== startRow &&
+      /^(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)/.test(normalized)
+    ) {
+      break;
+    }
+
+    if (normalized.includes("NOTES")) break;
+
+    const line = reportScheduleFormatWeeklyRow_(row);
+    if (!line) continue;
+
+    if (options && options.onlyAfterHour) {
+      const hour = reportScheduleParseTimeHour_(line);
+      if (hour !== null && hour < options.onlyAfterHour) continue;
+    }
+
+    if (reportScheduleIsPerformanceSectionStart_(line)) {
+      inPerformanceSection = true;
+    }
+
+    if (inPerformanceSection) {
+      performanceLines.push(line);
+    } else {
+      rehearsalLines.push(line);
+    }
+  }
+
+  const rehearsal = reportScheduleCleanBlock_(rehearsalLines.join("\n"));
+  const performance = reportScheduleCleanBlock_(
+    reportScheduleFormatConductorIntoPerformanceLine_(performanceLines.join("\n"))
+  );
+
+  const final = buildReportScheduleBlock_(
+    rehearsal,
+    performance
+  );
+
+  return {
+    rehearsal: rehearsal,
+    performance: performance,
+    final: final
+  };
+}
+
+function reportScheduleGetWeeklyDayStartRow_(sheet, targetDate) {
+  const data = sheet.getDataRange().getDisplayValues();
+
+  const dayName = reportScheduleGetDayName_(targetDate).toUpperCase();
+  const monthDay = Utilities.formatDate(
+    targetDate,
+    Session.getScriptTimeZone(),
+    "MMMM d"
+  ).toUpperCase();
+
+  for (let i = 0; i < data.length; i++) {
+    const rowText = reportScheduleNormalizeText_(data[i].join(" "));
+
+    if (
+      rowText.includes(dayName) &&
+      rowText.includes(reportScheduleNormalizeText_(monthDay))
+    ) {
+      return i + 1;
+    }
+  }
+
+  return -1;
+}
+
+function reportScheduleFormatWeeklyRow_(row) {
+  const colA = reportScheduleClean_(row[0]);
+  const colB = reportScheduleClean_(row[1]);
+  const colE = reportScheduleClean_(row[4]);
+
+  if (!colA && !colB && !colE) return "";
+
+  if (colA && colB) return `${colA} - ${colB}`;
+  if (colB) return colB;
+  if (colA) return colA;
+
+  return "";
+}
+
+function reportScheduleIsPerformanceSectionStart_(line) {
+  const upper = line.toUpperCase();
+
+  return (
+    upper.includes("WARDROBE CREW CALL") ||
+    upper.includes("CREW CALL") ||
+    upper.includes("HAIR CALL") ||
+    upper.includes("HALF HOUR") ||
+    upper.includes("HOUSE OPEN") ||
+    upper.includes("PERFORMANCE")
+  );
+}
+
+function reportScheduleFormatConductorIntoPerformanceLine_(text) {
+  const lines = String(text || "").split("\n");
+  const output = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (/Conductor\s*=/i.test(line)) {
+      const conductorName = line.replace(/^.*?Conductor\s*=\s*/i, "").trim();
+
+      for (let j = output.length - 1; j >= 0; j--) {
+        if (/PERFORMANCE\s*#\s*\d+/i.test(output[j])) {
+          output[j] = output[j] + " - Conductor = " + conductorName;
+          break;
+        }
+      }
+
+      continue;
+    }
+
+    output.push(line);
+  }
+
+  return output.join("\n");
+}
+
+function reportScheduleCleanBlock_(text) {
+  return String(text || "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildReportScheduleBlock_(
+  rehearsal,
+  performance
+) {
+  const rehearsalText =
+    reportScheduleCleanBlock_(rehearsal);
+
+  const performanceText =
+    reportScheduleCleanBlock_(performance);
+
+  /*
+   * When both parts exist, preserve exactly one
+   * completely blank line between them.
+   */
+  if (
+    rehearsalText &&
+    performanceText
+  ) {
+    return (
+      rehearsalText +
+      reportScheduleSectionSeparator_() +
+      performanceText
+    );
+  }
+
+  return (
+    rehearsalText ||
+    performanceText ||
+    ""
+  );
+}
+
+
+function reportScheduleSectionSeparator_() {
+  /*
+   * One completely blank display line between schedule
+   * sections. Keep this explicit rather than relying on
+   * generic text cleanup to preserve spacing.
+   */
+  return "\n\n";
+}
+
+
+/***********************
+ * FORMATTING HELPERS
+ ***********************/
+
+function reportScheduleBoldUpcomingDate_(range, text) {
+  const match = String(text || "").match(
+    /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d{1,2}/m
+  );
+
+  if (!match) return;
+
+  const start = text.indexOf(match[0]);
+  const end = start + match[0].length;
+
+  const style = SpreadsheetApp.newTextStyle()
+    .setBold(true)
+    .build();
+
+  const richText = SpreadsheetApp.newRichTextValue()
+    .setText(text)
+    .setTextStyle(start, end, style)
+    .build();
+
+  range.setRichTextValue(richText);
+}
+
+/***********************
+ * DATE HELPERS
+ ***********************/
+
+function reportScheduleParseReportDate_(value) {
+  const cleanDate = String(value || "")
+    .replace(/\s*-\s*(MAT|EVE|MATINEE|EVENING)\s*$/i, "")
+    .trim();
+
+  const parsed = new Date(cleanDate);
+
+  if (isNaN(parsed.getTime())) {
+    throw new Error("Could not read report date: " + value);
+  }
+
+  return parsed;
+}
+
+function reportScheduleDateKey_(date) {
+  return Number(
+    Utilities.formatDate(
+      date,
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    )
+  );
+}
+
+function reportScheduleDateKeyFromParts_(month, day, year2) {
+  const yyyy = 2000 + Number(year2);
+  const mm = String(Number(month)).padStart(2, "0");
+  const dd = String(Number(day)).padStart(2, "0");
+
+  return Number(`${yyyy}${mm}${dd}`);
+}
+
+function reportScheduleAddDays_(date, days) {
+  const newDate = new Date(date);
+  newDate.setDate(newDate.getDate() + days);
+  return newDate;
+}
+
+function reportScheduleGetDayName_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE"
+  );
+}
+
+function reportScheduleFormatDisplayDate_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE, MMMM d"
+  );
+}
+
+function reportScheduleParseTimeHour_(timeText) {
+  const match = String(timeText || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const ampm = match[3].toUpperCase();
+
+  if (ampm === "PM" && hour !== 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+
+  return hour;
+}
+
+/***********************
+ * TEXT HELPERS
+ ***********************/
+
+function reportScheduleJoinBlocks_(blocks) {
+  return blocks
+    .filter(block => reportScheduleClean_(block) !== "")
+    .join("\n\n");
+}
+
+function reportScheduleClean_(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function reportScheduleNormalizeText_(value) {
+  return reportScheduleClean_(value)
+    .replace(/,/g, "")
+    .replace(/\./g, " ")
+    .replace(/\//g, " ")
+    .replace(/\s+/g, " ")
+    .toUpperCase();
+}
+
+
+/* =========================================================
+ * NON-DESTRUCTIVE HELPERS TEST
+ * ========================================================= */
+
+function testReportScheduleHelpers() {
+  const sampleDate =
+    new Date(2026, 6, 15);
+
+  const result = {
+    clean:
+      reportScheduleClean_(
+        "  Performance   #268  "
+      ),
+
+    normalized:
+      reportScheduleNormalizeText_(
+        "Wednesday, July 15"
+      ),
+
+    nextDate:
+      reportScheduleFormatDisplayDate_(
+        reportScheduleAddDays_(
+          sampleDate,
+          1
+        )
+      ),
+
+    dayName:
+      reportScheduleGetDayName_(
+        sampleDate
+      ),
+
+    dateKey:
+      reportScheduleDateKey_(
+        sampleDate
+      ),
+
+    hour:
+      reportScheduleParseTimeHour_(
+        "7:00 PM"
+      ),
+
+    block:
+      buildReportScheduleBlock_(
+        "3:00 PM - Rehearsal",
+        "7:00 PM - Performance"
+      )
+  };
+
+  Logger.log(
+    "REPORT SCHEDULE HELPERS TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Report schedule helper test passed.\n\n" +
+      "Day: " +
+      result.dayName +
+      "\n" +
+      "Next: " +
+      result.nextDate
+    );
+
+  return result;
+}
+
+
+function testReportScheduleTargetContext() {
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const reportBuilder =
+    ss.getSheetByName(
+      "Report Builder"
+    );
+
+  if (!reportBuilder) {
+    throw new Error(
+      'Could not find "Report Builder".'
+    );
+  }
+
+  const context =
+    reportScheduleGetTargetContext_(
+      ss,
+      reportBuilder,
+      {}
+    );
+
+  const result = {
+    source:
+      context.source,
+
+    label:
+      context.label,
+
+    dateKey:
+      reportScheduleDateKey_(
+        context.date
+      ),
+
+    type:
+      context.type,
+
+    separatorLength:
+      reportScheduleSectionSeparator_()
+        .length
+  };
+
+  Logger.log(
+    "REPORT SCHEDULE TARGET CONTEXT TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Report schedule target context found.\n\n" +
+      "Source: " +
+      result.source +
+      "\n" +
+      "Target: " +
+      result.label
+    );
+
+  return result;
+}
+
+function testReportScheduleRules() {
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const reportBuilder =
+    ss.getSheetByName(
+      "Report Builder"
+    );
+
+  const report =
+    ss.getSheetByName(
+      "Performance Report"
+    );
+
+  const context =
+    reportScheduleGetTargetContext_(
+      ss,
+      reportBuilder,
+      {}
+    );
+
+  const upcoming =
+    getUpcomingSchedule_(
+      ss,
+      context.date,
+      context.label
+    );
+
+  const rows =
+    reportScheduleResolveUpcomingRows_(
+      report
+    );
+
+  const result = {
+    source:
+      context.source,
+
+    performanceType:
+      context.type,
+
+    targetLabel:
+      context.label,
+
+    upcomingHeaderDate:
+      upcoming.headerDate,
+
+    upcomingFinal:
+      upcoming.final,
+
+    upcomingRows:
+      rows,
+
+    separatorVisibleLines:
+      buildReportScheduleBlock_(
+        "FIRST SECTION",
+        "SECOND SECTION"
+      ).split("\n")
+  };
+
+  Logger.log(
+    "REPORT SCHEDULE RULES TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Report schedule rules checked.\n\n" +
+      "Type: " +
+      result.performanceType +
+      "\nUpcoming date: " +
+      result.upcomingHeaderDate +
+      "\nUpcoming date row: " +
+      result.upcomingRows.dateRow +
+      "\nUpcoming schedule row: " +
+      result.upcomingRows.scheduleRow
+    );
+
+  return result;
+}

@@ -1,0 +1,427 @@
+/*************************************************
+ * 90 ENGINE ANALYTICS OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Engine-powered analytics summaries for StageOS
+ *************************************************/
+
+const ENGINE_ANALYTICS_OS = {
+  RAW_SHEET: "Analytics",
+  SUMMARY_SHEET: "Analytics Summary",
+
+  SUMMARY_HEADERS: [
+    "Metric",
+    "Value",
+    "Category",
+    "Last Updated",
+    "Notes"
+  ],
+
+  RAW_HEADERS: [
+    "Timestamp",
+    "System",
+    "Metric",
+    "Value",
+    "Data"
+  ]
+};
+
+function EngineAnalyticsOS() {
+  return {
+    record: function (system, metric, value, data) {
+      return engineAnalyticsOSRecord_(system, metric, value, data);
+    },
+
+    rebuild: function () {
+      return engineAnalyticsOSRebuildSummary_();
+    },
+
+    summary: function () {
+      return engineAnalyticsOSReadSummary_();
+    },
+
+    increment: function (metric, amount) {
+      return engineAnalyticsOSRecord_(
+        "EngineAnalyticsOS",
+        metric,
+        amount || 1,
+        { type: "counter" }
+      );
+    },
+
+    event: function (system, metric, value, data) {
+      return engineAnalyticsOSRecord_(
+        system,
+        metric,
+        value,
+        data || {}
+      );
+    }
+  };
+}
+
+/*************************************************
+ * RAW METRIC WRITES
+ *************************************************/
+
+function engineAnalyticsOSRecord_(system, metric, value, data) {
+  const api = EngineOS().sheet("analytics");
+  api.ensureHeaders(ENGINE_ANALYTICS_OS.RAW_HEADERS);
+
+  api.appendObject({
+    "Timestamp": new Date(),
+    "System": system || "",
+    "Metric": metric || "",
+    "Value": value !== undefined ? value : "",
+    "Data": JSON.stringify(data || {})
+  }, ENGINE_ANALYTICS_OS.RAW_HEADERS);
+
+  return true;
+}
+
+/*************************************************
+ * SUMMARY REBUILD
+ *************************************************/
+
+function engineAnalyticsOSRebuildSummary_() {
+  const startedAt = new Date();
+
+  const metrics = [];
+
+  metrics.push(...engineAnalyticsOSBuildCoreMetrics_());
+  metrics.push(...engineAnalyticsOSBuildSnapshotMetrics_());
+  metrics.push(...engineAnalyticsOSBuildAssignmentMetrics_());
+  metrics.push(...engineAnalyticsOSBuildResolverMetrics_());
+  metrics.push(...engineAnalyticsOSBuildCacheMetrics_());
+
+  const api = EngineOS().sheet(ENGINE_ANALYTICS_OS.SUMMARY_SHEET);
+  const sh = api.sheet();
+
+  sh.clear();
+  api.ensureHeaders(ENGINE_ANALYTICS_OS.SUMMARY_HEADERS);
+
+  const rows = metrics.map(item => [
+    item.metric || "",
+    item.value !== undefined ? item.value : "",
+    item.category || "",
+    startedAt,
+    item.notes || ""
+  ]);
+
+  if (rows.length) {
+    sh.getRange(2, 1, rows.length, ENGINE_ANALYTICS_OS.SUMMARY_HEADERS.length)
+      .setValues(rows);
+  }
+
+  if (typeof EngineRouterOS === "function") {
+    EngineRouterOS().log(
+      "EngineAnalyticsOS",
+      "Rebuild Summary",
+      "Engine analytics summary rebuilt.",
+      {
+        metrics: rows.length
+      }
+    );
+  }
+
+  return {
+    metrics: rows.length,
+    updatedAt: startedAt
+  };
+}
+
+function engineAnalyticsOSReadSummary_() {
+  const api = EngineOS().sheet(ENGINE_ANALYTICS_OS.SUMMARY_SHEET);
+  const values = api.values();
+
+  if (values.length < 2) return [];
+
+  const headers = values[0];
+
+  return values.slice(1).filter(row => row.some(Boolean)).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+}
+
+/*************************************************
+ * CORE METRICS
+ *************************************************/
+
+function engineAnalyticsOSBuildCoreMetrics_() {
+  const status = EngineOS().status();
+
+  return [
+    {
+      metric: "Engine Connected",
+      value: status.connected ? "YES" : "NO",
+      category: "Core",
+      notes: status.name || ""
+    },
+    {
+      metric: "Engine Sheets",
+      value: status.sheets.length,
+      category: "Core",
+      notes: ""
+    }
+  ];
+}
+
+/*************************************************
+ * SNAPSHOT METRICS
+ *************************************************/
+
+function engineAnalyticsOSBuildSnapshotMetrics_() {
+  const metrics = [];
+
+  const showStateRows = engineAnalyticsOSReadSheet_("SnapshotOS v2 - Show State");
+  const showStateHistoryRows = engineAnalyticsOSReadSheet_("SnapshotOS v2 - Show State History");
+  const assignmentSnapshotRows = engineAnalyticsOSReadSheet_("Assignment Snapshots");
+  const resolvedCastSnapshotRows = engineAnalyticsOSReadSheet_("Resolved Cast Snapshots");
+
+  metrics.push({
+    metric: "Show State Snapshots",
+    value: Math.max(0, showStateRows.length - 1),
+    category: "Snapshots",
+    notes: "Current snapshot rows"
+  });
+
+  metrics.push({
+    metric: "Show State Revisions",
+    value: Math.max(0, showStateHistoryRows.length - 1),
+    category: "Snapshots",
+    notes: "Historical revisions"
+  });
+
+  metrics.push({
+    metric: "Assignment Snapshot Rows",
+    value: Math.max(0, assignmentSnapshotRows.length - 1),
+    category: "Snapshots",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Resolved Cast Snapshot Rows",
+    value: Math.max(0, resolvedCastSnapshotRows.length - 1),
+    category: "Snapshots",
+    notes: ""
+  });
+
+  const uniquePerformances = engineAnalyticsOSUniqueFromRows_(
+    showStateHistoryRows,
+    "Performance Number"
+  );
+
+  metrics.push({
+    metric: "Performances With Snapshots",
+    value: uniquePerformances.length,
+    category: "Snapshots",
+    notes: ""
+  });
+
+  return metrics;
+}
+
+/*************************************************
+ * ASSIGNMENT METRICS
+ *************************************************/
+
+function engineAnalyticsOSBuildAssignmentMetrics_() {
+  const metrics = [];
+
+  const rows = engineAnalyticsOSReadSheet_("Assignment History");
+  if (rows.length < 2) {
+    return [
+      {
+        metric: "Assignment History Rows",
+        value: 0,
+        category: "Assignments",
+        notes: ""
+      }
+    ];
+  }
+
+  const objects = engineAnalyticsOSRowsToObjects_(rows);
+
+  metrics.push({
+    metric: "Assignment History Rows",
+    value: objects.length,
+    category: "Assignments",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Office Shows",
+    value: objects.filter(o => String(o.Status || "") === "OFFICE_SHOW").length,
+    category: "Assignments",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Training Sessions",
+    value: objects.filter(o => String(o.Status || "") === "TRAINING").length,
+    category: "Assignments",
+    notes: ""
+  });
+
+  const uniqueAssignedPeople = [...new Set(
+    objects.map(o => String(o["Assigned Person"] || "").trim()).filter(Boolean)
+  )];
+
+  metrics.push({
+    metric: "Unique Assigned People",
+    value: uniqueAssignedPeople.length,
+    category: "Assignments",
+    notes: ""
+  });
+
+  return metrics;
+}
+
+/*************************************************
+ * RESOLVER METRICS
+ *************************************************/
+
+function engineAnalyticsOSBuildResolverMetrics_() {
+  const metrics = [];
+
+  const rows = engineAnalyticsOSReadSheet_("Resolver Decision History");
+  if (rows.length < 2) {
+    return [
+      {
+        metric: "Resolver Decision Rows",
+        value: 0,
+        category: "Resolver",
+        notes: ""
+      }
+    ];
+  }
+
+  const objects = engineAnalyticsOSRowsToObjects_(rows);
+
+  metrics.push({
+    metric: "Resolver Decision Rows",
+    value: objects.length,
+    category: "Resolver",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Covered Decisions",
+    value: objects.filter(o => String(o.Status || "") === "COVERED").length,
+    category: "Resolver",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Default Decisions",
+    value: objects.filter(o => String(o.Status || "") === "DEFAULT").length,
+    category: "Resolver",
+    notes: ""
+  });
+
+  metrics.push({
+    metric: "Uncovered Decisions",
+    value: objects.filter(o => String(o.Status || "") === "OUT_UNCOVERED").length,
+    category: "Resolver",
+    notes: ""
+  });
+
+  const uniqueRoles = [...new Set(
+    objects.map(o => String(o.Role || "").trim()).filter(Boolean)
+  )];
+
+  metrics.push({
+    metric: "Unique Roles Tracked",
+    value: uniqueRoles.length,
+    category: "Resolver",
+    notes: ""
+  });
+
+  return metrics;
+}
+
+/*************************************************
+ * CACHE METRICS
+ *************************************************/
+
+function engineAnalyticsOSBuildCacheMetrics_() {
+  if (typeof StageCacheOS !== "function") {
+    return [{
+      metric: "StageCacheOS Available",
+      value: "NO",
+      category: "Cache",
+      notes: ""
+    }];
+  }
+
+  const status = StageCacheOS().status();
+
+  const populated = status.filter(item => item.exists).length;
+  const totalSize = status.reduce((sum, item) => sum + Number(item.size || 0), 0);
+
+  return [
+    {
+      metric: "Caches Known",
+      value: status.length,
+      category: "Cache",
+      notes: ""
+    },
+    {
+      metric: "Caches Populated",
+      value: populated,
+      category: "Cache",
+      notes: ""
+    },
+    {
+      metric: "Cache Total Size",
+      value: totalSize,
+      category: "Cache",
+      notes: "DocumentProperties characters"
+    }
+  ];
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function engineAnalyticsOSReadSheet_(keyOrName) {
+  try {
+    return EngineOS().sheet(keyOrName, { create: false }).values();
+  } catch (err) {
+    return [];
+  }
+}
+
+function engineAnalyticsOSRowsToObjects_(rows) {
+  if (!rows || rows.length < 2) return [];
+
+  const headers = rows[0];
+
+  return rows.slice(1).filter(row => row.some(Boolean)).map(row => {
+    const obj = {};
+
+    headers.forEach((header, i) => {
+      obj[String(header || "").trim()] = row[i];
+    });
+
+    return obj;
+  });
+}
+
+function engineAnalyticsOSUniqueFromRows_(rows, headerName) {
+  if (!rows || rows.length < 2) return [];
+
+  const headers = rows[0].map(h => String(h || "").trim());
+  const index = headers.indexOf(headerName);
+
+  if (index === -1) return [];
+
+  return [...new Set(
+    rows.slice(1)
+      .map(row => String(row[index] || "").trim())
+      .filter(Boolean)
+  )];
+}

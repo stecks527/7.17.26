@@ -1,0 +1,229 @@
+/*************************************************
+ * 50 REPORT PREP
+ *************************************************/
+
+function routeInOutNotesToPerformanceReport(showAlert = true) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!inOut || !report) {
+    ui.alert('Could not find "IN/OUT" or "Performance Report" tab.');
+    return;
+  }
+
+  const notesText = inOut.getRange("A28").getDisplayValue();
+
+  if (!notesText.trim()) {
+    ui.alert("No IN/OUT notes found in A28.");
+    return;
+  }
+
+  const routed = {
+    scenic: [],
+    props: [],
+    costumes: [],
+    wigs: [],
+    sound: [],
+    lighting: [],
+    script: [],
+    music: [],
+    choreo: [],
+    general: [],
+    production: [],
+    producing: [],
+    facilities: []
+  };
+
+  const noteLines = notesText
+    .split(/\n+/)
+    .map(line => line.replace(/^[-–]\s*/, "").trim())
+    .filter(line => line);
+
+  noteLines.forEach(note => {
+  if (shouldIgnoreInOutNote_(note)) return;
+
+  const guestSpellerNote = buildGuestSpellerReportNote_(note);
+
+  if (guestSpellerNote) {
+    routed.general.push(guestSpellerNote.generalNote);
+    report.getRange("A93").setValue("– Spotted: " + guestSpellerNote.person + ".");
+    return;
+  }
+
+  const routedNote = transformInOutNoteForReport_(note);
+  const category = getReportNoteCategory_(note);
+  routed[category].push(routedNote);
+});
+
+  const rowMap = {
+    scenic: 36,
+    props: 39,
+    costumes: 42,
+    wigs: 45,
+    sound: 48,
+    lighting: 51,
+    script: 54,
+    music: 57,
+    choreo: 60,
+    general: 81,
+    production: 66,
+    producing: 69,
+    facilities: 72
+  };
+
+  Object.keys(rowMap).forEach(category => {
+    if (routed[category].length === 0) return;
+
+    const output = routed[category]
+      .map(note => "– " + note)
+      .join("\n");
+
+    report.getRange(rowMap[category], 1).setValue(output);
+  });
+
+  if (showAlert) {
+  ui.alert("IN/OUT notes routed to the Performance Report.");
+}
+}
+
+function shouldIgnoreInOutNote_(note) {
+  const text = note.toLowerCase();
+
+  return (
+    text.includes("dollar friday") ||
+    text.includes("cello") ||
+    text.includes("drums") ||
+    text.includes("reeds") ||
+    text.includes("keys 2") ||
+    text.includes("sub keys")
+  );
+}
+
+function getReportNoteCategory_(note) {
+  const text = note.toLowerCase();
+
+  if (text.match(/\bpt\b/)) return "general";
+
+  if (
+    text.includes("wardrobe") ||
+    text.includes("costume") ||
+    text.includes("fitting") ||
+    text.includes("maeve") ||
+    text.includes("carmen")
+  ) return "costumes";
+
+  if (
+    text.includes("lx") ||
+    text.includes("lighting") ||
+    text.includes("light board")
+  ) return "lighting";
+
+  if (
+    text.includes("a1") ||
+    text.includes("a2") ||
+    text.includes("sound") ||
+    text.includes("audio") ||
+    text.includes("rf") ||
+    text.includes("mic") ||
+    text.includes("corbin")
+  ) return "sound";
+
+  if (
+    text.includes("prop") ||
+    text.includes("lanyard") ||
+    text.includes("flick stick") ||
+    text.includes("ribbon") ||
+    text.includes("chair")
+  ) return "props";
+
+  if (
+    text.includes("wig") ||
+    text.includes("hair")
+  ) return "wigs";
+
+  if (
+    text.includes("script") ||
+    text.includes("rant") ||
+    text.includes("schwartzy")
+  ) return "script";
+
+  if (
+    text.includes("conductor") ||
+    text.includes("pianist") ||
+    text.includes("music") ||
+    text.includes("vocal") ||
+    text.includes("liz d") ||
+    text.includes("steven c")
+  ) return "music";
+
+  if (
+    text.includes("choreo") ||
+    text.includes("choreography") ||
+    text.includes("dance")
+  ) return "choreo";
+
+  if (
+    text.includes("bathroom") ||
+    text.includes("hand sanitizer") ||
+    text.includes("mouse") ||
+    text.includes("building") ||
+    text.includes("balcony outlet") ||
+    text.includes("outlet")
+  ) return "facilities";
+
+  if (
+    text.includes("producer") ||
+    text.includes("producing") ||
+    text.includes("aaron g") ||
+    text.includes("barbara")
+  ) return "producing";
+
+  if (
+    text.includes("production management") ||
+    text.includes("pm ")
+  ) return "production";
+
+  return "general";
+}
+
+function buildGuestSpellerReportNote_(note) {
+  const text = note.toLowerCase();
+
+  if (
+    !text.includes("guest speller") &&
+    !text.includes("group photo")
+  ) {
+    return null;
+  }
+
+  const ss = SpreadsheetApp.getActive();
+  const highlights = ss.getSheetByName("Performance Highlights");
+
+  if (!highlights) return null;
+
+  const person = highlights.getRange("A793").getDisplayValue().trim();
+
+  if (!person) return null;
+
+  return {
+    person: person,
+    generalNote: "Group photo with " + person + " attached to this report."
+  };
+}
+
+function transformInOutNoteForReport_(note) {
+  const clean = note.replace(/^[-–]\s*/, "").trim();
+
+  const ptMatch = clean.match(/^PT\s+(.+?)\s*\((.+?)\)\.?$/i);
+
+  if (ptMatch) {
+    const time = ptMatch[1].trim();
+    const location = ptMatch[2].trim().toLowerCase();
+
+    return "PT occurred for the company today in the " + location + " " + time + ".";
+  }
+
+  return clean;
+}

@@ -1,0 +1,85 @@
+/*************************************************
+ * 90 ENGINE LIVE WRITE OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Common live-write helpers for Engine-first systems
+ *************************************************/
+
+function EngineLiveWriteOS() {
+  return {
+    log: function (system, action, message, data) {
+      return engineLiveWriteOSLog_(system, action, message, data);
+    },
+
+    snapshot: function (snapshot) {
+      return engineLiveWriteOSSnapshot_(snapshot);
+    },
+
+    resolver: function (entry) {
+      return engineLiveWriteOSResolver_(entry);
+    },
+
+    diagnostic: function (system, metric, value, notes) {
+      return engineLiveWriteOSDiagnostic_(system, metric, value, notes);
+    }
+  };
+}
+
+function engineLiveWriteOSLog_(system, action, message, data) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().info(system, action, message, data);
+  }
+
+  Logger.log([system, action, message, JSON.stringify(data || {})].join(" | "));
+  return false;
+}
+
+function engineLiveWriteOSSnapshot_(snapshot) {
+  if (typeof EngineSnapshotOS === "function") {
+    return EngineSnapshotOS().append(snapshot || {});
+  }
+
+  engineLiveWriteOSLog_(
+    "EngineLiveWriteOS",
+    "Snapshot Fallback",
+    "EngineSnapshotOS unavailable.",
+    snapshot || {}
+  );
+
+  return false;
+}
+
+function engineLiveWriteOSResolver_(entry) {
+  if (typeof EngineResolverOS === "function") {
+    return EngineResolverOS().append(entry || {});
+  }
+
+  engineLiveWriteOSLog_(
+    "EngineLiveWriteOS",
+    "Resolver Fallback",
+    "EngineResolverOS unavailable.",
+    entry || {}
+  );
+
+  return false;
+}
+
+function engineLiveWriteOSDiagnostic_(system, metric, value, notes) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().diagnostic(system, metric, value, notes);
+  }
+
+  Logger.log("[Diagnostic] " + system + " | " + metric + " | " + value);
+  return false;
+}
+
+function testEngineLiveWriteOS() {
+  EngineLiveWriteOS().log(
+    "EngineLiveWriteOS",
+    "Test",
+    "Live write router test successful.",
+    { test: true }
+  );
+
+  SpreadsheetApp.getUi().alert("EngineLiveWriteOS test complete.");
+}

@@ -1,0 +1,2181 @@
+/*************************************************
+ * 85 PERFORMANCE ASSIGNMENT OS
+ * Version: 0.3.0
+ * Status: DEVELOPMENT
+ *
+ * Canonical performance-level assignment model.
+ *
+ * CURRENT SOURCES
+ * - ShowStateOS: selected date / performance / staffing
+ * - PayrollScheduleOS: OUT and coverage records
+ * - Existing resolver output when available
+ *
+ * IMPORTANT
+ * This first pass is read-only.
+ * It does not write to IN/OUT, Payroll, Weekly,
+ * Performance Report, or any tracker.
+ *************************************************/
+
+
+function PerformanceAssignmentOS() {
+  return {
+    current:
+      performanceAssignmentOSCurrent_,
+
+    build:
+      performanceAssignmentOSBuild_,
+
+    forPerformance:
+      performanceAssignmentOSForPerformance_,
+
+    resolvedCast:
+      performanceAssignmentOSResolvedCast_,
+
+    outs:
+      performanceAssignmentOSOuts_,
+
+    coverage:
+      performanceAssignmentOSCoverage_,
+
+    status:
+      performanceAssignmentOSStatus_,
+
+    test:
+      testPerformanceAssignmentOS
+  };
+}
+
+
+/* =========================================================
+ * CURRENT PERFORMANCE
+ * ========================================================= */
+
+function performanceAssignmentOSCurrent_() {
+  if (
+    typeof ShowStateOS !==
+      "function"
+  ) {
+    throw new Error(
+      "ShowStateOS is unavailable."
+    );
+  }
+
+  const showState =
+    ShowStateOS().current();
+
+  if (!showState) {
+    throw new Error(
+      "ShowStateOS returned no current state."
+    );
+  }
+
+  return performanceAssignmentOSBuild_(
+    showState
+  );
+}
+
+
+/* =========================================================
+ * EXPLICIT PERFORMANCE
+ * ========================================================= */
+
+function performanceAssignmentOSForPerformance_(
+  dateValue,
+  performanceValue
+) {
+  const current =
+    performanceAssignmentOSCurrent_();
+
+  const requestedDateKey =
+    performanceAssignmentOSDateKey_(
+      dateValue
+    );
+
+  const currentDateKey =
+    performanceAssignmentOSDateKey_(
+      current.date
+    );
+
+  const requestedPerformance =
+    String(
+      performanceValue || ""
+    ).trim();
+
+  if (
+    requestedDateKey &&
+    requestedDateKey !==
+      currentDateKey
+  ) {
+    throw new Error(
+      "PerformanceAssignmentOS v0.1 currently resolves the active ShowState date only. " +
+      "Requested: " +
+      requestedDateKey +
+      "; active: " +
+      currentDateKey +
+      "."
+    );
+  }
+
+  if (
+    requestedPerformance &&
+    !performanceAssignmentOSPerformanceMatches_(
+      current.performance,
+      requestedPerformance
+    )
+  ) {
+    throw new Error(
+      "The requested performance does not match the active ShowState performance."
+    );
+  }
+
+  return current;
+}
+
+
+/* =========================================================
+ * BUILD MODEL
+ * ========================================================= */
+
+function performanceAssignmentOSBuild_(
+  showState,
+  payrollSchedule
+) {
+  const startedAt =
+    Date.now();
+
+  showState =
+    showState || {};
+
+  const performance =
+    performanceAssignmentOSSelectedPerformance_(
+      showState
+    );
+
+  if (!performance) {
+    throw new Error(
+      "No selected performance was found in ShowStateOS."
+    );
+  }
+
+  const dateKey =
+    performanceAssignmentOSDateKey_(
+      showState.target &&
+      showState.target.date
+        ? showState.target.date
+        : showState.date
+    );
+
+  if (!dateKey) {
+    throw new Error(
+      "Could not determine the ShowState date."
+    );
+  }
+
+  const performanceText =
+    String(
+      performance.inOutText ||
+      performance.performance ||
+      performance.label ||
+      ""
+    ).trim();
+
+  const performancePart =
+    performanceAssignmentOSPerformancePart_(
+      performanceText,
+      performance
+    );
+
+  payrollSchedule =
+    payrollSchedule ||
+    performanceAssignmentOSGetPayrollSchedule_();
+
+  const payrollDay =
+    performanceAssignmentOSFindPayrollDay_(
+      payrollSchedule,
+      dateKey
+    );
+
+  const outs =
+    performanceAssignmentOSCollectOuts_(
+      payrollSchedule,
+      payrollDay,
+      performancePart
+    );
+
+  const coverage =
+    performanceAssignmentOSCollectCoverage_(
+      payrollSchedule,
+      payrollDay,
+      performancePart
+    );
+
+  const resolverResult =
+    performanceAssignmentOSBuildResolvedCast_(
+      showState,
+      outs,
+      coverage
+    );
+
+  const reconciled =
+    performanceAssignmentOSReconcileCompany_(
+      resolverResult.people,
+      outs,
+      coverage
+    );
+
+  const staffing =
+    performanceAssignmentOSBuildStaffing_(
+      showState,
+      performance
+    );
+
+  const unresolvedCoverage =
+    outs.filter(function (out) {
+      if (
+        !out.role ||
+        /^swing$/i.test(
+          out.role
+        ) ||
+        out.noCoverNeeded === true
+      ) {
+        return false;
+      }
+
+      return !coverage.some(
+        function (item) {
+          return (
+            performanceAssignmentOSNameKey_(
+              item.out
+            ) ===
+              performanceAssignmentOSNameKey_(
+                out.person
+              ) &&
+            performanceAssignmentOSNameKey_(
+              item.role
+            ) ===
+              performanceAssignmentOSNameKey_(
+                out.role
+              )
+          );
+        }
+      );
+    });
+
+  return {
+    system:
+      "PerformanceAssignmentOS",
+
+    version:
+      "0.3.0",
+
+    date:
+      dateKey,
+
+    prettyDate:
+      showState.prettyDate ||
+      showState.date ||
+      dateKey,
+
+    weeklyName:
+      showState.weeklyName || "",
+
+    performance:
+      performanceText,
+
+    performanceNumber:
+      performance.number ||
+      performance.performanceNumber ||
+      "",
+
+    performanceTime:
+      performance.time ||
+      performance.performanceTime ||
+      "",
+
+    performancePart:
+      performancePart,
+
+    selectedIndex:
+      showState.selectedIndex !==
+        undefined
+        ? showState.selectedIndex
+        : 0,
+
+    staffing:
+      staffing,
+
+    outs:
+      outs,
+
+    coverage:
+      coverage,
+
+    unresolvedCoverage:
+      unresolvedCoverage,
+
+    /*
+     * resolvedCompany includes everyone represented
+     * by the resolver, including OUT swings, subs,
+     * and stage-management roster rows.
+     */
+    resolvedCompany: {
+      source:
+        resolverResult.source || "",
+
+      people:
+        reconciled.resolvedCompany
+    },
+
+    /*
+     * onstageCast contains one active actor for each
+     * principal onstage role.
+     */
+    onstageCast: {
+      source:
+        resolverResult.source || "",
+
+      people:
+        reconciled.onstageCast
+    },
+
+    /*
+     * Compatibility alias for existing early tests.
+     * This now points to the reconciled company view.
+     */
+    resolvedCast: {
+      source:
+        resolverResult.source || "",
+
+      performanceDate:
+        resolverResult.performanceDate || "",
+
+      performanceLabel:
+        resolverResult.performanceLabel || "",
+
+      people:
+        reconciled.resolvedCompany
+    },
+
+    sources: {
+      showState:
+        true,
+
+      payrollSchedule:
+        Boolean(payrollSchedule),
+
+      resolver:
+        resolverResult.source || ""
+    },
+
+    counts: {
+      outs:
+        outs.length,
+
+      coverage:
+        coverage.length,
+
+      unresolvedCoverage:
+        unresolvedCoverage.length,
+
+      resolvedCompany:
+        reconciled.resolvedCompany.length,
+
+      resolvedCast:
+        reconciled.resolvedCompany.length,
+
+      onstageCast:
+        reconciled.onstageCast.length,
+
+      staffingTracks:
+        Object.keys(staffing)
+          .filter(function (key) {
+            return Boolean(
+              staffing[key]
+            );
+          })
+          .length
+    },
+
+    durationMs:
+      Date.now() -
+      startedAt
+  };
+}
+
+
+/* =========================================================
+ * SELECTED PERFORMANCE
+ * ========================================================= */
+
+function performanceAssignmentOSSelectedPerformance_(
+  showState
+) {
+  if (
+    showState.selectedPerformance &&
+    typeof showState.selectedPerformance ===
+      "object"
+  ) {
+    return showState.selectedPerformance;
+  }
+
+  const performances =
+    Array.isArray(
+      showState.performances
+    )
+      ? showState.performances
+      : [];
+
+  if (!performances.length) {
+    return null;
+  }
+
+  const selectedIndex =
+    Number.isInteger(
+      showState.selectedIndex
+    )
+      ? showState.selectedIndex
+      : 0;
+
+  return (
+    performances[selectedIndex] ||
+    performances[0] ||
+    null
+  );
+}
+
+
+/* =========================================================
+ * PAYROLL SCHEDULE BRIDGE
+ * ========================================================= */
+
+function performanceAssignmentOSGetPayrollSchedule_() {
+  if (
+    typeof PayrollScheduleOS !==
+      "function"
+  ) {
+    return null;
+  }
+
+  return PayrollScheduleOS().current();
+}
+
+
+function performanceAssignmentOSFindPayrollDay_(
+  schedule,
+  dateKey
+) {
+  if (
+    !schedule ||
+    !Array.isArray(
+      schedule.people
+    )
+  ) {
+    return null;
+  }
+
+  for (
+    let personIndex = 0;
+    personIndex <
+      schedule.people.length;
+    personIndex++
+  ) {
+    const person =
+      schedule.people[
+        personIndex
+      ];
+
+    const day =
+      (
+        person.days || []
+      ).find(function (item) {
+        return (
+          String(
+            item.date || ""
+          ) === dateKey
+        );
+      });
+
+    if (day) {
+      return {
+        date:
+          dateKey,
+
+        showParts:
+          day.showParts || []
+      };
+    }
+  }
+
+  return null;
+}
+
+
+/* =========================================================
+ * OUTS
+ * ========================================================= */
+
+function performanceAssignmentOSCollectOuts_(
+  schedule,
+  payrollDay,
+  performancePart
+) {
+  if (
+    !schedule ||
+    !Array.isArray(
+      schedule.people
+    )
+  ) {
+    return [];
+  }
+
+  const output = [];
+
+  schedule.people.forEach(
+    function (person) {
+      const day =
+        (
+          person.days || []
+        ).find(function (item) {
+          return (
+            String(
+              item.date || ""
+            ) ===
+            payrollDay.date
+          );
+        });
+
+      if (!day) {
+        return;
+      }
+
+      (day.outs || [])
+        .filter(function (out) {
+          return (
+            performanceAssignmentOSPartMatches_(
+              out.part,
+              performancePart
+            )
+          );
+        })
+        .forEach(function (out) {
+          output.push({
+            person:
+              out.person ||
+              person.name ||
+              "",
+
+            role:
+              out.role || "",
+
+            reason:
+              out.reason || "Out",
+
+            part:
+              out.part ||
+              performancePart ||
+              "Unknown",
+
+            approvalStatus:
+              out.approvalStatus || "",
+
+            appliesTo:
+              out.appliesTo || "",
+
+            noCoverNeeded:
+              out.noCoverNeeded ===
+              true,
+
+            source:
+              out.source ||
+              "PayrollScheduleOS"
+          });
+        });
+    }
+  );
+
+  return performanceAssignmentOSUniqueRecords_(
+    output,
+    function (item) {
+      return [
+        performanceAssignmentOSNameKey_(
+          item.person
+        ),
+        performanceAssignmentOSNameKey_(
+          item.role
+        ),
+        item.part
+      ].join("::");
+    }
+  );
+}
+
+
+/* =========================================================
+ * COVERAGE
+ * ========================================================= */
+
+function performanceAssignmentOSCollectCoverage_(
+  schedule,
+  payrollDay,
+  performancePart
+) {
+  if (
+    !schedule ||
+    !Array.isArray(
+      schedule.people
+    )
+  ) {
+    return [];
+  }
+
+  const output = [];
+
+  schedule.people.forEach(
+    function (person) {
+      const day =
+        (
+          person.days || []
+        ).find(function (item) {
+          return (
+            String(
+              item.date || ""
+            ) ===
+            payrollDay.date
+          );
+        });
+
+      if (!day) {
+        return;
+      }
+
+      (day.coverage || [])
+        .filter(function (coverage) {
+          return (
+            performanceAssignmentOSPartMatches_(
+              coverage.part,
+              performancePart
+            )
+          );
+        })
+        .forEach(function (coverage) {
+          output.push({
+            out:
+              coverage.out || "",
+
+            in:
+              coverage.in ||
+              person.name ||
+              "",
+
+            role:
+              coverage.role || "",
+
+            reason:
+              coverage.reason || "",
+
+            part:
+              coverage.part ||
+              performancePart ||
+              "Unknown",
+
+            date:
+              coverage.date || "",
+
+            performance:
+              coverage.performance || "",
+
+            source:
+              coverage.source ||
+              "PayrollScheduleOS"
+          });
+        });
+    }
+  );
+
+  return performanceAssignmentOSUniqueRecords_(
+    output,
+    function (item) {
+      return [
+        performanceAssignmentOSNameKey_(
+          item.out
+        ),
+        performanceAssignmentOSNameKey_(
+          item.in
+        ),
+        performanceAssignmentOSNameKey_(
+          item.role
+        ),
+        item.part
+      ].join("::");
+    }
+  );
+}
+
+
+/* =========================================================
+ * RESOLVED CAST BRIDGE
+ * ========================================================= */
+
+function performanceAssignmentOSBuildResolvedCast_(
+  showState,
+  outs,
+  coverage
+) {
+  /*
+   * Priority 1:
+   * Reuse a resolved cast already attached to
+   * ShowStateOS when a future ShowState version
+   * exposes it directly.
+   */
+  const candidates = [
+    showState.resolvedCast,
+    showState.cast &&
+      showState.cast.resolved,
+    showState.intelligence &&
+      showState.intelligence
+        .resolvedCast,
+    showState.report &&
+      showState.report.resolvedCast
+  ];
+
+  for (
+    let index = 0;
+    index < candidates.length;
+    index++
+  ) {
+    const candidate =
+      candidates[index];
+
+    if (
+      Array.isArray(candidate) &&
+      candidate.length
+    ) {
+      return {
+        source:
+          "ShowStateOS",
+
+        people:
+          performanceAssignmentOSNormalizeResolvedCompany_(
+            candidate
+          )
+      };
+    }
+  }
+
+  /*
+   * Priority 2:
+   * CastResolverOS is the current canonical cast
+   * resolver. Its snapshot payload contains:
+   *
+   * performanceDate
+   * performanceLabel
+   * company[]
+   *
+   * Each company row exposes role, actor,
+   * defaultActor, status, outActor, inActor,
+   * and reason.
+   */
+  if (
+    typeof CastResolverOS ===
+      "function"
+  ) {
+    try {
+      const resolver =
+        CastResolverOS();
+
+      if (
+        resolver &&
+        typeof resolver.snapshot ===
+          "function"
+      ) {
+        const snapshot =
+          resolver.snapshot();
+
+        const company =
+          snapshot &&
+          Array.isArray(
+            snapshot.company
+          )
+            ? snapshot.company
+            : [];
+
+        if (company.length) {
+          return {
+            source:
+              "CastResolverOS",
+
+            performanceDate:
+              snapshot.performanceDate ||
+              "",
+
+            performanceLabel:
+              snapshot.performanceLabel ||
+              "",
+
+            people:
+              performanceAssignmentOSNormalizeResolvedCompany_(
+                company
+              )
+          };
+        }
+      }
+
+    } catch (error) {
+      Logger.log(
+        "PerformanceAssignmentOS CastResolverOS bridge skipped: " +
+        String(
+          error && error.message
+            ? error.message
+            : error
+        )
+      );
+    }
+  }
+
+  /*
+   * Final fallback:
+   * expose confirmed coverage assignments only.
+   * This keeps the model useful even if the cast
+   * resolver is temporarily unavailable.
+   */
+  const people =
+    coverage.map(function (item) {
+      return {
+        role:
+          item.role || "",
+
+        person:
+          item.in || "",
+
+        defaultPerson:
+          "",
+
+        status:
+          "COVER",
+
+        replacing:
+          item.out || "",
+
+        outPerson:
+          item.out || "",
+
+        inPerson:
+          item.in || "",
+
+        reason:
+          item.reason || "",
+
+        source:
+          item.source || ""
+      };
+    });
+
+  return {
+    source:
+      coverage.length
+        ? "Coverage records only"
+        : "",
+
+    people:
+      people
+  };
+}
+
+
+
+function performanceAssignmentOSNormalizeResolvedCompany_(
+  company
+) {
+  return (
+    Array.isArray(company)
+      ? company
+      : []
+  ).map(function (row) {
+    const role =
+      row.role ||
+      row.Role ||
+      "";
+
+    const person =
+      row.actor ||
+      row.person ||
+      row.resolvedActor ||
+      row["Resolved Actor"] ||
+      "";
+
+    const defaultPerson =
+      row.defaultActor ||
+      row.defaultPerson ||
+      row["Default Actor"] ||
+      "";
+
+    const status =
+      row.status ||
+      row.Status ||
+      (
+        row.inActor ||
+        row["IN Actor"]
+          ? "COVERED"
+          : "DEFAULT"
+      );
+
+    const outPerson =
+      row.outActor ||
+      row.outPerson ||
+      row["OUT Actor"] ||
+      "";
+
+    const inPerson =
+      row.inActor ||
+      row.inPerson ||
+      row["IN Actor"] ||
+      "";
+
+    return {
+      role:
+        role,
+
+      person:
+        person,
+
+      defaultPerson:
+        defaultPerson,
+
+      status:
+        status,
+
+      replacing:
+        outPerson,
+
+      outPerson:
+        outPerson,
+
+      inPerson:
+        inPerson,
+
+      reason:
+        row.reason ||
+        row.Reason ||
+        "",
+
+      source:
+        row.source ||
+        "CastResolverOS"
+    };
+  });
+}
+
+
+
+/* =========================================================
+ * COMPANY RECONCILIATION
+ * ========================================================= */
+
+function performanceAssignmentOSReconcileCompany_(
+  resolverPeople,
+  outs,
+  coverage
+) {
+  const people =
+    performanceAssignmentOSClone_(
+      resolverPeople || []
+    );
+
+  const outByPerson = {};
+  const coverageByRole = {};
+  const coverageByInPerson = {};
+
+  (outs || []).forEach(function (out) {
+    outByPerson[
+      performanceAssignmentOSNameKey_(
+        out.person
+      )
+    ] = out;
+  });
+
+  (coverage || []).forEach(function (item) {
+    coverageByRole[
+      performanceAssignmentOSNameKey_(
+        item.role
+      )
+    ] = item;
+
+    coverageByInPerson[
+      performanceAssignmentOSNameKey_(
+        item.in
+      )
+    ] = item;
+  });
+
+  const resolvedCompany =
+    people.map(function (row) {
+      return performanceAssignmentOSReconcileCompanyRow_(
+        row,
+        outByPerson,
+        coverageByRole,
+        coverageByInPerson
+      );
+    });
+
+  /*
+   * Add an explicit OUT company row when the resolver
+   * represented only the covering actor. This is common
+   * for principal roles such as Barfée.
+   */
+  (outs || []).forEach(function (out) {
+    const outKey =
+      performanceAssignmentOSNameKey_(
+        out.person
+      );
+
+    const alreadyRepresented =
+      resolvedCompany.some(
+        function (row) {
+          return (
+            performanceAssignmentOSNameKey_(
+              row.person
+            ) === outKey ||
+            performanceAssignmentOSNameKey_(
+              row.defaultPerson
+            ) === outKey ||
+            performanceAssignmentOSNameKey_(
+              row.outPerson
+            ) === outKey
+          );
+        }
+      );
+
+    if (!alreadyRepresented) {
+      resolvedCompany.push({
+        role:
+          out.role || "",
+
+        person:
+          out.person || "",
+
+        defaultPerson:
+          out.person || "",
+
+        status:
+          "OUT",
+
+        replacing:
+          "",
+
+        outPerson:
+          out.person || "",
+
+        inPerson:
+          "",
+
+        reason:
+          out.reason || "Out",
+
+        source:
+          out.source ||
+          "PayrollScheduleOS"
+      });
+    }
+  });
+
+  const dedupedCompany =
+    performanceAssignmentOSUniqueRecords_(
+      resolvedCompany,
+      function (row) {
+        return [
+          performanceAssignmentOSNameKey_(
+            row.role
+          ),
+          performanceAssignmentOSNameKey_(
+            row.person ||
+            row.defaultPerson ||
+            row.outPerson
+          ),
+          String(
+            row.status || ""
+          ).toUpperCase()
+        ].join("::");
+      }
+    );
+
+  const onstageCast =
+    performanceAssignmentOSBuildOnstageCast_(
+      dedupedCompany,
+      coverageByRole
+    );
+
+  return {
+    resolvedCompany:
+      dedupedCompany,
+
+    onstageCast:
+      onstageCast
+  };
+}
+
+
+function performanceAssignmentOSReconcileCompanyRow_(
+  row,
+  outByPerson,
+  coverageByRole,
+  coverageByInPerson
+) {
+  const role =
+    row.role || "";
+
+  let person =
+    row.person || "";
+
+  let defaultPerson =
+    row.defaultPerson || "";
+
+  let status =
+    String(
+      row.status || "DEFAULT"
+    ).toUpperCase();
+
+  let outPerson =
+    row.outPerson ||
+    row.replacing ||
+    "";
+
+  let inPerson =
+    row.inPerson || "";
+
+  let reason =
+    row.reason || "";
+
+  const roleKey =
+    performanceAssignmentOSNameKey_(
+      role
+    );
+
+  const personKey =
+    performanceAssignmentOSNameKey_(
+      person
+    );
+
+  const defaultKey =
+    performanceAssignmentOSNameKey_(
+      defaultPerson
+    );
+
+  /*
+   * Resolver self-cover artifacts should be DEFAULT.
+   * Example: Rachel replacing Rachel.
+   */
+  if (
+    person &&
+    defaultPerson &&
+    personKey === defaultKey &&
+    performanceAssignmentOSNameKey_(
+      outPerson
+    ) === personKey &&
+    performanceAssignmentOSNameKey_(
+      inPerson
+    ) === personKey
+  ) {
+    status = "DEFAULT";
+    outPerson = "";
+    inPerson = "";
+  }
+
+  /*
+   * Swing OUTs are person-specific, not role-wide.
+   * Restore each swing's own identity from defaultPerson,
+   * then mark only the actual OUT swing.
+   */
+  if (/^swing$/i.test(role)) {
+    person =
+      person ||
+      defaultPerson ||
+      outPerson ||
+      "";
+
+    const swingKey =
+      performanceAssignmentOSNameKey_(
+        person
+      );
+
+    const swingOut =
+      outByPerson[swingKey];
+
+    if (swingOut) {
+      status = "OUT";
+      outPerson =
+        swingOut.person || person;
+      inPerson = "";
+      reason =
+        swingOut.reason ||
+        reason ||
+        "Out";
+
+    } else {
+      status = "DEFAULT";
+      outPerson = "";
+      inPerson = "";
+      reason = "";
+    }
+
+    return {
+      role:
+        role,
+
+      person:
+        person,
+
+      defaultPerson:
+        defaultPerson || person,
+
+      status:
+        status,
+
+      replacing:
+        outPerson,
+
+      outPerson:
+        outPerson,
+
+      inPerson:
+        inPerson,
+
+      reason:
+        reason,
+
+      source:
+        row.source ||
+        "CastResolverOS"
+    };
+  }
+
+  const roleCoverage =
+    coverageByRole[roleKey];
+
+  const personCoverage =
+    coverageByInPerson[personKey];
+
+  const matchingCoverage =
+    personCoverage ||
+    (
+      roleCoverage &&
+      (
+        performanceAssignmentOSNameKey_(
+          roleCoverage.in
+        ) === personKey ||
+        performanceAssignmentOSNameKey_(
+          roleCoverage.in
+        ) === defaultKey
+      )
+        ? roleCoverage
+        : null
+    );
+
+  if (matchingCoverage) {
+    person =
+      matchingCoverage.in ||
+      person;
+
+    status = "COVERED";
+
+    outPerson =
+      matchingCoverage.out ||
+      outPerson;
+
+    inPerson =
+      matchingCoverage.in ||
+      person;
+
+    reason =
+      matchingCoverage.reason ||
+      reason;
+
+  } else {
+    const personOut =
+      outByPerson[
+        personKey
+      ] ||
+      outByPerson[
+        defaultKey
+      ];
+
+    if (personOut) {
+      person =
+        personOut.person ||
+        person ||
+        defaultPerson;
+
+      status = "OUT";
+
+      outPerson =
+        personOut.person ||
+        person;
+
+      inPerson = "";
+
+      reason =
+        personOut.reason ||
+        reason ||
+        "Out";
+
+    } else if (
+      status === "COVERED" &&
+      !inPerson
+    ) {
+      status = "DEFAULT";
+      outPerson = "";
+      reason = "";
+    }
+  }
+
+  return {
+    role:
+      role,
+
+    person:
+      person,
+
+    defaultPerson:
+      defaultPerson,
+
+    status:
+      status,
+
+    replacing:
+      outPerson,
+
+    outPerson:
+      outPerson,
+
+    inPerson:
+      inPerson,
+
+    reason:
+      reason,
+
+    source:
+      row.source ||
+      "CastResolverOS"
+  };
+}
+
+
+function performanceAssignmentOSBuildOnstageCast_(
+  resolvedCompany,
+  coverageByRole
+) {
+  const roleOrder = [
+    "Chip",
+    "Schwartzy",
+    "Marcy",
+    "Rona",
+    "Panch",
+    "Leaf",
+    "Mitch",
+    "Barfée",
+    "Olive"
+  ];
+
+  return roleOrder
+    .map(function (role) {
+      const roleKey =
+        performanceAssignmentOSNameKey_(
+          role
+        );
+
+      const coverage =
+        coverageByRole[roleKey];
+
+      if (coverage) {
+        return {
+          role:
+            role,
+
+          person:
+            coverage.in || "",
+
+          status:
+            "COVERED",
+
+          replacing:
+            coverage.out || "",
+
+          reason:
+            coverage.reason || "",
+
+          source:
+            coverage.source ||
+            "PayrollScheduleOS"
+        };
+      }
+
+      const candidates =
+        resolvedCompany.filter(
+          function (row) {
+            return (
+              performanceAssignmentOSNameKey_(
+                row.role
+              ) === roleKey &&
+              String(
+                row.status || ""
+              ).toUpperCase() !==
+                "OUT" &&
+              Boolean(row.person)
+            );
+          }
+        );
+
+      const preferred =
+        candidates.find(
+          function (row) {
+            return (
+              String(
+                row.status || ""
+              ).toUpperCase() ===
+              "COVERED"
+            );
+          }
+        ) ||
+        candidates.find(
+          function (row) {
+            return (
+              String(
+                row.status || ""
+              ).toUpperCase() ===
+              "DEFAULT"
+            );
+          }
+        ) ||
+        candidates[0];
+
+      if (!preferred) {
+        return {
+          role:
+            role,
+
+          person:
+            "",
+
+          status:
+            "UNRESOLVED",
+
+          replacing:
+            "",
+
+          reason:
+            "",
+
+          source:
+            ""
+        };
+      }
+
+      return {
+        role:
+          role,
+
+        person:
+          preferred.person || "",
+
+        status:
+          preferred.status || "DEFAULT",
+
+        replacing:
+          preferred.outPerson || "",
+
+        reason:
+          preferred.reason || "",
+
+        source:
+          preferred.source || ""
+      };
+    });
+}
+
+
+/* =========================================================
+ * STAFFING
+ * ========================================================= */
+
+function performanceAssignmentOSBuildStaffing_(
+  showState,
+  performance
+) {
+  const staffing =
+    showState.staffing || {};
+
+  const assignments =
+    showState.assignments || {};
+
+  const assignmentValues =
+    assignments.values || {};
+
+  return {
+    callingSM:
+      staffing.callingSM ||
+      assignmentValues.calling ||
+      assignments.callingSM ||
+      "",
+
+    deckSM:
+      staffing.deckSM ||
+      assignmentValues.deck ||
+      assignments.deckSM ||
+      "",
+
+    conductor:
+      staffing.conductor ||
+      assignmentValues.conductor ||
+      assignments.conductor ||
+      performance.conductor ||
+      showState.conductor ||
+      "",
+
+    a1:
+      staffing.a1 ||
+      assignmentValues.audio ||
+      assignments.a1 ||
+      assignments.audio ||
+      ""
+  };
+}
+
+
+/* =========================================================
+ * PUBLIC READERS
+ * ========================================================= */
+
+function performanceAssignmentOSResolvedCast_() {
+  return performanceAssignmentOSCurrent_()
+    .resolvedCast;
+}
+
+
+function performanceAssignmentOSOuts_() {
+  return performanceAssignmentOSCurrent_()
+    .outs;
+}
+
+
+function performanceAssignmentOSCoverage_() {
+  return performanceAssignmentOSCurrent_()
+    .coverage;
+}
+
+
+/* =========================================================
+ * STATUS
+ * ========================================================= */
+
+function performanceAssignmentOSStatus_(
+  current
+) {
+  const startedAt =
+    Date.now();
+
+  let error = "";
+
+  if (!current) {
+    try {
+      current =
+        performanceAssignmentOSCurrent_();
+
+    } catch (err) {
+      error =
+        String(
+          err && err.message
+            ? err.message
+            : err
+        );
+    }
+  }
+
+  return {
+    system:
+      "PerformanceAssignmentOS",
+
+    version:
+      "0.3.0",
+
+    available:
+      Boolean(current),
+
+    healthy:
+      Boolean(
+        current &&
+        current.date &&
+        current.performance &&
+        current.counts
+          .onstageCast === 9 &&
+        current.counts
+          .unresolvedCoverage === 0
+      ),
+
+    error:
+      error,
+
+    date:
+      current
+        ? current.prettyDate
+        : "",
+
+    performance:
+      current
+        ? current.performance
+        : "",
+
+    performancePart:
+      current
+        ? current.performancePart
+        : "",
+
+    outs:
+      current
+        ? current.counts.outs
+        : 0,
+
+    coverage:
+      current
+        ? current.counts.coverage
+        : 0,
+
+    unresolvedCoverage:
+      current
+        ? current.counts
+            .unresolvedCoverage
+        : 0,
+
+    resolvedCompany:
+      current
+        ? current.counts
+            .resolvedCompany
+        : 0,
+
+    resolvedCast:
+      current
+        ? current.counts
+            .resolvedCast
+        : 0,
+
+    onstageCast:
+      current
+        ? current.counts
+            .onstageCast
+        : 0,
+
+    resolvedCastSource:
+      current &&
+      current.resolvedCast
+        ? current.resolvedCast.source
+        : "",
+
+    staffingTracks:
+      current
+        ? current.counts
+            .staffingTracks
+        : 0,
+
+    durationMs:
+      current
+        ? current.durationMs
+        : Date.now() - startedAt
+  };
+}
+
+
+/* =========================================================
+ * HELPERS
+ * ========================================================= */
+
+function performanceAssignmentOSPerformancePart_(
+  performanceText,
+  performance
+) {
+  const explicitPart =
+    String(
+      performance &&
+      (
+        performance.part ||
+        performance.showType
+      ) ||
+      ""
+    ).trim();
+
+  if (
+    /^mat/i.test(
+      explicitPart
+    )
+  ) {
+    return "Mat";
+  }
+
+  if (
+    /^eve/i.test(
+      explicitPart
+    )
+  ) {
+    return "Eve";
+  }
+
+  const text =
+    String(
+      performanceText || ""
+    );
+
+  if (
+    /\bMAT(?:INEE)?\b/i.test(
+      text
+    )
+  ) {
+    return "Mat";
+  }
+
+  if (
+    /\bEVE(?:NING)?\b/i.test(
+      text
+    )
+  ) {
+    return "Eve";
+  }
+
+  const match =
+    text.match(
+      /(\d{1,2}):(\d{2})\s*(AM|PM)/i
+    );
+
+  if (!match) {
+    return "Unknown";
+  }
+
+  let hour =
+    Number(match[1]);
+
+  const ampm =
+    match[3].toUpperCase();
+
+  if (
+    ampm === "PM" &&
+    hour !== 12
+  ) {
+    hour += 12;
+  }
+
+  if (
+    ampm === "AM" &&
+    hour === 12
+  ) {
+    hour = 0;
+  }
+
+  return hour < 17
+    ? "Mat"
+    : "Eve";
+}
+
+
+function performanceAssignmentOSPartMatches_(
+  recordPart,
+  performancePart
+) {
+  const record =
+    String(
+      recordPart || "Unknown"
+    );
+
+  const target =
+    String(
+      performancePart || "Unknown"
+    );
+
+  return (
+    record === target ||
+    record === "Unknown" ||
+    target === "Unknown"
+  );
+}
+
+
+function performanceAssignmentOSDateKey_(
+  value
+) {
+  let date =
+    value;
+
+  if (
+    value &&
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(
+      value
+    )
+  ) {
+    return value;
+  }
+
+  if (!(date instanceof Date)) {
+    if (
+      typeof prepOSParseDate_ ===
+      "function"
+    ) {
+      date =
+        prepOSParseDate_(
+          value
+        );
+    } else {
+      date =
+        new Date(
+          String(value || "")
+        );
+    }
+  }
+
+  if (
+    !(date instanceof Date) ||
+    isNaN(
+      date.getTime()
+    )
+  ) {
+    return "";
+  }
+
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+}
+
+
+function performanceAssignmentOSPerformanceMatches_(
+  performance,
+  requested
+) {
+  return (
+    performanceAssignmentOSNameKey_(
+      performance
+    ) ===
+    performanceAssignmentOSNameKey_(
+      requested
+    )
+  );
+}
+
+
+function performanceAssignmentOSNameKey_(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function performanceAssignmentOSUniqueRecords_(
+  records,
+  keyBuilder
+) {
+  const seen = {};
+
+  return records.filter(
+    function (record) {
+      const key =
+        keyBuilder(record);
+
+      if (seen[key]) {
+        return false;
+      }
+
+      seen[key] = true;
+      return true;
+    }
+  );
+}
+
+
+function performanceAssignmentOSClone_(
+  value
+) {
+  return JSON.parse(
+    JSON.stringify(
+      value || []
+    )
+  );
+}
+
+
+/* =========================================================
+ * TEST
+ * ========================================================= */
+
+function testPerformanceAssignmentOS() {
+  const startedAt =
+    Date.now();
+
+  const current =
+    PerformanceAssignmentOS()
+      .current();
+
+  const status =
+    performanceAssignmentOSStatus_(
+      current
+    );
+
+  const leaf =
+    current.onstageCast.people
+      .find(function (row) {
+        return row.role === "Leaf";
+      });
+
+  const barfee =
+    current.onstageCast.people
+      .find(function (row) {
+        return row.role === "Barfée";
+      });
+
+  const ceciliaOutRecord =
+  current.outs.find(
+    function (out) {
+      return (
+        performanceAssignmentOSNameKey_(
+          out.person
+        ) ===
+          performanceAssignmentOSNameKey_(
+            "Cecilia Snow"
+          ) &&
+        performanceAssignmentOSNameKey_(
+          out.role
+        ) ===
+          performanceAssignmentOSNameKey_(
+            "Swing"
+          )
+      );
+    }
+  );
+
+const ceciliaCompanyRecord =
+  current.resolvedCompany.people.find(
+    function (row) {
+      return (
+        performanceAssignmentOSNameKey_(
+          row.person
+        ) ===
+          performanceAssignmentOSNameKey_(
+            "Cecilia Snow"
+          ) &&
+        performanceAssignmentOSNameKey_(
+          row.role
+        ) ===
+          performanceAssignmentOSNameKey_(
+            "Swing"
+          )
+      );
+    }
+  );
+
+const incorrectSwingOuts =
+  current.resolvedCompany.people.filter(
+    function (row) {
+      if (
+        performanceAssignmentOSNameKey_(
+          row.role
+        ) !==
+          performanceAssignmentOSNameKey_(
+            "Swing"
+          )
+      ) {
+        return false;
+      }
+
+      if (
+        String(
+          row.status || ""
+        ).toUpperCase() !==
+          "OUT"
+      ) {
+        return false;
+      }
+
+      /*
+       * Cecilia may be OUT only when she appears
+       * in the current performance's OUT records.
+       */
+      return (
+        !ceciliaOutRecord ||
+        performanceAssignmentOSNameKey_(
+          row.person
+        ) !==
+          performanceAssignmentOSNameKey_(
+            "Cecilia Snow"
+          )
+      );
+    }
+  );
+
+const swingOutValidation =
+  ceciliaOutRecord
+    ? Boolean(
+        ceciliaCompanyRecord &&
+        String(
+          ceciliaCompanyRecord.status || ""
+        ).toUpperCase() ===
+          "OUT" &&
+        incorrectSwingOuts.length === 0
+      )
+    : incorrectSwingOuts.length === 0;
+
+  const selfCoverIssues =
+    current.resolvedCompany.people
+      .filter(function (row) {
+        const personKey =
+          performanceAssignmentOSNameKey_(
+            row.person
+          );
+
+        return (
+          personKey &&
+          personKey ===
+            performanceAssignmentOSNameKey_(
+              row.outPerson
+            ) &&
+          personKey ===
+            performanceAssignmentOSNameKey_(
+              row.inPerson
+            )
+        );
+      });
+
+  const validation = {
+    leaf:
+      Boolean(
+        leaf &&
+        leaf.person ===
+          "Fernell Hogan" &&
+        leaf.status ===
+          "COVERED"
+      ),
+
+    barfee:
+      Boolean(
+        barfee &&
+        barfee.person ===
+          "Brandon L. Armstrong" &&
+        barfee.status ===
+          "COVERED"
+      ),
+
+    swingOuts:
+      swingOutValidation,
+
+    selfCovers:
+      selfCoverIssues.length === 0
+  };
+
+  validation.allPassed =
+    Object.keys(validation)
+      .filter(function (key) {
+        return key !== "allPassed";
+      })
+      .every(function (key) {
+        return validation[key] === true;
+      });
+
+  const totalDurationMs =
+    Date.now() -
+    startedAt;
+
+  Logger.log(
+    "PERFORMANCEASSIGNMENTOS V0.3 TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      {
+        model: current,
+        validation: validation
+      },
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      [
+        "PerformanceAssignmentOS v0.3 test " +
+          (
+            status.healthy &&
+            validation.allPassed
+              ? "passed."
+              : "found issues."
+          ),
+        "",
+        "Date: " +
+          status.date,
+        "Performance: " +
+          status.performance,
+        "Part: " +
+          status.performancePart,
+        "Staffing tracks: " +
+          status.staffingTracks,
+        "OUT records: " +
+          status.outs,
+        "Coverage records: " +
+          status.coverage,
+        "Unresolved coverage: " +
+          status.unresolvedCoverage,
+        "Resolved company records: " +
+          status.resolvedCompany,
+        "Onstage cast roles: " +
+          status.onstageCast,
+        "Resolved cast source: " +
+          status.resolvedCastSource,
+        "",
+        "Leaf → Fernell: " +
+          (
+            validation.leaf
+              ? "YES"
+              : "NO"
+          ),
+        "Barfée → Brandon: " +
+          (
+            validation.barfee
+              ? "YES"
+              : "NO"
+          ),
+        "Swing OUT reconciliation: " +
+          (
+            validation.swingOuts
+              ? "YES"
+              : "NO"
+          ),
+        "Self-cover artifacts removed: " +
+          (
+            validation.selfCovers
+              ? "YES"
+              : "NO"
+          ),
+        "",
+        "Model duration: " +
+          status.durationMs +
+          " ms",
+        "Total test duration: " +
+          totalDurationMs +
+          " ms",
+        "",
+        "Open the execution log for the full model."
+      ].join("\n")
+    );
+
+  return {
+    model: current,
+    validation: validation
+  };
+}

@@ -1,0 +1,211 @@
+/*************************************************
+ * 13 INOUT WEEKLY ASSIGNMENT RESOLVER
+ * Version: 1.1.0
+ *************************************************/
+
+function resolveAssignedCoverFromWeekly_(targetDate, roleName) {
+  const weeklyBlock = findWeeklyBlockForDate_(targetDate);
+  if (!weeklyBlock) return "";
+
+  return findAssignedCoverInWeeklyBlock_(
+    weeklyBlock.values,
+    weeklyBlock.dayStart,
+    weeklyBlock.dayEnd,
+    roleName
+  ) || findAssignedCoverInWeeklyBlock_(
+    weeklyBlock.values,
+    weeklyBlock.dayStart,
+    weeklyBlock.dayEnd,
+    shortRoleNameForWeekly_(roleName)
+  );
+}
+
+function findWeeklyBlockForDate_(targetDate) {
+  const ss = SpreadsheetApp.getActive();
+  const date = normalizeInOutIntelDate_(targetDate);
+  if (!date) return null;
+
+  const tz = Session.getScriptTimeZone();
+
+  const targetDayName = Utilities.formatDate(date, tz, "EEEE");
+  const targetMonthName = Utilities.formatDate(date, tz, "MMMM");
+  const targetDayNum = String(Number(Utilities.formatDate(date, tz, "d")));
+
+  const targetHeader = normalizeWeeklyResolverText_(
+    targetDayName + ", " + targetMonthName + " " + targetDayNum
+  );
+
+  const weeklySheets = ss.getSheets().filter(sh =>
+    sh.getName().toLowerCase().includes("weekly schedule")
+  );
+
+  for (const sh of weeklySheets) {
+    const values = sh.getDataRange().getDisplayValues();
+
+    for (let r = 0; r < values.length; r++) {
+      const rowText = normalizeWeeklyResolverText_(values[r].join(" "));
+
+      if (rowText.includes(targetHeader)) {
+        return {
+          sheet: sh,
+          values,
+          dayStart: r,
+          dayEnd: findWeeklyResolverDayEnd_(values, r)
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function findWeeklyResolverDayEnd_(values, dayStart) {
+  const dayRegex = /\b(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),\s+[A-Z]+\s+\d{1,2}\b/i;
+
+  for (let r = dayStart + 1; r < values.length; r++) {
+    const rowText = values[r].join(" ");
+    if (dayRegex.test(rowText)) return r;
+  }
+
+  return values.length;
+}
+
+function findAssignedCoverInWeeklyBlock_(values, dayStart, dayEnd, roleName) {
+  const targetRole = normalizeCoverRole_(roleName);
+
+  for (let r = dayStart; r < dayEnd; r++) {
+    const rowText = values[r].join(" ").replace(/\s+/g, " ").trim();
+    if (!rowText) continue;
+
+    const found = parseWeeklyCoverLine_(rowText, targetRole);
+    if (found) return found;
+  }
+
+  return "";
+}
+
+function parseWeeklyCoverLine_(text, targetRole) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleanText) return "";
+
+  // Example:
+  // Kevin M. OUT, Barfée = Brandon A.
+  const match = cleanText.match(/OUT[, ]+\s*(.*?)\s*=\s*(.*?)$/i);
+  if (!match) return "";
+
+  const roleRaw = match[1].trim();
+  const inActorRaw = match[2].trim();
+
+  if (normalizeCoverRole_(roleRaw) !== normalizeCoverRole_(targetRole)) {
+    return "";
+  }
+
+  return expandActorNameFromCastList_(inActorRaw) || inActorRaw;
+}
+
+function expandActorNameFromCastList_(shortName) {
+  const data = typeof getCastListData_ === "function" ? getCastListData_() : null;
+  if (!data) return shortName;
+
+  const target = normalizeInOutIntelText_(shortName).replace(/\./g, "");
+
+  for (const row of data.rows) {
+    const full = normalizeInOutIntelText_(row.fullName).replace(/\./g, "");
+    const initial = normalizeInOutIntelText_(row.firstInitial).replace(/\./g, "");
+
+    if (target === full || target === initial) {
+      return row.fullName;
+    }
+
+    const parts = normalizeInOutIntelText_(row.fullName).replace(/\./g, "").split(" ");
+    const first = parts[0] || "";
+    const last = parts[parts.length - 1] || "";
+
+    const firstLastInitial = `${first} ${last.charAt(0)}`;
+    if (target === firstLastInitial) {
+      return row.fullName;
+    }
+  }
+
+  return shortName;
+}
+
+function normalizeWeeklyResolverText_(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/,/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shortRoleNameForWeekly_(roleName) {
+  const text = normalizeCoverRole_(roleName);
+
+  const map = {
+    "william barfee": "barfee",
+    "olive ostrovsky": "olive",
+    "leaf coneybear": "leaf",
+    "chip tolentino": "chip",
+    "logainne schwartzandgrubenierre": "schwartzy",
+    "marcy park": "marcy",
+    "rona lisa peretti": "rona",
+    "douglas panch": "panch",
+    "mitch mahoney": "mitch"
+  };
+
+  return map[text] || text;
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testResolveAssignedCoverFromWeeklyToday() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+
+  const targetDate = parseInOutDate_(inOut.getRange("A3").getDisplayValue());
+
+  const res = ui.prompt("Character?", "Example: Barfée", ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  const role = res.getResponseText().trim();
+  const cover = resolveAssignedCoverFromWeekly_(targetDate, role);
+
+  ui.alert(
+    "Weekly assigned cover for " + role + ":\n\n" +
+    (cover || "None found")
+  );
+}
+
+function debugWeeklyCoverLinesToday() {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const targetDate = parseInOutDate_(inOut.getRange("A3").getDisplayValue());
+
+  const block = findWeeklyBlockForDate_(targetDate);
+
+  if (!block) {
+    SpreadsheetApp.getUi().alert("No weekly block found for IN/OUT!A3.");
+    return;
+  }
+
+  const lines = [];
+
+  for (let r = block.dayStart; r < block.dayEnd; r++) {
+    const rowText = block.values[r].join(" | ").replace(/\s+/g, " ").trim();
+
+    if (
+      rowText.toUpperCase().includes(" OUT") ||
+      rowText.includes("=")
+    ) {
+      lines.push((r + 1) + ": " + rowText);
+    }
+  }
+
+  SpreadsheetApp.getUi().alert(
+    "Weekly sheet: " + block.sheet.getName() + "\n\n" +
+    (lines.length ? lines.join("\n") : "No possible cover lines found.")
+  );
+}

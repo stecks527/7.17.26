@@ -1,0 +1,1435 @@
+/*************************************************
+ * 00 STAGEOS - API
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Canonical public API for StageOS.
+ *
+ * Purpose:
+ * - Give every subsystem one stable entry point.
+ * - Reduce direct cross-system dependencies.
+ * - Preserve compatibility with existing StageOS callers.
+ * - Load expensive systems only when requested.
+ *
+ * Examples:
+ * - StageOS().showState()
+ * - StageOS().decision()
+ * - StageOS().engine()
+ * - StageOS().workflow()
+ * - StageOS().productionEvents()
+ *************************************************/
+
+
+/* =========================================================
+ * PUBLIC STAGEOS API
+ * ========================================================= */
+
+function StageOS() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const memory = {};
+
+  function once_(key, builder) {
+    if (
+      Object.prototype.hasOwnProperty.call(
+        memory,
+        key
+      )
+    ) {
+      return memory[key];
+    }
+
+    memory[key] = builder();
+    return memory[key];
+  }
+
+  const api = {
+    /* -----------------------------------------------------
+     * IDENTITY
+     * ----------------------------------------------------- */
+
+    version: function () {
+      return (
+        typeof STAGEOS !== "undefined" &&
+        STAGEOS.VERSION
+      )
+        ? STAGEOS.VERSION
+        : "unknown";
+    },
+
+    build: function () {
+      return (
+        typeof STAGEOS !== "undefined" &&
+        STAGEOS.BUILD
+      )
+        ? STAGEOS.BUILD
+        : "unknown";
+    },
+
+    name: function () {
+      return (
+        typeof STAGEOS !== "undefined" &&
+        STAGEOS.NAME
+      )
+        ? STAGEOS.NAME
+        : "StageOS";
+    },
+
+
+    /* -----------------------------------------------------
+     * WORKBOOK / SETTINGS
+     * ----------------------------------------------------- */
+
+    workbook: function () {
+      return ss;
+    },
+
+    settings: function () {
+      return once_(
+        "settings",
+        function () {
+          return (
+            typeof StageOSSettings === "function"
+          )
+            ? StageOSSettings()
+            : null;
+        }
+      );
+    },
+
+    setting: function (
+      key,
+      fallback
+    ) {
+      const service =
+        api.settings();
+
+      if (
+        service &&
+        typeof service.get === "function"
+      ) {
+        return service.get(
+          key,
+          fallback
+        );
+      }
+
+      return fallback;
+    },
+
+    boolean: function (
+      key,
+      fallback
+    ) {
+      const service =
+        api.settings();
+
+      if (
+        service &&
+        typeof service.boolean ===
+          "function"
+      ) {
+        return service.boolean(
+          key,
+          fallback
+        );
+      }
+
+      return Boolean(fallback);
+    },
+
+    rule: function (
+      key,
+      fallback
+    ) {
+      return api.setting(
+        key,
+        fallback
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * SHEETS
+     * ----------------------------------------------------- */
+
+    sheet: function (sheetKey) {
+      if (
+        typeof getStageOSSheet ===
+        "function"
+      ) {
+        return getStageOSSheet(
+          sheetKey
+        );
+      }
+
+      const name =
+        String(sheetKey || "");
+
+      const sheet =
+        ss.getSheetByName(name);
+
+      if (!sheet) {
+        throw new Error(
+          'Could not find "' +
+          name +
+          '" tab.'
+        );
+      }
+
+      return sheet;
+    },
+
+    safeSheet: function (sheetKey) {
+      try {
+        return api.sheet(sheetKey);
+      } catch (err) {
+        return null;
+      }
+    },
+
+    sheets: function () {
+      return once_(
+        "sheets",
+        function () {
+          return {
+            home:
+              api.safeSheet("home"),
+
+            dashboard:
+              api.safeSheet("dashboard"),
+
+            settings:
+              api.safeSheet("settings"),
+
+            inOut:
+              api.safeSheet("inOut"),
+
+            castList:
+              api.safeSheet("castList"),
+
+            contactSheet:
+              api.safeSheet("contactSheet"),
+
+            performanceReport:
+              api.safeSheet(
+                "performanceReport"
+              ),
+
+            performanceHighlights:
+              api.safeSheet(
+                "performanceHighlights"
+              ),
+
+            expandedCalendar:
+              api.safeSheet(
+                "expandedCalendar"
+              ),
+
+            productionCalendar:
+              api.safeSheet(
+                "productionCalendar"
+              ),
+
+            payroll:
+              api.safeSheet("payroll")
+          };
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * CORE PRODUCTION STATE
+     * ----------------------------------------------------- */
+
+    showState: function () {
+      return once_(
+        "showState",
+        function () {
+          if (
+            typeof buildShowState ===
+            "function"
+          ) {
+            return buildShowState();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    decision: function () {
+      return once_(
+        "decision",
+        function () {
+          if (
+            typeof DecisionOS ===
+            "function"
+          ) {
+            return DecisionOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    snapshot: function () {
+      return once_(
+        "snapshot",
+        function () {
+          if (
+            typeof SnapshotOSv2 ===
+            "function"
+          ) {
+            return SnapshotOSv2();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    resolver: function () {
+      return once_(
+        "resolver",
+        function () {
+          if (
+            typeof CastResolverOS ===
+            "function"
+          ) {
+            return CastResolverOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    assignments: function () {
+      return once_(
+        "assignments",
+        function () {
+          if (
+            typeof AssignmentOS ===
+            "function"
+          ) {
+            return AssignmentOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * OPERATIONAL SYSTEMS
+     * ----------------------------------------------------- */
+
+    engine: function () {
+      return once_(
+        "engine",
+        function () {
+          if (
+            typeof EngineOS ===
+            "function"
+          ) {
+            return EngineOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    engineQuery: function () {
+      return once_(
+        "engineQuery",
+        function () {
+          if (
+            typeof EngineQueryOS ===
+            "function"
+          ) {
+            return EngineQueryOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    cache: function () {
+      return once_(
+        "cache",
+        function () {
+          if (
+            typeof StageCacheOS ===
+            "function"
+          ) {
+            return StageCacheOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    workflow: function () {
+      return once_(
+        "workflow",
+        function () {
+          if (
+            typeof WorkflowStatusOS ===
+            "function"
+          ) {
+            return WorkflowStatusOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    operations: function () {
+      return once_(
+        "operations",
+        function () {
+          if (
+            typeof OperationsOS ===
+            "function"
+          ) {
+            return OperationsOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    productionEvents: function () {
+      return once_(
+        "productionEvents",
+        function () {
+          if (
+            typeof ProductionEventsOS ===
+            "function"
+          ) {
+            return ProductionEventsOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    weekly: function () {
+      return once_(
+        "weekly",
+        function () {
+          if (
+            typeof WeeklyOS ===
+            "function"
+          ) {
+            return WeeklyOS();
+          }
+
+          if (
+            typeof WeeklyCacheOS ===
+            "function"
+          ) {
+            return WeeklyCacheOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+    home: function () {
+      return once_(
+        "home",
+        function () {
+          if (
+            typeof HomeOS ===
+            "function"
+          ) {
+            return HomeOS();
+          }
+
+          return null;
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * TIMELINE
+     * ----------------------------------------------------- */
+
+    timeline: function (
+      suppliedShowState
+    ) {
+      if (
+        typeof buildTimelineOS !==
+        "function"
+      ) {
+        return null;
+      }
+
+      const state =
+        suppliedShowState ||
+        api.showState();
+
+      return buildTimelineOS(state);
+    },
+
+
+    /* -----------------------------------------------------
+     * CURRENT / LEGACY DAILY STATE
+     * ----------------------------------------------------- */
+
+    current: function () {
+      return once_(
+        "current",
+        function () {
+          return getStageOSCurrentState_();
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * THEME
+     * ----------------------------------------------------- */
+
+    theme: function () {
+      return once_(
+        "theme",
+        function () {
+          return getStageOSTheme_(
+            typeof getStageOSSettings ===
+              "function"
+              ? getStageOSSettings()
+              : {}
+          );
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * ACTIONS
+     * ----------------------------------------------------- */
+
+    actions: function () {
+      return once_(
+        "actions",
+        function () {
+          return getStageOSActions_();
+        }
+      );
+    },
+
+
+    /* -----------------------------------------------------
+     * AVAILABILITY / HEALTH
+     * ----------------------------------------------------- */
+
+    available: function (systemName) {
+      return stageOSSystemAvailable_(
+        systemName
+      );
+    },
+
+    status: function () {
+      return stageOSBuildAPIStatus_(api);
+    }
+  };
+
+
+  /* =======================================================
+   * LEGACY PROPERTY COMPATIBILITY
+   *
+   * Existing code may still use:
+   * StageOS().ss
+   * StageOS().today
+   * StageOS().theme
+   * StageOS().run
+   * StageOS().events
+   * StageOS().sheets
+   *
+   * These getters preserve those patterns while keeping
+   * expensive values lazy.
+   * ======================================================= */
+
+  Object.defineProperty(
+    api,
+    "ss",
+    {
+      enumerable: true,
+      get: function () {
+        return ss;
+      }
+    }
+  );
+
+  Object.defineProperty(
+    api,
+    "today",
+    {
+      enumerable: true,
+      get: function () {
+        return api.current();
+      }
+    }
+  );
+
+  Object.defineProperty(
+    api,
+    "themeData",
+    {
+      enumerable: true,
+      get: function () {
+        return api.theme();
+      }
+    }
+  );
+
+  Object.defineProperty(
+    api,
+    "run",
+    {
+      enumerable: true,
+      get: function () {
+        return api.actions();
+      }
+    }
+  );
+
+  Object.defineProperty(
+    api,
+    "sheetMap",
+    {
+      enumerable: true,
+      get: function () {
+        return api.sheets();
+      }
+    }
+  );
+
+  Object.defineProperty(
+    api,
+    "events",
+    {
+      enumerable: true,
+      get: function () {
+        return {
+          week: function () {
+            const service =
+              api.productionEvents();
+
+            if (
+              service &&
+              typeof service.all ===
+                "function"
+            ) {
+              return service.all();
+            }
+
+            return [];
+          },
+
+          notes: function () {
+            const service =
+              api.productionEvents();
+
+            if (
+              service &&
+              typeof service.notes ===
+                "function"
+            ) {
+              return service.notes();
+            }
+
+            return "";
+          },
+
+          payrollNotes: function () {
+            const service =
+              api.productionEvents();
+
+            if (
+              service &&
+              typeof service.payrollNotes ===
+                "function"
+            ) {
+              return service.payrollNotes();
+            }
+
+            return "";
+          }
+        };
+      }
+    }
+  );
+
+  return api;
+}
+
+
+/* =========================================================
+ * CURRENT PRODUCTION STATE
+ *
+ * Compatibility replacement for the former getStageOSToday_().
+ * This remains lightweight and follows the IN/OUT sheet.
+ * ========================================================= */
+
+function getStageOSCurrentState_() {
+  const inOut =
+    getStageOSSheetSafe_("inOut");
+
+  if (!inOut) {
+    return {
+      dateText: "",
+      performanceText: "",
+      performanceNumber: "",
+      conductor: "",
+      guest: {
+        name: "",
+        dateTimeText: "",
+        note: ""
+      },
+      alerts: [],
+      tasks: []
+    };
+  }
+
+  const dateText =
+    inOut
+      .getRange("A3")
+      .getDisplayValue();
+
+  const performanceText =
+    inOut
+      .getRange("A4")
+      .getDisplayValue();
+
+  const conductor =
+    inOut
+      .getRange("A26")
+      .getDisplayValue();
+
+  const performanceNumber =
+    getStageOSPerformanceNumber_(
+      performanceText
+    );
+
+  const guest =
+    getStageOSGuestForCurrent_(
+      dateText,
+      performanceNumber,
+      performanceText
+    );
+
+  return {
+    dateText: dateText,
+    performanceText:
+      performanceText,
+    performanceNumber:
+      performanceNumber,
+    conductor: conductor,
+    guest: guest,
+    alerts:
+      getStageOSCurrentAlerts_(
+        dateText,
+        guest
+      ),
+    tasks:
+      getStageOSCurrentTasks_(
+        dateText,
+        guest
+      )
+  };
+}
+
+
+/* =========================================================
+ * LEGACY CURRENT-STATE WRAPPERS
+ * ========================================================= */
+
+function getStageOSToday_() {
+  return getStageOSCurrentState_();
+}
+
+function getStageOSGuestForCurrent_(
+  dateText,
+  performanceNumber,
+  performanceText
+) {
+  if (
+    typeof getStageOSGuestSpellerForPerformance ===
+    "function"
+  ) {
+    const guest =
+      getStageOSGuestSpellerForPerformance(
+        dateText,
+        performanceNumber,
+        performanceText
+      ) || {};
+
+    return {
+      name: guest.name || "",
+      dateTimeText:
+        guest.dateTimeText ||
+        guest.guestDateTimeText ||
+        "",
+      note: guest.note || ""
+    };
+  }
+
+  return {
+    name: "",
+    dateTimeText: "",
+    note: ""
+  };
+}
+
+function getStageOSGuestForToday_(
+  dateText,
+  performanceNumber,
+  performanceText
+) {
+  return getStageOSGuestForCurrent_(
+    dateText,
+    performanceNumber,
+    performanceText
+  );
+}
+
+
+/* =========================================================
+ * CURRENT ALERTS / TASKS
+ *
+ * These remain temporarily for compatibility.
+ * They will move fully into HomeOS later.
+ * ========================================================= */
+
+function getStageOSCurrentAlerts_(
+  dateText,
+  guest
+) {
+  const alerts = [];
+
+  if (
+    guest &&
+    guest.name &&
+    stageOSBoolean_(
+      "guestSpellerTools",
+      true
+    )
+  ) {
+    alerts.push({
+      type: "guest",
+      icon: "⭐",
+      title: "Guest Speller",
+      detail: guest.name
+    });
+  }
+
+  if (
+    getStageOSIsDollarFriday_(
+      dateText
+    ) &&
+    stageOSBoolean_(
+      "dollarFriday",
+      true
+    )
+  ) {
+    alerts.push({
+      type: "dollarFriday",
+      icon: "💵",
+      title: "Dollar Friday",
+      detail:
+        "You know what to do!"
+    });
+  }
+
+  return alerts;
+}
+
+function getStageOSAlerts_(
+  dateText,
+  guest
+) {
+  return getStageOSCurrentAlerts_(
+    dateText,
+    guest
+  );
+}
+
+function getStageOSCurrentTasks_(
+  dateText,
+  guest
+) {
+  const tasks = [
+    {
+      key: "prepInOut",
+      icon: "🚀",
+      title: "Prep IN/OUT",
+      runner:
+        "homeButtonPrepInOut"
+    },
+    {
+      key: "exportInOut",
+      icon: "📄",
+      title:
+        "Export IN/OUT PDF",
+      runner:
+        "homeButtonExportInOutPdf"
+    },
+    {
+      key: "buildReport",
+      icon: "📝",
+      title:
+        "Build Performance Report",
+      runner:
+        "homeButtonBuildPerformanceReport"
+    },
+    {
+      key: "sendReport",
+      icon: "📧",
+      title:
+        "Send Performance Report",
+      runner:
+        "homeButtonDraftReport"
+    }
+  ];
+
+  if (
+    guest &&
+    guest.name
+  ) {
+    tasks.splice(
+      2,
+      0,
+      {
+        key: "guestPacket",
+        icon: "⭐",
+        title:
+          "Create Guest Packet",
+        runner:
+          "homeButtonGuestSpellerPacket"
+      }
+    );
+  }
+
+  return tasks;
+}
+
+function getStageOSTasks_(
+  dateText,
+  guest
+) {
+  return getStageOSCurrentTasks_(
+    dateText,
+    guest
+  );
+}
+
+
+/* =========================================================
+ * THEME
+ * ========================================================= */
+
+function getStageOSTheme_(
+  settings
+) {
+  const data =
+    settings || {};
+
+  return {
+    productionName:
+      data.productionName ||
+      "Production",
+
+    shortName:
+      data.shortName ||
+      data.productionName ||
+      "Production",
+
+    organization:
+      data.organization || "",
+
+    logo:
+      data.logo || "",
+
+    accentColor:
+      data.accentColor ||
+      "#2F5DAA",
+
+    secondaryColor:
+      data.secondaryColor ||
+      "#F4C542",
+
+    poweredBy:
+      "Powered by StageOS"
+  };
+}
+
+
+/* =========================================================
+ * ACTIONS
+ * ========================================================= */
+
+function getStageOSActions_() {
+  return {
+    refreshHome: function () {
+      if (
+        typeof HomeOS ===
+        "function"
+      ) {
+        return HomeOS().refresh();
+      }
+
+      return null;
+    },
+
+    prepInOut: function () {
+      if (
+        typeof homeButtonPrepInOut ===
+        "function"
+      ) {
+        return homeButtonPrepInOut();
+      }
+
+      return null;
+    },
+
+    exportInOut: function () {
+      if (
+        typeof homeButtonExportInOutPdf ===
+        "function"
+      ) {
+        return homeButtonExportInOutPdf();
+      }
+
+      return null;
+    },
+
+    guestPacket: function () {
+      if (
+        typeof homeButtonGuestSpellerPacket ===
+        "function"
+      ) {
+        return homeButtonGuestSpellerPacket();
+      }
+
+      return null;
+    },
+
+    payrollEmail: function () {
+      if (
+        typeof homeButtonPayrollEmailDraft ===
+        "function"
+      ) {
+        return homeButtonPayrollEmailDraft();
+      }
+
+      return null;
+    }
+  };
+}
+
+function getStageOSRunners_() {
+  return getStageOSActions_();
+}
+
+
+/* =========================================================
+ * SAFE ACCESSORS
+ * ========================================================= */
+
+function getStageOSSheetSafe_(
+  sheetKey
+) {
+  try {
+    return getStageOSSheet(
+      sheetKey
+    );
+  } catch (err) {
+    return null;
+  }
+}
+
+function getStageOSPerformanceNumber_(
+  text
+) {
+  if (
+    typeof getPerformanceNumber_ ===
+    "function"
+  ) {
+    return getPerformanceNumber_(text);
+  }
+
+  const match =
+    String(text || "")
+      .match(
+        /PERFORMANCE\s*#?\s*(\d+)/i
+      );
+
+  return match
+    ? match[1]
+    : "";
+}
+
+function getStageOSIsDollarFriday_(
+  dateText
+) {
+  if (
+    !stageOSBoolean_(
+      "dollarFriday",
+      true
+    )
+  ) {
+    return false;
+  }
+
+  let date = null;
+
+  if (
+    typeof parseInOutDate_ ===
+    "function"
+  ) {
+    date =
+      parseInOutDate_(dateText);
+  } else {
+    date =
+      new Date(dateText);
+  }
+
+  if (
+    !date ||
+    isNaN(date.getTime())
+  ) {
+    return false;
+  }
+
+  return (
+    Utilities.formatDate(
+      date,
+      Session.getScriptTimeZone(),
+      "EEEE"
+    ) === "Friday"
+  );
+}
+
+function buildStageOSGuestDateTime_(
+  dateText,
+  performanceText
+) {
+  const date =
+    typeof parseInOutDate_ ===
+      "function"
+      ? parseInOutDate_(dateText)
+      : new Date(dateText);
+
+  const monthDay =
+    date &&
+    !isNaN(date.getTime())
+      ? Utilities.formatDate(
+          date,
+          Session.getScriptTimeZone(),
+          "MMMM d"
+        ).toUpperCase()
+      : String(
+          dateText || ""
+        ).toUpperCase();
+
+  const timeMatch =
+    String(performanceText || "")
+      .match(
+        /(\d{1,2}:\d{2})\s*(AM|PM)?/i
+      );
+
+  const timeText =
+    timeMatch
+      ? (
+          timeMatch[1] +
+          (timeMatch[2] || "PM")
+        )
+          .replace(/\s+/g, "")
+          .toUpperCase()
+      : "";
+
+  return timeText
+    ? monthDay +
+        ", " +
+        timeText +
+        ":"
+    : monthDay + ":";
+}
+
+
+/* =========================================================
+ * SYSTEM AVAILABILITY / STATUS
+ * ========================================================= */
+
+function stageOSSystemAvailable_(
+  systemName
+) {
+  const map = {
+    home:
+      typeof HomeOS ===
+      "function",
+
+    showState:
+      typeof buildShowState ===
+      "function",
+
+    decision:
+      typeof DecisionOS ===
+      "function",
+
+    snapshot:
+      typeof SnapshotOSv2 ===
+      "function",
+
+    resolver:
+      typeof CastResolverOS ===
+      "function",
+
+    assignments:
+      typeof AssignmentOS ===
+      "function",
+
+    engine:
+      typeof EngineOS ===
+      "function",
+
+    engineQuery:
+      typeof EngineQueryOS ===
+      "function",
+
+    cache:
+      typeof StageCacheOS ===
+      "function",
+
+    workflow:
+      typeof WorkflowStatusOS ===
+      "function",
+
+    operations:
+      typeof OperationsOS ===
+      "function",
+
+    productionEvents:
+      typeof ProductionEventsOS ===
+      "function",
+
+    weekly:
+      typeof WeeklyOS ===
+        "function" ||
+      typeof WeeklyCacheOS ===
+        "function"
+  };
+
+  const key =
+    String(systemName || "")
+      .trim();
+
+  return Boolean(map[key]);
+}
+
+function stageOSBuildAPIStatus_(
+  api
+) {
+  const systems = [
+    "home",
+    "showState",
+    "decision",
+    "snapshot",
+    "resolver",
+    "assignments",
+    "engine",
+    "engineQuery",
+    "cache",
+    "workflow",
+    "operations",
+    "productionEvents",
+    "weekly"
+  ];
+
+  const available = {};
+
+  systems.forEach(function (
+    system
+  ) {
+    available[system] =
+      api.available(system);
+  });
+
+  return {
+    name: api.name(),
+    version: api.version(),
+    build: api.build(),
+    workbook:
+      api.workbook().getName(),
+    systems: available
+  };
+}
+
+
+/* =========================================================
+ * KERNEL COMPATIBILITY
+ *
+ * StageOSKernel() now redirects into StageOS().
+ * ========================================================= */
+
+function StageOSKernel() {
+  const stage = StageOS();
+
+  return {
+    version: function () {
+      return stage.version();
+    },
+
+    build: function () {
+      return stage.build();
+    },
+
+    workbook: function () {
+      return stage.workbook();
+    }
+  };
+}
+
+
+/* =========================================================
+ * TESTS
+ * ========================================================= */
+
+function testStageOSAPI() {
+  const stage = StageOS();
+  const status =
+    stage.status();
+
+  const results = {
+    status: status,
+
+    productionName:
+      stage.setting(
+        "productionName",
+        ""
+      ),
+
+    payrollSheet:
+      stage
+        .sheet("payroll")
+        .getName(),
+
+    inOutSheet:
+      stage
+        .sheet("inOut")
+        .getName(),
+
+    current:
+      stage.current(),
+
+    engineConnected:
+      stage.engine()
+        ? stage.engine()
+            .status()
+            .connected
+        : false,
+
+    productionEventsAvailable:
+      stage.available(
+        "productionEvents"
+      )
+  };
+
+  Logger.log(
+    "STAGEOS API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "StageOS API test passed.\n\n" +
+    "Version: " +
+    status.version +
+    "\n" +
+    "Workbook: " +
+    status.workbook +
+    "\n" +
+    "Payroll: " +
+    results.payrollSheet +
+    "\n" +
+    "Engine connected: " +
+    results.engineConnected
+  );
+
+  return results;
+}
+
+function debugStageOSCore() {
+  return testStageOSAPI();
+}
+
+function testStageOSKernel_SAFE() {
+  const kernel =
+    StageOSKernel();
+
+  Logger.log(
+    "StageOS Kernel online"
+  );
+
+  Logger.log(
+    "Version: " +
+    kernel.version()
+  );
+
+  Logger.log(
+    "Build: " +
+    kernel.build()
+  );
+
+  Logger.log(
+    "Workbook: " +
+    kernel
+      .workbook()
+      .getName()
+  );
+}
+
+function testStageOSSheetHelper() {
+  const stage = StageOS();
+
+  Logger.log(
+    stage
+      .sheet("payroll")
+      .getName()
+  );
+
+  Logger.log(
+    stage
+      .sheet("inOut")
+      .getName()
+  );
+
+  Logger.log(
+    stage.rule(
+      "normalAeaDayOff",
+      "Tuesday"
+    )
+  );
+}

@@ -1,0 +1,88 @@
+/*************************************************
+ * 08 SNAPSHOTOS - ENGINE
+ * Version: 1.0.0
+ * Status: ENGINEOS-BACKED
+ *************************************************/
+
+function snapshotOSv2GetStorageWorkbook() {
+  if (typeof EngineOS === "function") {
+    return EngineOS().workbook();
+  }
+
+  const props = PropertiesService.getDocumentProperties();
+  const engineId = props.getProperty(SNAPSHOT_OS_V2_ENGINE.propertyKey);
+
+  if (!engineId) {
+    throw new Error(
+      "StageOS Engine workbook is not connected. Add Engine Workbook ID to Production Settings."
+    );
+  }
+
+  return SpreadsheetApp.openById(engineId);
+}
+
+function snapshotOSv2GetShowWorkbook_() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function snapshotOSv2GetOrCreateSheet_(name) {
+  if (typeof EngineOS === "function") {
+    return EngineOS().sheet(name, { create: true }).sheet();
+  }
+
+  const ss = snapshotOSv2GetStorageWorkbook();
+  let sh = ss.getSheetByName(name);
+
+  if (!sh) sh = ss.insertSheet(name);
+
+  return sh;
+}
+
+function connectStageOSEngineWorkbookPrompt() {
+  SpreadsheetApp.getUi().alert(
+    "EngineOS now uses Production Settings.\n\n" +
+    "Add/update:\n" +
+    "Engine Enabled = TRUE\n" +
+    "Engine Workbook ID = [Engine workbook ID]"
+  );
+}
+
+function openStageOSEngineWorkbook() {
+  if (typeof openEngineWorkbook === "function") {
+    openEngineWorkbook();
+    return;
+  }
+
+  const engine = snapshotOSv2GetStorageWorkbook();
+  SpreadsheetApp.getUi().alert("StageOS Engine:\n\n" + engine.getUrl());
+}
+
+function initializeStageOSEngine() {
+  if (typeof EngineOS === "function") {
+    EngineOS().ensureCore();
+  }
+
+  [
+    "Resolved Cast Snapshots",
+    "Assignment Snapshots",
+    "SnapshotOS v2 - Show State",
+    "SnapshotOS v2 - Show State History",
+    "Decision History",
+    "System Logs",
+    "Performance Timeline",
+    "Analytics"
+  ].forEach(name => snapshotOSv2GetOrCreateSheet_(name));
+
+  SpreadsheetApp.getUi().alert("StageOS Engine initialized.");
+}
+
+function testStageOSEngineConnection() {
+  const engine = snapshotOSv2GetStorageWorkbook();
+
+  Logger.log("Engine connected: " + engine.getName());
+  Logger.log("Engine URL: " + engine.getUrl());
+
+  SpreadsheetApp.getUi().alert(
+    "Engine connected:\n\n" + engine.getName()
+  );
+}

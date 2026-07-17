@@ -1,0 +1,74 @@
+/*************************************************
+ * 08 SNAPSHOTOS RESOLVED CAST
+ * Version: 1.0.0
+ * Status: ENGINE-FIRST
+ *************************************************/
+
+function snapshotOSv2CaptureResolvedCastSnapshot_() {
+  const payload = CastResolverOS().snapshot();
+  const sh = snapshotOSv2GetOrCreateSheet_("Resolved Cast Snapshots");
+
+  snapshotOSv2EnsureResolvedCastHeaders_(sh);
+
+  const capturedAt = new Date();
+  const snapshotId = snapshotOSv2BuildResolvedCastSnapshotId_(payload, capturedAt);
+
+  const rows = payload.company.map(row => [
+    snapshotId,
+    capturedAt,
+    payload.performanceDate,
+    payload.performanceLabel,
+    row.role,
+    row.actor,
+    row.defaultActor,
+    row.status,
+    row.outActor,
+    row.inActor,
+    row.reason
+  ]);
+
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length)
+      .setValues(rows);
+  }
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "SnapshotOS",
+      "Resolved Cast Snapshot",
+      "Resolved Cast snapshot written to Engine.",
+      {
+        snapshotId: snapshotId,
+        performanceDate: payload.performanceDate,
+        performanceLabel: payload.performanceLabel,
+        rowsWritten: rows.length
+      }
+    );
+  }
+
+  return {
+    snapshotId,
+    source: "CastResolverOS().snapshot()",
+    performanceDate: payload.performanceDate,
+    performanceLabel: payload.performanceLabel,
+    rowsWritten: rows.length
+  };
+}
+
+function snapshotOSv2EnsureResolvedCastHeaders_(sh) {
+  const headers = [
+    "Snapshot ID",
+    "Captured At",
+    "Performance Date",
+    "Performance Label",
+    "Role",
+    "Resolved Actor",
+    "Default Actor",
+    "Status",
+    "Out Actor",
+    "In Actor",
+    "Reason"
+  ];
+
+  snapshotOSv2EnsureHeaders_(sh, headers, "#cfe2f3");
+}

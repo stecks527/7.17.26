@@ -1,0 +1,86 @@
+/*************************************************
+ * 35f PRODUCTION EVENTS OS
+ * Version: 1.0.0
+ *
+ * Public StageOS-style interface for production events.
+ *************************************************/
+
+function ProductionEventsOS() {
+  const engine = ProductionEventsEngineV1_();
+  const events = engine.events();
+  const context = productionEventsBuildContextV1_();
+
+  return {
+    all: function () {
+      return events;
+    },
+
+    payrollNotes: function () {
+      return engine.payrollNotes();
+    },
+
+    notes: function () {
+      return engine.notes();
+    },
+
+    payrollPeople: function () {
+      return context.payrollPeople || [];
+    },
+
+    payrollEvents: function () {
+      return context.payrollPersonEvents || [];
+    },
+
+    outs: function () {
+      return productionEventsOSFilterPayrollEvents_("OUT", context);
+    },
+
+    ins: function () {
+      return productionEventsOSFilterPayrollEvents_("IN", context);
+    },
+
+    officeShows: function () {
+      return productionEventsOSFilterPayrollEvents_("OFFICE_SHOW", context);
+    },
+
+    byType: function (type) {
+      return events.filter(function (event) {
+        return String(event.type || "") === String(type || "");
+      });
+    }
+  };
+}
+
+function productionEventsOSFilterPayrollEvents_(type, context) {
+  const events = context.payrollPersonEvents || [];
+
+  return events.filter(function (event) {
+    return String(event.type || "") === String(type || "");
+  });
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testProductionEventsOS() {
+  const os = ProductionEventsOS();
+
+  Logger.log("ProductionEventsOS online");
+  Logger.log("Events: " + os.all().length);
+  Logger.log("Payroll Events: " + os.payrollEvents().length);
+  Logger.log("Outs: " + os.outs().length);
+  Logger.log("Ins: " + os.ins().length);
+  Logger.log("Office Shows: " + os.officeShows().length);
+
+  Logger.log("PAYROLL NOTES:");
+  Logger.log(os.payrollNotes());
+
+  return {
+    events: os.all().length,
+    payrollEvents: os.payrollEvents().length,
+    outs: os.outs().length,
+    ins: os.ins().length,
+    officeShows: os.officeShows().length
+  };
+}

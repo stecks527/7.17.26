@@ -1,0 +1,159 @@
+/*************************************************
+ * 61 UNDERSTUDY TRACKER
+ *************************************************/
+
+function addPerformanceReportToUSTracker() {
+  const ss = SpreadsheetApp.getActive();
+
+  const report = ss.getSheetByName("Performance Report");
+  const tracker = ss.getSheetByName("U/S Tracker");
+
+  if (!report) throw new Error('Could not find tab: Performance Report');
+  if (!tracker) throw new Error('Could not find tab: U/S Tracker');
+
+  const rawPerf = report.getRange("A2").getDisplayValue().trim();
+  const perfNumber = rawPerf.replace(/^Performance\s*/i, "Perf. ");
+
+  const perfDate = report.getRange("A3").getValue();
+  const tz = ss.getSpreadsheetTimeZone();
+  const formattedDate = Utilities.formatDate(new Date(perfDate), tz, "EEE, MMM d");
+
+  const START_ROW = 10;
+  const END_ROW = 100;
+
+  const reportData = report
+    .getRange(START_ROW, 1, END_ROW - START_ROW + 1, 7)
+    .getDisplayValues();
+
+  let checked = 0;
+  let written = 0;
+  let skipped = [];
+
+  reportData.forEach((row, index) => {
+    const sheetRow = START_ROW + index;
+
+    const outName = String(row[0]).trim();    // A = OUT
+    const inName = String(row[2]).trim();     // C = IN
+    const role = String(row[4]).trim();       // E = ROLE
+    const reasonRaw = String(row[6]).trim();  // G = REASON
+
+    if (!outName && !inName && !role && !reasonRaw) return;
+
+    if (
+      outName.toUpperCase() === "OUT" ||
+      inName.toUpperCase() === "IN" ||
+      role.toUpperCase() === "ROLE" ||
+      reasonRaw.toUpperCase() === "REASON" ||
+      outName === "#REF!" ||
+      inName === "#REF!" ||
+      role === "#REF!" ||
+      reasonRaw === "#REF!"
+    ) {
+      return;
+    }
+
+    checked++;
+
+    if (!outName || !inName || !role || !reasonRaw) {
+      skipped.push(`Row ${sheetRow}: missing OUT, IN, ROLE, or REASON`);
+      return;
+    }
+
+    const castRow = findUSTrackerCastRow_(tracker, outName);
+
+    if (!castRow) {
+      skipped.push(`Row ${sheetRow}: could not find OUT person on U/S Tracker: ${outName}`);
+      return;
+    }
+
+    const writeRow = findBlankUSTrackerPerformanceRow_(tracker, castRow);
+
+    if (!writeRow) {
+      skipped.push(`Row ${sheetRow}: no blank tracker row available for ${outName}`);
+      return;
+    }
+
+    const note = `${perfNumber} - ${formattedDate} (${inName.toUpperCase()})`;
+    const reason = normalizeUSTrackerReason_(reasonRaw);
+
+    tracker.getRange(writeRow, 9).setValue(note);     // I = Performance
+    tracker.getRange(writeRow, 10).setValue(reason);  // J = Reason
+
+    written++;
+  });
+
+  const message =
+    `U/S Tracker finished.\n\nChecked rows: ${checked}\nWritten: ${written}\nSkipped:\n${skipped.join("\n") || "None"}`;
+
+  Logger.log(message);
+  console.log(message);
+}
+
+
+function findUSTrackerCastRow_(tracker, castName) {
+  const TRACKER_START_ROW = 25;
+  const lastRow = tracker.getLastRow();
+
+  const values = tracker
+    .getRange(TRACKER_START_ROW, 1, lastRow - TRACKER_START_ROW + 1, 1)
+    .getDisplayValues();
+
+  const target = normalizeName_(castName);
+
+  for (let i = 0; i < values.length; i++) {
+    const current = normalizeName_(values[i][0]);
+
+    if (current === target) {
+      return TRACKER_START_ROW + i;
+    }
+  }
+
+  return null;
+}
+
+
+function findBlankUSTrackerPerformanceRow_(tracker, castRow) {
+  const cell = tracker.getRange(castRow, 1);
+  const mergedRanges = cell.getMergedRanges();
+
+  let startRow = castRow;
+  let endRow = castRow;
+
+  if (mergedRanges.length > 0) {
+    const merged = mergedRanges[0];
+    startRow = merged.getRow();
+    endRow = merged.getRow() + merged.getNumRows() - 1;
+  }
+
+  for (let r = startRow + 1; r <= endRow; r++) {
+    const performanceCell = tracker.getRange(r, 9).getDisplayValue().trim();
+
+    if (!performanceCell) {
+      return r;
+    }
+  }
+
+  return null;
+}
+
+
+function normalizeUSTrackerReason_(reason) {
+  const cleaned = String(reason).toLowerCase();
+
+  if (cleaned.includes("approved pd")) return "PD";
+  if (cleaned.includes("unapp")) return "Unapp PD";
+  if (cleaned.includes("pd")) return "PD";
+  if (cleaned.includes("illness")) return "Illness";
+  if (cleaned.includes("injury")) return "Injury";
+  if (cleaned.includes("conditional")) return "Conditional";
+
+  return reason;
+}
+
+
+function normalizeName_(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}

@@ -1,0 +1,50 @@
+/*************************************************
+ * 13 INOUT ROUTING
+ * Version: 1.1.0
+ *************************************************/
+
+function isContractLOAOut_(reason) {
+  const text = String(reason || "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text === "LOA" || text === "MLOA";
+}
+
+function shouldWriteOutToInOutSheet_(outRecord) {
+  return !isContractLOAOut_(outRecord.reason);
+}
+
+function shouldWriteOutToReportsAndTrackers_(outRecord) {
+  return true;
+}
+
+/*************************************************
+ * TEMP REPLACEMENTS FOR LOA / MLOA
+ *
+ * Temporary hardcoded map until Company Wizard owns this.
+ *************************************************/
+
+function getTempReplacementForLOA_(outRecord) {
+  const actor = normalizeInOutIntelText_(outRecord.actor);
+  const role = normalizeCoverRole_(outRecord.role);
+  const reason = String(outRecord.reason || "").toUpperCase();
+
+  if (!isContractLOAOut_(reason)) return "";
+
+  const replacements = [
+    {
+      outActor: "justin cooley",
+      character: "leaf coneybear",
+      replacement: "Fernell Hogan"
+    }
+  ];
+
+  const found = replacements.find(row =>
+    normalizeInOutIntelText_(row.outActor) === actor &&
+    normalizeCoverRole_(row.character) === role
+  );
+
+  return found ? found.replacement : "";
+}

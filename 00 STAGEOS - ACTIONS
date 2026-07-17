@@ -1,0 +1,872 @@
+/*************************************************
+ * 00 STAGEOS - ACTIONS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Canonical workflow actions shared by:
+ * - StageOS menus
+ * - HomeOS mission buttons
+ * - Other StageOS subsystems
+ *
+ * Rule:
+ * Every public homeButton... function lives here.
+ *************************************************/
+
+
+/* =========================================================
+ * PREP / IN-OUT
+ * ========================================================= */
+
+function homeButtonPrepInOut() {
+  if (typeof launchPrepOSV2 === "function") {
+    return launchPrepOSV2();
+  }
+
+  if (typeof prepInOutButton === "function") {
+    return prepInOutButton();
+  }
+
+  return stageOSActionMissing_(
+    "Prep IN/OUT",
+    [
+      "launchPrepOSV2",
+      "prepInOutButton"
+    ]
+  );
+}
+
+
+function homeButtonExportInOutPdf() {
+  if (
+    typeof showInOutExportFromDashboard ===
+    "function"
+  ) {
+    showInOutExportFromDashboard();
+
+    stageOSActionMarkDone_(
+      "INOUT_PRINTED"
+    );
+
+    stageOSActionRefreshHome_();
+    return true;
+  }
+
+  return stageOSActionMissing_(
+    "Export IN/OUT PDF",
+    [
+      "showInOutExportFromDashboard"
+    ]
+  );
+}
+
+
+function homeButtonMarkInOutDistributed() {
+  stageOSActionMarkDone_(
+    "INOUT_DISTRIBUTED"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * PERFORMANCE REPORT
+ * ========================================================= */
+
+function homeButtonBuildPerformanceReport() {
+  if (
+    typeof reportDecisionResetAuto_TEST ===
+    "function"
+  ) {
+    return reportDecisionResetAuto_TEST();
+  }
+
+  if (
+    typeof buildPerformanceReport ===
+    "function"
+  ) {
+    return buildPerformanceReport();
+  }
+
+  return stageOSActionMissing_(
+    "Prepare Performance Report",
+    [
+      "reportDecisionResetAuto_TEST",
+      "buildPerformanceReport"
+    ]
+  );
+}
+
+
+function homeButtonDraftReport() {
+  if (
+    typeof createPerformanceReportEmailDraft !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Draft Performance Report Email",
+      [
+        "createPerformanceReportEmailDraft"
+      ]
+    );
+  }
+
+  createPerformanceReportEmailDraft();
+
+  stageOSActionMarkDone_(
+    "REPORT_EMAIL"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+function homeButtonResetReportMatinee() {
+  if (
+    typeof runReportResetMatineeWithDecision ===
+    "function"
+  ) {
+    runReportResetMatineeWithDecision();
+
+  } else if (
+    typeof reportResetMatinee ===
+    "function"
+  ) {
+    reportResetMatinee();
+
+  } else {
+    return stageOSActionMissing_(
+      "Reset Matinee Report",
+      [
+        "runReportResetMatineeWithDecision",
+        "reportResetMatinee"
+      ]
+    );
+  }
+
+  stageOSActionMarkDone_(
+    "REPORT_RESET"
+  );
+
+  stageOSActionMarkDone_(
+    "REPORT_PREP"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+function homeButtonResetReportEvening() {
+  if (
+    typeof runReportResetEveningWithDecision ===
+    "function"
+  ) {
+    runReportResetEveningWithDecision();
+
+  } else if (
+    typeof reportResetEvening ===
+    "function"
+  ) {
+    reportResetEvening();
+
+  } else {
+    return stageOSActionMissing_(
+      "Reset Evening Report",
+      [
+        "runReportResetEveningWithDecision",
+        "reportResetEvening"
+      ]
+    );
+  }
+
+  stageOSActionMarkDone_(
+    "REPORT_RESET"
+  );
+
+  stageOSActionMarkDone_(
+    "REPORT_PREP"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * WEEKLY
+ * ========================================================= */
+
+function homeButtonCreateNextWeeklySchedule() {
+  if (
+    typeof createNextWeeklyScheduleTab !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Create Next Weekly Schedule",
+      [
+        "createNextWeeklyScheduleTab"
+      ]
+    );
+  }
+
+  createNextWeeklyScheduleTab();
+
+  stageOSActionMarkDone_(
+    "WEEKLY_PREP"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+function homeButtonWeeklyEmailDraft() {
+  if (
+    typeof createWeeklyEmailDraft !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Draft Weekly Email",
+      [
+        "createWeeklyEmailDraft"
+      ]
+    );
+  }
+
+  createWeeklyEmailDraft();
+
+  stageOSActionMarkDone_(
+    "WEEKLY_EMAIL"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * PAYROLL
+ * ========================================================= */
+
+function homeButtonPayrollEmailDraft() {
+  if (
+    typeof createPayrollEmailDraft !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Draft Payroll Email",
+      [
+        "createPayrollEmailDraft"
+      ]
+    );
+  }
+
+  createPayrollEmailDraft();
+
+  stageOSActionMarkDone_(
+    "PAYROLL_EMAIL"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * PERISHABLES / SM FLOAT
+ * ========================================================= */
+
+function homeButtonPerishablesEmailDraft() {
+  if (
+    typeof runPerishablesWorkflow !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Draft Perishables Email",
+      [
+        "runPerishablesWorkflow"
+      ]
+    );
+  }
+
+  runPerishablesWorkflow();
+
+  stageOSActionMarkDone_(
+    "PERISHABLES_EMAIL"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * GUEST SPELLER
+ * ========================================================= */
+
+function homeButtonGuestSpellerPacket() {
+  if (
+    typeof guestSpellerButton !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Create Guest Packet",
+      [
+        "guestSpellerButton"
+      ]
+    );
+  }
+
+  guestSpellerButton();
+
+  stageOSActionMarkDone_(
+    "GUEST_PACKET"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+function homeButtonGuestSpellerEmail() {
+  if (
+    typeof draftGuestSpellerEmail ===
+    "function"
+  ) {
+    draftGuestSpellerEmail();
+
+  } else if (
+    typeof createCelebGuestSpellersEmailDraft ===
+    "function"
+  ) {
+    createCelebGuestSpellersEmailDraft();
+
+  } else if (
+    typeof showGuestSpellerDialog ===
+    "function"
+  ) {
+    showGuestSpellerDialog();
+    return true;
+
+  } else {
+    return stageOSActionMissing_(
+      "Draft Guest Speller Email",
+      [
+        "draftGuestSpellerEmail",
+        "createCelebGuestSpellersEmailDraft",
+        "showGuestSpellerDialog"
+      ]
+    );
+  }
+
+  stageOSActionMarkDone_(
+    "GUEST_SPELLER_EMAIL"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/**
+ * Compatibility alias used by the StageOS menu.
+ */
+function homeButtonGuestSpellerEmailDraft() {
+  return homeButtonGuestSpellerEmail();
+}
+
+
+/* =========================================================
+ * COMPANY / OUTS
+ * ========================================================= */
+
+function homeButtonAddOut() {
+  if (
+    typeof launchNewOutWizard ===
+    "function"
+  ) {
+    return launchNewOutWizard();
+  }
+
+  if (
+    typeof showNewOutWizard ===
+    "function"
+  ) {
+    return showNewOutWizard();
+  }
+
+  return stageOSActionMissing_(
+    "Add Planned Out",
+    [
+      "launchNewOutWizard",
+      "showNewOutWizard"
+    ]
+  );
+}
+
+
+/* =========================================================
+ * CALENDAR
+ * ========================================================= */
+
+function homeButtonExportCalendar() {
+  if (
+    typeof exportProductionCalendarCustomRange ===
+    "function"
+  ) {
+    return exportProductionCalendarCustomRange();
+  }
+
+  if (
+    typeof showCustomCalendarExportDialog ===
+    "function"
+  ) {
+    return showCustomCalendarExportDialog();
+  }
+
+  if (
+    typeof exportRemainingProductionCalendarMonths ===
+    "function"
+  ) {
+    return exportRemainingProductionCalendarMonths();
+  }
+
+  if (
+    typeof exportCurrentProductionCalendarMonth ===
+    "function"
+  ) {
+    return exportCurrentProductionCalendarMonth();
+  }
+
+  if (
+    typeof exportCurrentMonthCalendarPdf ===
+    "function"
+  ) {
+    return exportCurrentMonthCalendarPdf();
+  }
+
+  return stageOSActionMissing_(
+    "Export Production Calendar",
+    [
+      "exportProductionCalendarCustomRange",
+      "showCustomCalendarExportDialog",
+      "exportRemainingProductionCalendarMonths",
+      "exportCurrentProductionCalendarMonth",
+      "exportCurrentMonthCalendarPdf"
+    ]
+  );
+}
+
+
+/* =========================================================
+ * HOME / LONG-TERM TASKS
+ * ========================================================= */
+
+function homeButtonAddTask() {
+  return homeButtonAddLongTermTask();
+}
+
+
+function homeButtonAddLongTermTask() {
+  if (
+    typeof showHomeV2AddLongTermTaskDialog_ ===
+    "function"
+  ) {
+    return showHomeV2AddLongTermTaskDialog_();
+  }
+
+  return stageOSActionMissing_(
+    "Add Long-Term Task",
+    [
+      "showHomeV2AddLongTermTaskDialog_"
+    ]
+  );
+}
+
+
+/* =========================================================
+ * INSERTS
+ * ========================================================= */
+
+function homeButtonMarkInsertsToFOH() {
+  stageOSActionMarkDone_(
+    "INSERTS_TO_FOH"
+  );
+
+  stageOSActionRefreshHome_();
+
+  return true;
+}
+
+
+/* =========================================================
+ * SHARED ACTION HELPERS
+ * ========================================================= */
+
+function stageOSActionMarkDone_(taskId) {
+  if (
+    !taskId ||
+    typeof WorkflowStatusOS !==
+      "function"
+  ) {
+    return false;
+  }
+
+  WorkflowStatusOS().markDone(
+    taskId
+  );
+
+  if (
+    typeof HOME_WORKFLOW_STATUS_CACHE_ !==
+       "undefined"
+  ) {
+    HOME_WORKFLOW_STATUS_CACHE_ =
+      null;
+  }
+
+  return true;
+}
+
+
+/**
+ * Compatibility name used by existing HomeOS code.
+ */
+function homeOSMarkWorkflowDone_(taskId) {
+  return stageOSActionMarkDone_(
+    taskId
+  );
+}
+
+
+function stageOSActionRefreshHome_() {
+  try {
+    if (
+      typeof HomeOS ===
+      "function"
+    ) {
+      return HomeOS().refresh();
+    }
+
+    if (
+      typeof refreshHome ===
+      "function"
+    ) {
+      return refreshHome();
+    }
+
+  } catch (err) {
+    Logger.log(
+      "Home refresh skipped after workflow: " +
+      String(
+        err &&
+        err.message
+          ? err.message
+          : err
+      )
+    );
+  }
+
+  return null;
+}
+
+
+/**
+ * Compatibility name used throughout existing workflows.
+ */
+function refreshHomeAfterWorkflow_() {
+  return stageOSActionRefreshHome_();
+}
+
+
+function stageOSActionMissing_(
+  label,
+  functionNames
+) {
+  const expected =
+    Array.isArray(functionNames)
+      ? functionNames
+      : [functionNames];
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      label +
+      " is not connected yet.\n\n" +
+      "Expected function:\n" +
+      expected.join("\n")
+    );
+
+  return false;
+}
+
+
+/**
+ * Compatibility alias used by older HomeOS code.
+ */
+function homeOSActionMissing_(
+  label,
+  functionName
+) {
+  return stageOSActionMissing_(
+    label,
+    functionName
+  );
+}
+
+
+/* =========================================================
+ * LEGACY REPORT WRAPPERS
+ * ========================================================= */
+
+function clearReportMat() {
+  return homeButtonResetReportMatinee();
+}
+
+
+function clearReportEve() {
+  return homeButtonResetReportEvening();
+}
+
+
+function writeReportNotesFromCurrentInOut_() {
+  const ss =
+    SpreadsheetApp.getActive();
+
+  const inOut =
+    ss.getSheetByName("IN/OUT");
+
+  if (!inOut) return false;
+
+  if (
+    typeof writeReportNotesFromPayload_ !==
+    "function"
+  ) {
+    return stageOSActionMissing_(
+      "Input IN/OUT Notes",
+      [
+        "writeReportNotesFromPayload_"
+      ]
+    );
+  }
+
+  return writeReportNotesFromPayload_({
+    notes:
+      inOut
+        .getRange("A28")
+        .getDisplayValue()
+  });
+}
+
+
+/* =========================================================
+ * NON-DESTRUCTIVE TEST
+ * ========================================================= */
+
+function testStageOSActionsRegistry() {
+  const results = [
+    {
+      name: "homeButtonPrepInOut",
+      available:
+        typeof homeButtonPrepInOut ===
+        "function"
+    },
+    {
+      name: "homeButtonExportInOutPdf",
+      available:
+        typeof homeButtonExportInOutPdf ===
+        "function"
+    },
+    {
+      name: "homeButtonBuildPerformanceReport",
+      available:
+        typeof homeButtonBuildPerformanceReport ===
+        "function"
+    },
+    {
+      name: "homeButtonDraftReport",
+      available:
+        typeof homeButtonDraftReport ===
+        "function"
+    },
+    {
+      name: "homeButtonResetReportMatinee",
+      available:
+        typeof homeButtonResetReportMatinee ===
+        "function"
+    },
+    {
+      name: "homeButtonResetReportEvening",
+      available:
+        typeof homeButtonResetReportEvening ===
+        "function"
+    },
+    {
+      name: "homeButtonCreateNextWeeklySchedule",
+      available:
+        typeof homeButtonCreateNextWeeklySchedule ===
+        "function"
+    },
+    {
+      name: "homeButtonWeeklyEmailDraft",
+      available:
+        typeof homeButtonWeeklyEmailDraft ===
+        "function"
+    },
+    {
+      name: "homeButtonPayrollEmailDraft",
+      available:
+        typeof homeButtonPayrollEmailDraft ===
+        "function"
+    },
+    {
+      name: "homeButtonPerishablesEmailDraft",
+      available:
+        typeof homeButtonPerishablesEmailDraft ===
+        "function"
+    },
+    {
+      name: "homeButtonGuestSpellerPacket",
+      available:
+        typeof homeButtonGuestSpellerPacket ===
+        "function"
+    },
+    {
+      name: "homeButtonGuestSpellerEmail",
+      available:
+        typeof homeButtonGuestSpellerEmail ===
+        "function"
+    },
+    {
+      name: "homeButtonAddOut",
+      available:
+        typeof homeButtonAddOut ===
+        "function"
+    },
+    {
+      name: "homeButtonExportCalendar",
+      available:
+        typeof homeButtonExportCalendar ===
+        "function"
+    },
+    {
+      name: "homeButtonAddLongTermTask",
+      available:
+        typeof homeButtonAddLongTermTask ===
+        "function"
+    },
+    {
+      name: "homeButtonMarkInsertsToFOH",
+      available:
+        typeof homeButtonMarkInsertsToFOH ===
+        "function"
+    }
+  ];
+
+  const missing =
+    results.filter(function (item) {
+      return !item.available;
+    });
+
+  Logger.log(
+    "STAGEOS ACTIONS REGISTRY TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageOS Actions registry test.\n\n" +
+      "Actions checked: " +
+      results.length +
+      "\n" +
+      "Missing: " +
+      missing.length
+    );
+
+  return results;
+}
+
+/*************************************************
+ * HOME OPERATIONS UTILITY ACTIONS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Add these functions to:
+ *   00 STAGEOS - ACTIONS.gs
+ *
+ * They preserve the same canonical functions used by
+ * the StageOS menu.
+ *************************************************/
+
+
+/* =========================================================
+ * RECEIPTS
+ * ========================================================= */
+
+function homeButtonUploadReceipt() {
+  if (
+    typeof showSMFloatReceiptUploader ===
+    "function"
+  ) {
+    return showSMFloatReceiptUploader();
+  }
+
+  return stageOSActionMissing_(
+    "Upload Receipt",
+    [
+      "showSMFloatReceiptUploader"
+    ]
+  );
+}
+
+
+function homeButtonSyncGmailReceipts() {
+  if (
+    typeof importGmailReceipts ===
+    "function"
+  ) {
+    return importGmailReceipts();
+  }
+
+  return stageOSActionMissing_(
+    "Sync Gmail Receipts",
+    [
+      "importGmailReceipts"
+    ]
+  );
+}
+
+function TEST_STAGEOS_PROJECT_BOOT() {
+  const startedAt = Date.now();
+
+  Logger.log("PROJECT BOOT TEST START");
+
+  const result = {
+    ok: true,
+    durationMs: Date.now() - startedAt
+  };
+
+  Logger.log(JSON.stringify(result));
+
+  return result;
+}

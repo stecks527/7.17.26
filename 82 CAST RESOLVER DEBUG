@@ -1,0 +1,37 @@
+/*************************************************
+ * 82 CAST RESOLVER DEBUG
+ * Version: 1.1.0
+ * Status: ENGINE-ONLY
+ *************************************************/
+
+function writeResolvedCastDebug() {
+  const resolved = CastResolverOS().resolveCurrentPerformance();
+
+  if (typeof EngineResolverOS === "function") {
+    EngineResolverOS().append({
+      Timestamp: new Date(),
+      Action: "Resolved Cast Debug",
+      Source: "writeResolvedCastDebug",
+      Notes: "Resolved Cast debug snapshot written to Engine only.",
+      "Payload JSON": JSON.stringify(resolved)
+    });
+  }
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "CastResolverOS",
+      "Write Resolved Cast Debug",
+      "Resolved Cast debug written to Engine only.",
+      {
+        performanceDate: resolved.performanceDate,
+        performanceLabel: resolved.performanceLabel,
+        rows: (resolved.company || []).length
+      }
+    );
+  }
+
+  SpreadsheetApp.getUi().alert(
+    "Resolved Cast debug written to Engine.\n\nRoles resolved: " +
+    (resolved.company || []).length
+  );
+}

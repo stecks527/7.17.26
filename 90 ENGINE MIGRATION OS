@@ -1,0 +1,234 @@
+/*************************************************
+ * 90 ENGINE MIGRATION OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Safe migration helpers for moving helper tabs to Engine
+ *************************************************/
+
+const ENGINE_MIGRATION_OS_HELPER_TABS = [
+  {
+    productionName: "Snapshot History",
+    engineKey: "snapshots",
+    archiveName: "MIGRATED - Snapshot History"
+  },
+  {
+    productionName: "Resolver History",
+    engineKey: "resolver",
+    archiveName: "MIGRATED - Resolver History"
+  },
+  {
+    productionName: "Resolved Cast",
+    engineKey: "resolver",
+    archiveName: "MIGRATED - Resolved Cast"
+  },
+  {
+    productionName: "Resolver Validation",
+    engineKey: "resolver",
+    archiveName: "MIGRATED - Resolver Validation"
+  },
+  {
+    productionName: "Resolved Cast Snapshots",
+    engineKey: "resolver",
+    archiveName: "MIGRATED - Resolved Cast Snapshots"
+  },
+  {
+    productionName: "StageOS Logs",
+    engineKey: "logs",
+    archiveName: "MIGRATED - StageOS Logs"
+  },
+  {
+    productionName: "Wizard Log",
+    engineKey: "logs",
+    archiveName: "MIGRATED - Wizard Log"
+  }
+];
+
+function EngineMigrationOS() {
+  return {
+    inventory: function () {
+      return engineMigrationOSInventory_();
+    },
+
+    copyTabToEngine: function (productionName, engineKey) {
+      return engineMigrationOSCopyTabToEngine_(productionName, engineKey);
+    },
+
+    migrateKnownTabs: function () {
+      return engineMigrationOSMigrateKnownTabs_();
+    },
+
+    hideMigratedTabs: function () {
+      return engineMigrationOSHideMigratedTabs_();
+    }
+  };
+}
+
+function engineMigrationOSInventory_() {
+  const ss = SpreadsheetApp.getActive();
+
+  return ENGINE_MIGRATION_OS_HELPER_TABS.map(item => {
+    const sh = ss.getSheetByName(item.productionName);
+
+    return {
+      productionName: item.productionName,
+      exists: Boolean(sh),
+      rows: sh ? sh.getLastRow() : 0,
+      cols: sh ? sh.getLastColumn() : 0,
+      engineKey: item.engineKey,
+      archiveName: item.archiveName
+    };
+  });
+}
+
+function showEngineMigrationInventory() {
+  const items = EngineMigrationOS().inventory();
+
+  const lines = items.map(item => {
+    return [
+      item.exists ? "✅" : "⚪️",
+      item.productionName,
+      "Rows: " + item.rows,
+      "Cols: " + item.cols,
+      "Engine: " + item.engineKey
+    ].join(" | ");
+  });
+
+  SpreadsheetApp.getUi().alert(
+    "Engine Migration Inventory\n\n" +
+    lines.join("\n")
+  );
+}
+
+function engineMigrationOSCopyTabToEngine_(productionName, engineKey) {
+  const ss = SpreadsheetApp.getActive();
+  const source = ss.getSheetByName(productionName);
+
+  if (!source) {
+    return {
+      productionName: productionName,
+      copied: false,
+      reason: "Source tab not found."
+    };
+  }
+
+  const lastRow = source.getLastRow();
+  const lastCol = source.getLastColumn();
+
+  if (!lastRow || !lastCol) {
+    return {
+      productionName: productionName,
+      copied: false,
+      reason: "Source tab empty."
+    };
+  }
+
+  const values = source.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  const engineApi = EngineOS().sheet(engineKey);
+  const target = engineApi.sheet();
+
+  const startRow = target.getLastRow() + 2;
+
+  target.getRange(startRow, 1, 1, 3).setValues([[
+    "MIGRATED FROM",
+    productionName,
+    new Date()
+  ]]);
+
+  target.getRange(startRow + 1, 1, values.length, values[0].length).setValues(values);
+
+  EngineLogOS().info(
+    "EngineMigrationOS",
+    "Copy Tab To Engine",
+    "Production helper tab copied to Engine.",
+    {
+      productionName: productionName,
+      engineKey: engineKey,
+      rows: values.length,
+      cols: values[0].length
+    }
+  );
+
+  return {
+    productionName: productionName,
+    copied: true,
+    rows: values.length,
+    cols: values[0].length
+  };
+}
+
+function engineMigrationOSMigrateKnownTabs_() {
+  const results = [];
+
+  ENGINE_MIGRATION_OS_HELPER_TABS.forEach(item => {
+    results.push(
+      engineMigrationOSCopyTabToEngine_(
+        item.productionName,
+        item.engineKey
+      )
+    );
+  });
+
+  return results;
+}
+
+function migrateKnownHelperTabsToEngine() {
+  const ui = SpreadsheetApp.getUi();
+
+  const response = ui.alert(
+    "Migrate helper tabs to Engine?",
+    "This will COPY known helper/history tabs into the Engine workbook. It will not delete anything.",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) return;
+
+  const results = EngineMigrationOS().migrateKnownTabs();
+
+  const copied = results.filter(r => r.copied);
+  const skipped = results.filter(r => !r.copied);
+
+  ui.alert(
+    "Engine migration copy complete.\n\n" +
+    "Copied: " + copied.length + "\n" +
+    "Skipped: " + skipped.length + "\n\n" +
+    results.map(r =>
+      (r.copied ? "✅ " : "⚪️ ") +
+      r.productionName +
+      (r.copied ? " — " + r.rows + " rows" : " — " + r.reason)
+    ).join("\n")
+  );
+}
+
+function engineMigrationOSHideMigratedTabs_() {
+  const ss = SpreadsheetApp.getActive();
+  const hidden = [];
+
+  ENGINE_MIGRATION_OS_HELPER_TABS.forEach(item => {
+    const sh = ss.getSheetByName(item.productionName);
+    if (!sh) return;
+
+    sh.hideSheet();
+    hidden.push(item.productionName);
+  });
+
+  return hidden;
+}
+
+function hideMigratedHelperTabs() {
+  const ui = SpreadsheetApp.getUi();
+
+  const response = ui.alert(
+    "Hide migrated helper tabs?",
+    "This will hide known helper/history tabs in the production workbook. It will not delete them.",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) return;
+
+  const hidden = EngineMigrationOS().hideMigratedTabs();
+
+  ui.alert(
+    "Helper tabs hidden.\n\n" +
+    (hidden.length ? hidden.join("\n") : "No matching tabs found.")
+  );
+}

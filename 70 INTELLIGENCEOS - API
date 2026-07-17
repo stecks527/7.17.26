@@ -1,0 +1,326 @@
+/*************************************************
+ * 70 INTELLIGENCEOS - API
+ * StageOS v0.5
+ *
+ * Responsibilities
+ * ----------------
+ * • Turn raw StageOS data into recommendations
+ * • Feed Home / Mission Control
+ * • Keep business rules out of the UI
+ *
+ * Never:
+ * • Draw UI
+ * • Edit source sheets
+ *************************************************/
+
+/*************************************************
+ * PUBLIC ENTRY POINTS
+ *************************************************/
+
+function buildStageOSIntelligence(showState, timeline) {
+  showState = showState || buildShowState();
+  timeline = timeline || buildTimelineOS(showState);
+
+  const day = buildDayIntelligence_(showState);
+
+  return {
+    day: day,
+    inserts: buildInsertIntelligence_(showState),
+    focus: buildFocusIntelligence_(showState, timeline),
+    alerts: buildAlertIntelligence_(showState),
+    postShow: buildPostShowIntelligence_(showState, timeline)
+  };
+}
+
+/*************************************************
+ * DAY INTELLIGENCE
+ *************************************************/
+
+function buildDayIntelligence_(showState) {
+  const targetDate = parseInOutDate_(showState.date) || new Date();
+
+  const dayName = Utilities.formatDate(
+    targetDate,
+    Session.getScriptTimeZone(),
+    "EEEE"
+  );
+
+  const performances = showState.performances || [];
+  const notes = String(showState.notes || "");
+
+  return {
+    date: targetDate,
+    dayName: dayName,
+    isSunday: dayName.toLowerCase() === "sunday",
+    isMonday: dayName.toLowerCase() === "monday",
+    isFriday: dayName.toLowerCase() === "friday",
+
+    performanceCount: performances.length,
+    hasPerformance: performances.length > 0,
+    hasTwoShowDay: performances.length >= 2,
+
+    hasGuestSpeller: !!(
+      showState.guestSpeller &&
+      showState.guestSpeller.name
+    ),
+
+    hasDollarFriday: notes.toLowerCase().includes("dollar friday"),
+    hasNotes: !!notes.trim()
+  };
+}
+
+/*************************************************
+ * INSERT INTELLIGENCE
+ *************************************************/
+
+function buildInsertIntelligence_(showState) {
+  const principalOuts = getPrincipalCastOutsForIntelligence_(showState);
+  const count = principalOuts.length;
+
+  let insertType = "NONE";
+
+  if (count >= 3) {
+    insertType = "TODAY_AT_INSERT";
+  } else if (count >= 1) {
+    insertType = "FOH_INSERT_SLIPS";
+  }
+
+  return {
+    count,
+    insertType,
+    principalOuts,
+    needsInsert: count > 0,
+    needsTodayAtInsert: count >= 3,
+    needsFOHSlips: count >= 1 && count < 3
+  };
+}
+
+/*************************************************
+ * ALERT INTELLIGENCE
+ *************************************************/
+
+function buildAlertIntelligence_(showState) {
+  const inserts = buildInsertIntelligence_(showState);
+  const alerts = [];
+
+  if (inserts.count >= 3) {
+    alerts.push({
+      type: "insert",
+      text:
+        "• " + inserts.count + " cast members are out today.\n\n" +
+        "    - TODAY AT INSERT required."
+    });
+  } else if (inserts.count > 0) {
+    const lines = [];
+
+    lines.push(
+      "• " +
+      inserts.count +
+      " cast member" +
+      (inserts.count === 1 ? "" : "s") +
+      " " +
+      (inserts.count === 1 ? "is" : "are") +
+      " out today. FOH insert" +
+      (inserts.count === 1 ? "" : "s") +
+      " required."
+    );
+
+    inserts.principalOuts.forEach(out => {
+      lines.push("    - " + out.in + " is on as " + out.role + ".");
+    });
+
+    alerts.push({
+      type: "insert",
+      text: lines.join("\n")
+    });
+  }
+
+  if (showState.guestSpeller && showState.guestSpeller.name) {
+    alerts.push({
+      type: "guest",
+      text: "• Guest Speller: " + showState.guestSpeller.name
+    });
+  }
+
+  return alerts;
+}
+
+/*************************************************
+ * FOCUS INTELLIGENCE
+ *************************************************/
+
+function buildFocusIntelligence_(showState, timeline) {
+  const inserts = buildInsertIntelligence_(showState);
+  const postShow = buildPostShowIntelligence_(showState, timeline);
+  const workflowTasks = buildWorkflowFocusIntelligence_(showState);
+  const tasks = [];
+
+  tasks.push({ title: "Prep IN/OUT" });
+
+  if (inserts.needsTodayAtInsert) {
+    tasks.push({ title: "Prepare TODAY AT INSERT" });
+  } else if (inserts.needsFOHSlips) {
+    tasks.push({ title: "Send IN/OUT changes to FOH" });
+  }
+
+  postShow.tasks.forEach(task => {
+    tasks.push({ title: task });
+  });
+
+  workflowTasks.forEach(task => {
+    tasks.push(task);
+  });
+
+  return dedupeIntelligenceTasks_(tasks);
+}
+
+/*************************************************
+ * POST SHOW INTELLIGENCE
+ * Placeholder for 07a.
+ *************************************************/
+
+function buildPostShowIntelligence_(showState, timeline) {
+  const currentPerf = getCurrentPerformanceForIntelligence_(showState, timeline);
+  const nextPerf = getNextPerformanceForIntelligence_(showState, currentPerf);
+
+  if (!currentPerf || !nextPerf) {
+    return {
+      hasSecondPerformance: false,
+      tasks: [],
+      sliderChanges: []
+    };
+  }
+
+  const sliderChanges =
+    buildSliderChangeIntelligence_(currentPerf, nextPerf);
+
+  const tasks = [];
+
+  tasks.push("Flip FOH Board");
+
+  if (
+    currentPerf.conductor &&
+    nextPerf.conductor &&
+    currentPerf.conductor !== nextPerf.conductor
+  ) {
+    tasks.push(
+      "Swap " +
+      currentPerf.conductor +
+      " → " +
+      nextPerf.conductor +
+      " conductor slider"
+    );
+  }
+
+  sliderChanges.forEach(change => {
+    tasks.push(change.text);
+  });
+
+  tasks.push("Reset Performance Report");
+
+  return {
+    hasSecondPerformance: true,
+    currentPerformance: currentPerf,
+    nextPerformance: nextPerf,
+    sliderChanges,
+    tasks
+  };
+}
+
+/*************************************************
+ * SLIDER INTELLIGENCE
+ *************************************************/
+
+function buildSliderChangeIntelligence_(currentPerf, nextPerf) {
+
+  // Placeholder for Version 1.
+  // Eventually this will compare
+  // actor assignments, SMs and conductor.
+
+  return [];
+
+}
+
+/*************************************************
+ * SHARED INTELLIGENCE HELPERS
+ *************************************************/
+
+function getPrincipalCastOutsForIntelligence_(showState) {
+  const outs = showState.currentCastOuts || [];
+
+  return outs.filter(out => {
+    const role = String(out.role || "").toLowerCase();
+    const outName = String(out.out || "").trim();
+
+    if (!outName) return false;
+
+    return !(
+      role.includes("swing") ||
+      role.includes("understudy") ||
+      role.includes("u/s") ||
+      role.includes("standby")
+    );
+  });
+}
+
+function getCurrentPerformanceForIntelligence_(showState, timeline) {
+  const performances = showState.performances || [];
+  if (!performances.length) return null;
+
+  const currentEvent = timeline && timeline.currentEvent
+    ? timeline.currentEvent
+    : null;
+
+  const currentNumber = currentEvent && currentEvent.performanceNumber
+    ? currentEvent.performanceNumber
+    : "";
+
+  if (currentNumber) {
+    const found = performances.find(perf =>
+      String(perf.number || "") === String(currentNumber)
+    );
+
+    if (found) return found;
+  }
+
+  return performances[showState.selectedIndex || 0] || performances[0] || null;
+}
+
+function getNextPerformanceForIntelligence_(showState, currentPerf) {
+  const performances = showState.performances || [];
+  if (!currentPerf || performances.length < 2) return null;
+
+  const index = performances.findIndex(perf =>
+    String(perf.number || "") === String(currentPerf.number || "")
+  );
+
+  if (index === -1) return null;
+
+  return performances[index + 1] || null;
+}
+
+function buildWorkflowFocusIntelligence_(showState) {
+  if (typeof getRecurringWorkflowsForToday_ !== "function") return [];
+
+  return getRecurringWorkflowsForToday_(showState).map(workflow => ({
+    title: workflow.workflow
+  }));
+}
+
+function dedupeIntelligenceTasks_(tasks) {
+  const seen = {};
+  const output = [];
+
+  tasks.forEach(task => {
+    const title = String(task.title || "").trim();
+    if (!title) return;
+
+    const key = title.toLowerCase();
+    if (seen[key]) return;
+
+    seen[key] = true;
+    output.push({ title });
+  });
+
+  return output;
+}

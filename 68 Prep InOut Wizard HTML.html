@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 18px;
+      color: #111;
+      background: #f6f8fc;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 4px;
+    }
+
+    h2 {
+      font-size: 16px;
+      margin: 24px 0 8px;
+      padding: 8px 10px;
+      background: #2457c5;
+      color: white;
+      border-radius: 8px;
+    }
+
+    .subhead {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+
+    .card.complete {
+      border-color: #79b879;
+      background: #f7fff7;
+    }
+
+    .actor {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .badges {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: bold;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #e9eefb;
+      color: #2457c5;
+    }
+
+    .badge.loa {
+      background: #fff1c9;
+      color: #8a6400;
+    }
+
+    .badge.auto {
+      background: #e4f6e4;
+      color: #226b22;
+    }
+
+    .meta {
+      font-size: 13px;
+      line-height: 1.45;
+      color: #333;
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 6px;
+      margin-top: 10px;
+    }
+
+    select, input {
+      width: 100%;
+      padding: 9px;
+      font-size: 14px;
+      box-sizing: border-box;
+      border: 1px solid #aaa;
+      border-radius: 6px;
+      background: white;
+    }
+
+    select.selected, input.selected {
+      border-color: #2457c5;
+      background: #f5f8ff;
+      font-weight: bold;
+    }
+
+    .note {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    .buttons {
+      position: sticky;
+      bottom: 0;
+      background: #f6f8fc;
+      padding-top: 12px;
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      border-top: 1px solid #ddd;
+    }
+
+    button {
+      padding: 9px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: #2457c5;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+    }
+
+    .secondary {
+      background: #e6e6e6;
+      border: 0;
+      border-radius: 6px;
+    }
+
+    .danger {
+      background: #f4dddd;
+      border: 0;
+      border-radius: 6px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Prep IN/OUT</h1>
+  <div class="subhead" id="dateText"></div>
+
+  <h2>Today's Planned Outs</h2>
+  <div class="subhead" id="plannedProgress"></div>
+  <div id="plannedContainer"></div>
+
+  <h2>Today's Call-ins</h2>
+  <div class="subhead">Add only same-day changes not already listed above.</div>
+  <div id="callInContainer"></div>
+  <button class="secondary" onclick="addCallIn()">+ Add Call-in</button>
+
+  <h2>Crew Details</h2>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>PSM Calling</label>
+        <select id="psmCalling"></select>
+      </div>
+      <div>
+        <label>ASM Deck</label>
+        <select id="asmDeck"></select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>A1 Mixing</label>
+        <select id="a1Mixing"></select>
+      </div>
+      <div>
+        <label>Guest Speller</label>
+        <input id="guestSpeller" placeholder="None">
+      </div>
+    </div>
+  </div>
+
+  <div class="buttons">
+    <button class="secondary" onclick="google.script.host.close()">Cancel</button>
+    <button class="primary" onclick="submitWizard()">Apply Prep</button>
+  </div>
+
+  <script>
+    const payload = <?!= payloadJson ?>;
+    let plannedOuts = payload.plannedOuts || [];
+    let callIns = [];
+
+    function render() {
+      document.getElementById("dateText").textContent = payload.dateText || "";
+      renderPlannedOuts();
+      renderSessionDetails();
+    }
+
+    function renderPlannedOuts() {
+      const container = document.getElementById("plannedContainer");
+
+      document.getElementById("plannedProgress").textContent =
+        plannedOuts.length
+          ? plannedOuts.length + " planned out" + (plannedOuts.length === 1 ? "" : "s") + " found"
+          : "No planned outs found.";
+
+      plannedOuts.sort((a, b) => {
+        if (a.isContractLOA && !b.isContractLOA) return -1;
+        if (!a.isContractLOA && b.isContractLOA) return 1;
+        return String(a.actor || "").localeCompare(String(b.actor || ""));
+      });
+
+      container.innerHTML = plannedOuts.map((out, index) =>
+        renderOutCard(out, index, "planned")
+      ).join("");
+    }
+
+    function renderOutCard(out, index, source) {
+      const options = out.coverOptions || [];
+      const selected =
+        out.noCoverNeeded
+          ? "No cover needed"
+          : (out.preselectedCover || out.tempReplacement || out.weeklyAssigned || out.inActor || "");
+
+      const sourceLabel = out.noCoverNeeded
+        ? "No Cover Needed"
+        : out.tempReplacement
+          ? "Temporary Replacement"
+          : out.weeklyAssigned
+            ? "Scheduled Cover"
+            : "";
+
+      const optionHtml = [
+        `<option value="">Choose cover...</option>`,
+        ...options.map(name =>
+          `<option value="${escapeAttr(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`
+        ),
+        `<option value="__manual__">Other / Type manually...</option>`
+      ].join("");
+
+      const badges = [
+        `<span class="badge">${escapeHtml(out.reason || "Planned")}</span>`,
+        out.isContractLOA ? `<span class="badge loa">Not on IN/OUT</span>` : `<span class="badge">IN/OUT</span>`,
+        sourceLabel ? `<span class="badge auto">${escapeHtml(sourceLabel)}</span>` : ""
+      ].join("");
+
+      const prefix = source + "_" + index;
+
+      const autoBlock = selected
+        ? `
+          <div id="auto_${prefix}">
+            <label>${escapeHtml(sourceLabel || "Assigned Cover")}</label>
+            <div style="font-size:16px; font-weight:bold; padding:10px; background:#eef9ee; border-radius:6px;">
+              ${escapeHtml(selected)}
+            </div>
+            <button class="secondary" style="margin-top:8px;" onclick="showAdjust('${source}', ${index})">
+              Adjust
+            </button>
+          </div>
+        `
+        : "";
+
+      const dropdownDisplay = selected ? "none" : "block";
+      const wholeCardComplete = selected ? "complete" : "";
+
+      return `
+        <div class="card ${wholeCardComplete}" id="card_${prefix}">
+          <div class="actor">${escapeHtml(out.actor || "New Call-in")} OUT</div>
+          <div class="badges">${badges}</div>
+
+          <div class="meta">
+            <strong>Character:</strong> ${escapeHtml(out.role || "Not found")}<br>
+            <strong>Status:</strong> ${escapeHtml(out.status || "Not listed")}<br>
+            <strong>Performances:</strong> ${escapeHtml(out.performances || "Not listed")}
+          </div>
+
+          ${autoBlock}
+
+          <div id="adjust_${prefix}" style="display:${dropdownDisplay};">
+            <label>${out.isContractLOA ? "Temporary Replacement" : "Who is covering?"}</label>
+            <select id="cover_${prefix}" class="${selected ? "selected" : ""}" onchange="handleCoverChange('${source}', ${index})">
+              ${optionHtml}
+            </select>
+            <input id="manual_${prefix}" style="display:none; margin-top:8px;" placeholder="Type name manually">
+          </div>
+
+          <input type="hidden" id="final_${prefix}" value="${escapeAttr(selected)}">
+
+          ${source === "callin" ? `<button class="danger" onclick="removeCallIn(${index})">Remove</button>` : ""}
+
+          <div class="note">
+            ${out.isContractLOA
+              ? "LOA/MLOA: this will not be written to the IN/OUT sheet."
+              : "This will be written to the IN/OUT sheet."}
+          </div>
+        </div>
+      `;
+    }
+
+    function addCallIn() {
+      callIns.push({
+        type: "callin",
+        actor: "",
+        role: "",
+        reason: "Illness",
+        status: "Day-of",
+        performances: "",
+        isContractLOA: false,
+        writeToInOutSheet: true,
+        inActor: "",
+        coverOptions: []
+      });
+
+      renderCallIns();
+    }
+
+    function renderCallIns() {
+      const container = document.getElementById("callInContainer");
+
+      container.innerHTML = callIns.map((item, index) => {
+        return `
+          <div class="card" id="callinCard_${index}">
+            <label>Who is OUT?</label>
+            <select onchange="setCallInActor(${index}, this.value)">
+              <option value="">Choose actor...</option>
+              ${payload.actorOptions.map(actor =>
+                `<option value="${escapeAttr(actor.fullName)}">${escapeHtml(actor.fullName)}</option>`
+              ).join("")}
+            </select>
+
+            <label>Reason</label>
+            <select onchange="callIns[${index}].reason = this.value">
+              ${payload.reasonOptions.map(reason =>
+                `<option value="${escapeAttr(reason)}">${escapeHtml(reason)}</option>`
+              ).join("")}
+            </select>
+
+            <div id="callinDetails_${index}" style="margin-top:12px;"></div>
+
+            <button class="danger" style="margin-top:10px;" onclick="removeCallIn(${index})">Remove</button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function setCallInActor(index, actorName) {
+      const actor = (payload.actorOptions || []).find(row => row.fullName === actorName);
+
+      callIns[index].actor = actorName;
+      callIns[index].role = actor ? actor.character : "";
+      cconst isNoCoverNeeded =
+        actor &&
+        (
+          normalizeRole(actor.character) === "swing" ||
+          normalizeRole(actor.role) === "swing" ||
+          normalizeRole(actor.role).includes("understudy")
+        );
+
+      callIns[index].noCoverNeeded = isNoCoverNeeded;
+      callIns[index].writeToInOutSheet = true;
+      callIns[index].coverOptions = isNoCoverNeeded
+        ? []
+        : getCoverOptionsForCharacter(actor ? actor.character : "");
+      callIns[index].inActor = isNoCoverNeeded ? "No cover needed" : "";
+      callIns[index].preselectedCover = isNoCoverNeeded ? "No cover needed" : "";
+      callIns[index].inActor = "";
+      callIns[index].preselectedCover = "";
+
+      renderCallInDetails(index);
+    }
+
+    function renderCallInDetails(index) {
+      const item = callIns[index];
+      const target = document.getElementById(`callinDetails_${index}`);
+      if (!target) return;
+
+      target.innerHTML = renderOutCard(item, index, "callin");
+    }
+
+    function getCoverOptionsForCharacter(character) {
+      const target = normalizeRole(character);
+      if (!target) return [];
+
+      return (payload.actorOptions || [])
+        .filter(actor => {
+          const covers = String(actor.covers || "")
+            .split(/[\n,]/)
+            .map(normalizeRole);
+          return covers.includes(target);
+        })
+        .map(actor => actor.fullName)
+        .sort();
+    }
+
+    function showAdjust(source, index) {
+      const prefix = source + "_" + index;
+      document.getElementById(`auto_${prefix}`).style.display = "none";
+      document.getElementById(`adjust_${prefix}`).style.display = "block";
+    }
+
+    function handleCoverChange(source, index) {
+      const prefix = source + "_" + index;
+      const select = document.getElementById(`cover_${prefix}`);
+      const manual = document.getElementById(`manual_${prefix}`);
+      const card = document.getElementById(`card_${prefix}`);
+
+      manual.style.display = select.value === "__manual__" ? "block" : "none";
+
+      const hasValue = select.value && select.value !== "__manual__";
+      select.classList.toggle("selected", hasValue);
+      card.classList.toggle("complete", hasValue);
+
+      if (hasValue) {
+        document.getElementById(`final_${prefix}`).value = select.value;
+      }
+    }
+
+    function removeCallIn(index) {
+      callIns.splice(index, 1);
+      renderCallIns();
+    }
+
+    function renderSessionDetails() {
+      const defaults = payload.defaults || {};
+
+      fillSelect("psmCalling", payload.smOptions || [], defaults.psmCalling || "");
+      fillSelect("asmDeck", payload.smOptions || [], defaults.asmDeck || "");
+      fillSelect("a1Mixing", payload.a1Options || [], defaults.a1Mixing || "");
+    }
+
+    function fillSelect(id, options, selected) {
+      const el = document.getElementById(id);
+
+      el.innerHTML = options.map(option =>
+        `<option value="${escapeAttr(option)}" ${option === selected ? "selected" : ""}>${escapeHtml(option)}</option>`
+      ).join("");
+
+      if (selected && options.includes(selected)) {
+        el.value = selected;
+      }
+    }
+
+    function collectOuts(source, list) {
+      return list.map((out, index) => {
+        const prefix = source + "_" + index;
+        const select = document.getElementById(`cover_${prefix}`);
+        const manual = document.getElementById(`manual_${prefix}`);
+        const final = document.getElementById(`final_${prefix}`);
+
+        let inActor = final ? final.value : "";
+
+        if (select && select.value && select.value !== "__manual__") {
+          inActor = select.value;
+        }
+
+        if (select && select.value === "__manual__" && manual) {
+          inActor = manual.value.trim();
+        }
+
+        return {
+          actor: out.actor,
+          role: out.role,
+          reason: out.reason,
+          status: out.status,
+          performances: out.performances,
+          isContractLOA: out.isContractLOA,
+          writeToInOutSheet: out.writeToInOutSheet,
+          noCoverNeeded: !!out.noCoverNeeded,
+          inActor
+        };
+      });
+    }
+
+    function submitWizard() {
+      const result = {
+        plannedOuts: collectOuts("planned", plannedOuts),
+        callIns: collectOuts("callin", callIns),
+        session: {
+          psmCalling: document.getElementById("psmCalling").value,
+          asmDeck: document.getElementById("asmDeck").value,
+          a1Mixing: document.getElementById("a1Mixing").value,
+          guestSpeller: document.getElementById("guestSpeller").value
+        }
+      };
+
+      google.script.run
+        .withSuccessHandler(() => google.script.host.close())
+        .prepInOutWizardSubmit_(result);
+    }
+
+    function normalizeRole(value) {
+      return String(value || "")
+        .replace(/é/g, "e")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value);
+    }
+
+    render();
+  </script>
+</body>
+</html>

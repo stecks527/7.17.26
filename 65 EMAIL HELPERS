@@ -1,0 +1,25 @@
+/*************************************************
+ * 65 EMAIL HELPERS
+ * Shared email formatting helpers
+ *************************************************/
+
+function getStageOSEmailSignature_() {
+  const value =
+    typeof SettingsCacheOS === "function"
+      ? SettingsCacheOS().get("Email Signature")
+      : "";
+
+  if (!value) return "";
+
+  return "\n\n" + String(value).trim();
+}
+
+function signatureToHtml_(signature) {
+  const text = String(signature || "").trim();
+  if (!text) return "";
+
+  return text
+    .split(/\n/)
+    .map(line => line.trim() ? "<p>" + line + "</p>" : "<br>")
+    .join("");
+}

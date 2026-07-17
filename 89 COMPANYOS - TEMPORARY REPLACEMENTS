@@ -1,0 +1,172 @@
+/*************************************************
+ * 89 COMPANYOS - TEMPORARY REPLACEMENTS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Temporary company-state replacement registry.
+ *
+ * Future owner:
+ * - Company Wizard / CompanyStateOS
+ *************************************************/
+
+function CompanyTemporaryReplacementOS() {
+  return {
+    current:
+      companyTemporaryReplacementCurrent_,
+
+    activeForDate:
+      companyTemporaryReplacementActiveForDate_,
+
+    findForOut:
+      companyTemporaryReplacementFindForOut_,
+
+    test:
+      testCompanyTemporaryReplacementOS
+  };
+}
+
+
+function companyTemporaryReplacementCurrent_() {
+  return [
+    {
+      out: "Justin Cooley",
+      role: "Leaf",
+      replacement: "Fernell Hogan",
+      startDate: "2026-07-13",
+      endDate: "2026-08-10",
+      status: "ACTIVE",
+      reason: "Temporary replacement",
+      notes:
+        "Justin returns the following week."
+    }
+  ];
+}
+
+
+function companyTemporaryReplacementActiveForDate_(
+  targetDate
+) {
+  const dateKey =
+    companyTemporaryReplacementDateKey_(
+      targetDate
+    );
+
+  if (!dateKey) return [];
+
+  return companyTemporaryReplacementCurrent_()
+    .filter(function (entry) {
+      return (
+        String(entry.status || "")
+          .toUpperCase() === "ACTIVE" &&
+        dateKey >= entry.startDate &&
+        dateKey <= entry.endDate
+      );
+    });
+}
+
+
+function companyTemporaryReplacementFindForOut_(
+  outName,
+  roleName,
+  targetDate
+) {
+  const outKey =
+    companyTemporaryReplacementNameKey_(
+      outName
+    );
+
+  const roleKey =
+    companyTemporaryReplacementNameKey_(
+      roleName
+    );
+
+  return (
+    companyTemporaryReplacementActiveForDate_(
+      targetDate
+    ).find(function (entry) {
+      return (
+        companyTemporaryReplacementNameKey_(
+          entry.out
+        ) === outKey &&
+        companyTemporaryReplacementNameKey_(
+          entry.role
+        ) === roleKey
+      );
+    }) || null
+  );
+}
+
+
+function companyTemporaryReplacementNameKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function companyTemporaryReplacementDateKey_(
+  value
+) {
+  let date = value;
+
+  if (!(date instanceof Date)) {
+    date = new Date(String(value || ""));
+  }
+
+  if (
+    !(date instanceof Date) ||
+    isNaN(date.getTime())
+  ) {
+    return "";
+  }
+
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+}
+
+
+function testCompanyTemporaryReplacementOS() {
+  const result =
+    CompanyTemporaryReplacementOS()
+      .findForOut(
+        "Justin Cooley",
+        "Leaf",
+        new Date(
+          "2026-07-16T12:00:00"
+        )
+      );
+
+  Logger.log(
+    "COMPANY TEMPORARY REPLACEMENT TEST"
+  );
+  Logger.log(JSON.stringify(result, null, 2));
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      result
+        ? [
+            "Temporary replacement found.",
+            "",
+            result.out +
+              " → " +
+              result.replacement,
+            "Role: " +
+              result.role,
+            "Active: " +
+              result.startDate +
+              " through " +
+              result.endDate
+          ].join("\n")
+        : "No temporary replacement found."
+    );
+
+  return result;
+}

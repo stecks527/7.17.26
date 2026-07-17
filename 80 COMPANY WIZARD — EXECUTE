@@ -1,0 +1,193 @@
+/*************************************************
+ * 80 COMPANY WIZARD — EXECUTE
+ *
+ * First real execution pass.
+ * Focuses on safer spreadsheet updates first.
+ *************************************************/
+
+function executeCompanyChange() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const settings = getProductionSettings_();
+  const hire = readCompanyWizardHire_();
+
+  const results = [];
+
+  try {
+    results.push(executeDollarFriday_(ss, hire));
+    results.push(executeContactSheet_(ss, hire));
+
+    if (isCastStageOS_(hire.companyArea)) {
+      results.push(executeCastList_(ss, hire));
+      results.push(executeInOut_(ss, hire));
+    }
+
+    updateProductionSettingValue_("Last Company Wizard Run", new Date());
+
+    logStageOS_(
+      "Execute Company Change",
+      `${hire.name}: ${results.join(" | ")}`
+    );
+
+    const sheet = ss.getSheetByName("New Hire");
+    if (sheet) ss.setActiveSheet(sheet);
+
+    SpreadsheetApp.getUi().alert(
+      `Company Change Executed for ${hire.name}.\n\n` +
+      results.join("\n")
+    );
+
+  } catch (err) {
+    logStageOS_("Execute Company Change ERROR", `${hire.name}: ${err.message}`);
+    throw err;
+  }
+}
+
+function executeDollarFriday_(ss, hire) {
+  const sheet = ss.getSheetByName("Dollar Friday");
+  if (!sheet) return "Dollar Friday skipped: tab not found";
+
+  const range = sheet.getDataRange();
+  const values = range.getDisplayValues();
+
+  let writes = 0;
+
+  for (let r = 0; r < values.length; r++) {
+    for (let c = 0; c < values[r].length; c++) {
+      if (cleanStageOS_(values[r][c]).toUpperCase() === "NAME") {
+        sheet.getRange(r + 1, c + 1).setValue(hire.name);
+        writes++;
+      }
+    }
+  }
+
+  return `Dollar Friday updated: ${writes} NAME slots filled`;
+}
+
+function executeContactSheet_(ss, hire) {
+  const sheet = ss.getSheetByName("Contact Sheet");
+  if (!sheet) return "Contact Sheet skipped: tab not found";
+
+  const values = sheet.getDataRange().getDisplayValues();
+  const targetPosition = cleanStageOS_(hire.positionTrack).toLowerCase();
+
+  for (let r = 0; r < values.length; r++) {
+    const position = cleanStageOS_(values[r][2]).toLowerCase();
+
+    if (position === targetPosition) {
+      sheet.getRange(r + 1, 1).setValue(hire.name);
+      sheet.getRange(r + 1, 2).setValue(hire.pronouns);
+      sheet.getRange(r + 1, 4).setValue(hire.phone);
+      sheet.getRange(r + 1, 5).setValue(hire.email);
+
+      return `Contact Sheet updated: ${hire.positionTrack}`;
+    }
+  }
+
+  return `Contact Sheet warning: could not find position ${hire.positionTrack}`;
+}
+
+function executeCastList_(ss, hire) {
+  const sheet = ss.getSheetByName("Cast List");
+  if (!sheet) return "Cast List skipped: tab not found";
+
+  const isPrincipal = hire.hireType.toLowerCase() === "principal";
+
+  if (!isPrincipal) {
+    return "Cast List skipped: non-principal execute not built yet";
+  }
+
+  const match = findCastListTemplateRow_(sheet, hire.positionTrack);
+  if (!match) {
+    return `Cast List warning: could not find template for ${hire.positionTrack}`;
+  }
+
+  const insertRow = match.row + 1;
+
+  sheet.insertRowBefore(insertRow);
+  sheet.getRange(match.row, 1, 1, 4)
+    .copyTo(sheet.getRange(insertRow, 1, 1, 4), { contentsOnly: false });
+
+  sheet.getRange(insertRow, 2).setValue(hire.name);
+  sheet.getRange(insertRow, 3).setValue(hire.nameInitial);
+
+  return `Cast List updated: copied ${match.actor} / added ${hire.name}`;
+}
+
+function executeInOut_(ss, hire) {
+  const inOut = ss.getSheetByName("IN/OUT");
+  const castList = ss.getSheetByName("Cast List");
+
+  if (!inOut) return "IN/OUT skipped: tab not found";
+  if (!castList) return "IN/OUT skipped: Cast List not found";
+
+  const match = findCastListTemplateRow_(castList, hire.positionTrack);
+  if (!match) {
+    return `IN/OUT warning: could not determine role for ${hire.positionTrack}`;
+  }
+
+  const role = match.role;
+  const values = inOut.getDataRange().getDisplayValues();
+
+  for (let r = 0; r < values.length; r++) {
+    const existingRole = cleanStageOS_(values[r][4]).toLowerCase();
+
+    if (existingRole === role.toLowerCase()) {
+      const insertRow = r + 2;
+
+      inOut.insertRowBefore(insertRow);
+      inOut.getRange(r + 1, 1, 1, inOut.getLastColumn())
+        .copyTo(inOut.getRange(insertRow, 1, 1, inOut.getLastColumn()), { contentsOnly: false });
+
+      inOut.getRange(insertRow, 1).setValue(hire.name);
+      inOut.getRange(insertRow, 3).clearContent();
+      inOut.getRange(insertRow, 5).setValue(role);
+      inOut.getRange(insertRow, 7).clearContent();
+
+      return `IN/OUT updated: copied ${role} row / added ${hire.name}`;
+    }
+  }
+
+  return `IN/OUT warning: could not find role ${role}`;
+}
+
+function findCastListTemplateRow_(sheet, positionTrack) {
+  const values = sheet.getDataRange().getDisplayValues();
+  const target = cleanStageOS_(positionTrack).toLowerCase();
+
+  for (let r = 1; r < values.length; r++) {
+    const role = cleanStageOS_(values[r][0]);
+    const actor = cleanStageOS_(values[r][1]);
+    const fullCharacter = cleanStageOS_(values[r][3]);
+
+    if (
+      role.toLowerCase() === target ||
+      fullCharacter.toLowerCase() === target
+    ) {
+      return {
+        row: r + 1,
+        role,
+        actor,
+        fullCharacter
+      };
+    }
+  }
+
+  return null;
+}
+
+function updateProductionSettingValue_(settingName, value) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Production Settings");
+  if (!sheet) return;
+
+  const values = sheet.getDataRange().getDisplayValues();
+  const target = cleanStageOS_(settingName).toLowerCase();
+
+  for (let r = 0; r < values.length; r++) {
+    const key = cleanStageOS_(values[r][0]).toLowerCase();
+    if (key === target) {
+      sheet.getRange(r + 1, 2).setValue(value);
+      return;
+    }
+  }
+}

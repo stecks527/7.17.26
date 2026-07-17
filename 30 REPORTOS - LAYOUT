@@ -1,0 +1,143 @@
+/*************************************************
+ * 30 REPORTOS - LAYOUT
+ * Version: 0.3.0
+ *
+ * Stable sections use fixed cells.
+ * Schedule sections are found dynamically by header.
+ *************************************************/
+
+function ReportLayout() {
+  return {
+    header: {
+      number: "A2",
+      date: "A3"
+    },
+
+    staffing: {
+      callingSM: "C5",
+      deckSM: "C6",
+      conductor: "C7",
+      a1: "C8"
+    },
+
+    castGrid: {
+      startRow: 11,
+      endRow: 25,
+
+      outCol: 1,
+      inCol: 3,
+      roleCol: 5,
+      reasonCol: 7
+    },
+
+    schedule: {
+      dailyHeaderText: "DAILY SCHEDULE:",
+      dailyHeaderColumn: 5, // E
+      dailyContentOffset: 1,
+
+      upcomingHeaderText: "UPCOMING:",
+      upcomingHeaderColumn: 1, // A
+      upcomingDateOffset: 1,
+      upcomingContentOffset: 2,
+
+      builderTodayRehearsal: "A5",
+      builderTodayPerformance: "A8",
+      builderTodayFinal: "A11",
+
+      builderUpcomingRehearsal: "A14",
+      builderUpcomingPerformance: "A17",
+      builderUpcomingFinal: "A20"
+    },
+
+    guest: {
+      groupPhoto: "A77",
+      spotted: "A93"
+    }
+  };
+}
+
+function reportOSResolveScheduleRanges_(report) {
+  const layout =
+    ReportLayout().schedule;
+
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      false
+    );
+
+  return {
+    dailySchedule:
+      reportOSRequireContentCell_(
+        report,
+        index,
+        layout.dailyHeaderText,
+        layout.dailyHeaderColumn,
+        layout.dailyContentOffset
+      ),
+
+    upcomingDate:
+      reportOSRequireContentCell_(
+        report,
+        index,
+        layout.upcomingHeaderText,
+        layout.upcomingHeaderColumn,
+        layout.upcomingDateOffset
+      ),
+
+    upcomingSchedule:
+      reportOSRequireContentCell_(
+        report,
+        index,
+        layout.upcomingHeaderText,
+        layout.upcomingHeaderColumn,
+        layout.upcomingContentOffset
+      )
+  };
+}
+
+
+function reportOSFindHeaderRowInColumn_(
+  sheet,
+  column,
+  headerText
+) {
+  const lastRow =
+    sheet.getLastRow();
+
+  const values =
+    sheet
+      .getRange(
+        1,
+        column,
+        lastRow,
+        1
+      )
+      .getDisplayValues();
+
+  const wanted =
+    String(
+      headerText || ""
+    )
+      .trim()
+      .toUpperCase();
+
+  for (
+    let index = 0;
+    index < values.length;
+    index++
+  ) {
+    const value =
+      String(
+        values[index][0] || ""
+      )
+        .trim()
+        .toUpperCase();
+
+    if (value === wanted) {
+      return index + 1;
+    }
+  }
+
+  return null;
+}

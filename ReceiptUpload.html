@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    :root {
+      --blue: #2456c4;
+      --dark-blue: #173b8f;
+      --gold: #f5c84c;
+      --border: #d8deea;
+      --text: #172033;
+      --muted: #6c7484;
+      --error: #a61b1b;
+      --success: #167342;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: #f7f9fc;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow:
+        0 8px 28px rgba(25, 47, 89, 0.10);
+    }
+
+    .header {
+      padding: 20px 22px;
+      color: white;
+      background:
+        linear-gradient(
+          135deg,
+          var(--dark-blue),
+          var(--blue)
+        );
+    }
+
+    .header h1 {
+      margin: 0 0 5px;
+      font-size: 22px;
+    }
+
+    .header p {
+      margin: 0;
+      opacity: 0.9;
+      font-size: 13px;
+    }
+
+    .content {
+      padding: 22px;
+    }
+
+    .destination-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .destination-option {
+      position: relative;
+    }
+
+    .destination-option input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .destination-card {
+      display: block;
+      min-height: 78px;
+      padding: 13px 14px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      background: white;
+      transition: 0.15s ease;
+    }
+
+    .destination-card strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 15px;
+    }
+
+    .destination-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .destination-option input:checked +
+    .destination-card {
+      border-color: var(--blue);
+      background: #f1f5ff;
+      box-shadow:
+        0 0 0 3px rgba(36, 86, 196, 0.10);
+    }
+
+    .float-banner {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding: 12px 14px;
+      background: #fff9df;
+      border: 1px solid #f3d66f;
+      border-radius: 9px;
+      font-weight: bold;
+    }
+
+    .drop-zone {
+      display: block;
+      width: 100%;
+      padding: 30px 18px;
+      text-align: center;
+      border: 2px dashed #9fb0d2;
+      border-radius: 12px;
+      background: #fafbfe;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragging {
+      border-color: var(--blue);
+      background: #f1f5ff;
+    }
+
+    .drop-zone strong {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 16px;
+    }
+
+    .drop-zone span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .selected-file {
+      margin-top: 12px;
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 8px;
+    }
+
+    .field {
+      margin-bottom: 14px;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    label.field-label {
+      display: block;
+      margin-bottom: 6px;
+      color: #45516a;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    input[type="text"],
+    select {
+      width: 100%;
+      height: 42px;
+      padding: 9px 11px;
+      border: 1px solid #bcc6d8;
+      border-radius: 7px;
+      background: white;
+      font: inherit;
+    }
+
+    input[type="text"]:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow:
+        0 0 0 3px rgba(36, 86, 196, 0.12);
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    button {
+      min-width: 110px;
+      height: 42px;
+      padding: 0 17px;
+      border: none;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+
+    .secondary {
+      color: #35405a;
+      background: #edf0f5;
+    }
+
+    .primary {
+      color: white;
+      background: var(--blue);
+    }
+
+    .primary:hover:not(:disabled) {
+      background: var(--dark-blue);
+    }
+
+    .status {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .status.show {
+      display: block;
+    }
+
+    .status.loading {
+      color: #31436a;
+      background: #edf3ff;
+      border: 1px solid #bdcdf2;
+    }
+
+    .status.error {
+      color: var(--error);
+      background: #fff0f0;
+      border: 1px solid #efb4b4;
+    }
+
+    .status.success {
+      color: var(--success);
+      background: #edfff5;
+      border: 1px solid #a8dfbf;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      margin-right: 7px;
+      border:
+        2px solid rgba(49, 67, 106, 0.25);
+      border-top-color: #31436a;
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .saved-link {
+      display: inline-block;
+      margin-top: 8px;
+      color: var(--blue);
+      font-weight: bold;
+      text-decoration: none;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Upload Receipt</h1>
+      <p>
+        Read, confirm, log, and file a receipt.
+      </p>
+    </div>
+
+    <div class="content">
+      <div class="destination-group">
+        <div class="destination-option">
+          <input
+            id="destinationSMFloat"
+            type="radio"
+            name="destination"
+            value="SM_FLOAT"
+            checked
+            onchange="destinationChanged()"
+          >
+
+          <label
+            class="destination-card"
+            for="destinationSMFloat"
+          >
+            <strong>SM Float</strong>
+            <span>
+              Add to the current numbered SM Float.
+            </span>
+          </label>
+        </div>
+
+        <div class="destination-option">
+          <input
+            id="destinationFullExpenses"
+            type="radio"
+            name="destination"
+            value="FULL_EXPENSES"
+            onchange="destinationChanged()"
+          >
+
+          <label
+            class="destination-card"
+            for="destinationFullExpenses"
+          >
+            <strong>Full Expenses</strong>
+            <span>
+              Add to the matching weekly expense block.
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div
+        id="floatBanner"
+        class="float-banner"
+      >
+        <span id="floatLabel">
+          Loading SM Float…
+        </span>
+
+        <span id="expenseNumber"></span>
+      </div>
+
+      <section id="uploadSection">
+        <label
+          id="dropZone"
+          class="drop-zone"
+          for="receiptFile"
+        >
+          <strong>
+            Choose or drop a receipt here
+          </strong>
+
+          <span>
+            PDF, JPG, PNG, or another image —
+            maximum 10 MB
+          </span>
+        </label>
+
+        <input
+          id="receiptFile"
+          type="file"
+          accept="application/pdf,image/*"
+        >
+
+        <div
+          id="selectedFile"
+          class="selected-file"
+        ></div>
+
+        <div class="actions">
+          <button
+            type="button"
+            class="secondary"
+            onclick="google.script.host.close()"
+          >
+            Cancel
+          </button>
+
+          <button
+            id="analyzeButton"
+            type="button"
+            class="primary"
+            disabled
+            onclick="analyzeReceipt()"
+          >
+            Read Receipt
+          </button>
+        </div>
+      </section>
+
+      <section
+        id="confirmationSection"
+        class="hidden"
+      >
+        <div class="form-grid">
+          <div class="field">
+            <label
+              class="field-label"
+              for="receiptDate"
+            >
+              Date
+            </label>
+
+            <input
+              id="receiptDate"
+              type="text"
+              placeholder="6.28.26"
+            >
+          </div>
+
+          <div class="field">
+            <label
+              class="field-label"
+              for="receiptAmount"
+            >
+              Amount
+            </label>
+
+            <input
+              id="receiptAmount"
+              type="text"
+              inputmode="decimal"
+              placeholder="58.87"
+            >
+          </div>
+
+          <div class="field full">
+            <label
+              class="field-label"
+              for="receiptVendor"
+            >
+              Vendor
+            </label>
+
+            <input
+              id="receiptVendor"
+              type="text"
+              placeholder="Food Emporium"
+            >
+          </div>
+
+          <div class="field full">
+            <label
+              class="field-label"
+              for="receiptDescription"
+            >
+              Description
+            </label>
+
+            <input
+              id="receiptDescription"
+              type="text"
+              placeholder="Rach's Birthday"
+            >
+          </div>
+
+          <div
+            id="whatField"
+            class="field full hidden"
+          >
+            <label
+              class="field-label"
+              for="receiptWhat"
+            >
+              What
+            </label>
+
+            <select id="receiptWhat">
+              <option value="SM">
+                SM
+              </option>
+
+              <option value="PROP">
+                PROP
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button
+            id="backButton"
+            type="button"
+            class="secondary"
+            onclick="returnToUpload()"
+          >
+            Back
+          </button>
+
+          <button
+            id="saveButton"
+            type="button"
+            class="primary"
+            onclick="saveReceipt()"
+          >
+            Add Receipt
+          </button>
+        </div>
+      </section>
+
+      <div
+        id="status"
+        class="status"
+      ></div>
+    </div>
+  </div>
+
+  <script>
+    let currentFile = null;
+    let currentBase64 = "";
+    let currentFloatLabel = "";
+    let currentExpenseNumber = null;
+    let smFloatAvailable = true;
+
+    const fileInput =
+      document.getElementById("receiptFile");
+
+    const dropZone =
+      document.getElementById("dropZone");
+
+    fileInput.addEventListener(
+      "change",
+      function () {
+        setSelectedFile(
+          fileInput.files[0] || null
+        );
+      }
+    );
+
+    dropZone.addEventListener(
+      "dragover",
+      function (event) {
+        event.preventDefault();
+
+        dropZone.classList.add(
+          "dragging"
+        );
+      }
+    );
+
+    dropZone.addEventListener(
+      "dragleave",
+      function () {
+        dropZone.classList.remove(
+          "dragging"
+        );
+      }
+    );
+
+    dropZone.addEventListener(
+      "drop",
+      function (event) {
+        event.preventDefault();
+
+        dropZone.classList.remove(
+          "dragging"
+        );
+
+        const file =
+          event.dataTransfer.files &&
+          event.dataTransfer.files[0];
+
+        setSelectedFile(file || null);
+      }
+    );
+
+
+    function initialize() {
+      google.script.run
+        .withSuccessHandler(
+          function (result) {
+            if (
+              !result ||
+              !result.success
+            ) {
+              showStatus(
+                result && result.message
+                  ? result.message
+                  : "Could not load ReceiptOS.",
+                "error"
+              );
+
+              return;
+            }
+
+            currentFloatLabel =
+              result.floatLabel || "";
+
+            currentExpenseNumber =
+              result.nextExpenseNumber;
+
+            smFloatAvailable =
+              result.smFloatAvailable;
+
+            refreshDestinationDisplay();
+          }
+        )
+        .withFailureHandler(handleFailure)
+        .receiptOSGetInitialInfo();
+    }
+
+
+    function getDestination() {
+      const selected =
+        document.querySelector(
+          'input[name="destination"]:checked'
+        );
+
+      return selected
+        ? selected.value
+        : "SM_FLOAT";
+    }
+
+
+    function destinationChanged() {
+      refreshDestinationDisplay();
+      clearStatus();
+    }
+
+
+    function refreshDestinationDisplay() {
+      const destination = getDestination();
+
+      const floatBanner =
+        document.getElementById(
+          "floatBanner"
+        );
+
+      const whatField =
+        document.getElementById(
+          "whatField"
+        );
+
+      const floatLabel =
+        document.getElementById(
+          "floatLabel"
+        );
+
+      const expenseNumber =
+        document.getElementById(
+          "expenseNumber"
+        );
+
+      if (
+        destination === "FULL_EXPENSES"
+      ) {
+        floatBanner.classList.add(
+          "hidden"
+        );
+
+        whatField.classList.remove(
+          "hidden"
+        );
+
+        return;
+      }
+
+      floatBanner.classList.remove(
+        "hidden"
+      );
+
+      whatField.classList.add(
+        "hidden"
+      );
+
+      floatLabel.textContent =
+        currentFloatLabel ||
+        "Current SM Float";
+
+      expenseNumber.textContent =
+        smFloatAvailable &&
+        currentExpenseNumber
+          ? "Receipt #" +
+            currentExpenseNumber
+          : "Float Full";
+    }
+
+
+    function setSelectedFile(file) {
+      currentFile = file;
+      currentBase64 = "";
+
+      const selectedFile =
+        document.getElementById(
+          "selectedFile"
+        );
+
+      const analyzeButton =
+        document.getElementById(
+          "analyzeButton"
+        );
+
+      if (!file) {
+        selectedFile.textContent = "";
+        analyzeButton.disabled = true;
+        return;
+      }
+
+      const mimeType =
+        file.type ||
+        guessMimeType(file.name);
+
+      const allowed =
+        mimeType === "application/pdf" ||
+        mimeType.startsWith("image/");
+
+      if (!allowed) {
+        currentFile = null;
+
+        selectedFile.textContent =
+          "Please choose a PDF or image.";
+
+        analyzeButton.disabled = true;
+
+        return;
+      }
+
+      if (
+        file.size >
+        10 * 1024 * 1024
+      ) {
+        currentFile = null;
+
+        selectedFile.textContent =
+          "This file is larger than 10 MB.";
+
+        analyzeButton.disabled = true;
+
+        return;
+      }
+
+      selectedFile.textContent =
+        file.name +
+        " — " +
+        formatFileSize(file.size);
+
+      analyzeButton.disabled = false;
+
+      clearStatus();
+    }
+
+
+    function analyzeReceipt() {
+      if (!currentFile) {
+        showStatus(
+          "Please choose a receipt first.",
+          "error"
+        );
+
+        return;
+      }
+
+      if (
+        getDestination() === "SM_FLOAT" &&
+        !smFloatAvailable
+      ) {
+        showStatus(
+          "The current SM Float is full. " +
+          "Choose Full Expenses or complete the float first.",
+          "error"
+        );
+
+        return;
+      }
+
+      setBusy(true);
+
+      showStatus(
+        '<span class="spinner"></span>' +
+        "Reading receipt and finding the total…",
+        "loading",
+        true
+      );
+
+      const reader = new FileReader();
+
+      reader.onload = function (event) {
+        const dataUrl =
+          event.target.result;
+
+        currentBase64 =
+          dataUrl.split(",")[1];
+
+        google.script.run
+          .withSuccessHandler(
+            handleAnalysisResult
+          )
+          .withFailureHandler(
+            handleFailure
+          )
+          .receiptOSAnalyzeUpload({
+            fileName: currentFile.name,
+
+            mimeType:
+              currentFile.type ||
+              guessMimeType(
+                currentFile.name
+              ),
+
+            base64: currentBase64
+          });
+      };
+
+      reader.onerror = function () {
+        setBusy(false);
+
+        showStatus(
+          "The browser could not read this file.",
+          "error"
+        );
+      };
+
+      reader.readAsDataURL(currentFile);
+    }
+
+
+    function handleAnalysisResult(result) {
+      setBusy(false);
+
+      if (
+        !result ||
+        !result.success
+      ) {
+        showStatus(
+          result && result.message
+            ? result.message
+            : "ReceiptOS could not read this receipt.",
+          "error"
+        );
+
+        return;
+      }
+
+      document.getElementById(
+        "receiptDate"
+      ).value = result.date || "";
+
+      document.getElementById(
+        "receiptVendor"
+      ).value = result.vendor || "";
+
+      document.getElementById(
+        "receiptDescription"
+      ).value =
+        result.description || "";
+
+      document.getElementById(
+        "receiptAmount"
+      ).value = result.amount || "";
+
+      document.getElementById(
+        "uploadSection"
+      ).classList.add("hidden");
+
+      document.getElementById(
+        "confirmationSection"
+      ).classList.remove("hidden");
+
+      refreshDestinationDisplay();
+
+      showStatus(
+        "Please confirm the receipt details before adding it.",
+        "loading"
+      );
+    }
+
+
+    function saveReceipt() {
+      const date =
+        document.getElementById(
+          "receiptDate"
+        ).value.trim();
+
+      const vendor =
+        document.getElementById(
+          "receiptVendor"
+        ).value.trim();
+
+      const description =
+        document.getElementById(
+          "receiptDescription"
+        ).value.trim();
+
+      const amount =
+        document.getElementById(
+          "receiptAmount"
+        ).value.trim();
+
+      const what =
+        document.getElementById(
+          "receiptWhat"
+        ).value;
+
+      if (
+        !date ||
+        !vendor ||
+        !amount
+      ) {
+        showStatus(
+          "Date, vendor, and amount are required.",
+          "error"
+        );
+
+        return;
+      }
+
+      setBusy(true);
+
+      showStatus(
+        '<span class="spinner"></span>' +
+        "Adding and filing the receipt…",
+        "loading",
+        true
+      );
+
+      google.script.run
+        .withSuccessHandler(
+          handleSaveResult
+        )
+        .withFailureHandler(
+          handleFailure
+        )
+        .receiptOSSaveConfirmedReceipt({
+          destination: getDestination(),
+
+          floatLabel: currentFloatLabel,
+
+          date: date,
+          vendor: vendor,
+          description: description,
+          amount: amount,
+          what: what,
+
+          originalFileName:
+            currentFile.name,
+
+          mimeType:
+            currentFile.type ||
+            guessMimeType(
+              currentFile.name
+            ),
+
+          base64: currentBase64
+        });
+    }
+
+
+    function handleSaveResult(result) {
+      setBusy(false);
+
+      if (
+        !result ||
+        !result.success
+      ) {
+        showStatus(
+          result && result.message
+            ? result.message
+            : "The receipt could not be saved.",
+          "error"
+        );
+
+        return;
+      }
+
+      document.getElementById(
+        "confirmationSection"
+      ).classList.add("hidden");
+
+      showStatus(
+        "Receipt added to <strong>" +
+        escapeHtml(result.destination) +
+        "</strong>.<br>" +
+        escapeHtml(
+          result.destinationDetail || ""
+        ) +
+        "<br><strong>" +
+        escapeHtml(result.fileName) +
+        "</strong><br>" +
+        '<a class="saved-link" href="' +
+        result.fileUrl +
+        '" target="_blank">' +
+        "Open saved receipt" +
+        "</a>",
+        "success",
+        true
+      );
+    }
+
+
+    function returnToUpload() {
+      document.getElementById(
+        "confirmationSection"
+      ).classList.add("hidden");
+
+      document.getElementById(
+        "uploadSection"
+      ).classList.remove("hidden");
+
+      refreshDestinationDisplay();
+      clearStatus();
+    }
+
+
+    function setBusy(isBusy) {
+      document.getElementById(
+        "analyzeButton"
+      ).disabled =
+        isBusy || !currentFile;
+
+      document.getElementById(
+        "saveButton"
+      ).disabled = isBusy;
+
+      document.getElementById(
+        "backButton"
+      ).disabled = isBusy;
+    }
+
+
+    function handleFailure(error) {
+      setBusy(false);
+
+      showStatus(
+        error && error.message
+          ? error.message
+          : String(
+              error ||
+              "Something went wrong."
+            ),
+        "error"
+      );
+    }
+
+
+    function showStatus(
+      message,
+      type,
+      allowHtml
+    ) {
+      const status =
+        document.getElementById(
+          "status"
+        );
+
+      status.className =
+        "status show " + type;
+
+      if (allowHtml) {
+        status.innerHTML = message;
+      } else {
+        status.textContent = message;
+      }
+    }
+
+
+    function clearStatus() {
+      const status =
+        document.getElementById(
+          "status"
+        );
+
+      status.className = "status";
+      status.textContent = "";
+    }
+
+
+    function formatFileSize(bytes) {
+      if (bytes < 1024) {
+        return bytes + " B";
+      }
+
+      if (
+        bytes <
+        1024 * 1024
+      ) {
+        return (
+          bytes / 1024
+        ).toFixed(1) + " KB";
+      }
+
+      return (
+        bytes /
+        (1024 * 1024)
+      ).toFixed(1) + " MB";
+    }
+
+
+    function guessMimeType(fileName) {
+      const lower =
+        String(fileName || "")
+          .toLowerCase();
+
+      if (lower.endsWith(".pdf")) {
+        return "application/pdf";
+      }
+
+      if (
+        lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg")
+      ) {
+        return "image/jpeg";
+      }
+
+      if (lower.endsWith(".png")) {
+        return "image/png";
+      }
+
+      if (lower.endsWith(".gif")) {
+        return "image/gif";
+      }
+
+      if (lower.endsWith(".webp")) {
+        return "image/webp";
+      }
+
+      if (
+        lower.endsWith(".heic") ||
+        lower.endsWith(".heif")
+      ) {
+        return "image/heic";
+      }
+
+      return "application/octet-stream";
+    }
+
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+
+    initialize();
+  </script>
+</body>
+</html>

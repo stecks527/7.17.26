@@ -1,0 +1,320 @@
+/*************************************************
+ * 15 PREPOS - INOUT WRITERS
+ * Version: 0.2.0
+ *
+ * Responsibilities:
+ * - Clear and write cast IN/OUT rows
+ * - Exclude LOA / MLOA from the IN/OUT sheet
+ * - Keep left and right border blocks matched
+ * - Hide unused cast rows
+ *************************************************/
+
+function writeInOutChangesFromDialog_(inOut, payload) {
+  const layout = PrepLayout().inOut;
+
+  const START_ROW = layout.firstCastRow;
+  const END_ROW = layout.lastCastRow;
+  const NUM_ROWS = END_ROW - START_ROW + 1;
+
+  /*
+   * Visible IN/OUT blocks:
+   *
+   * Left:  A:G
+   * Right: I:O
+   */
+  const LEFT_START_COL = 1;
+  const RIGHT_START_COL = 9;
+  const BLOCK_WIDTH = 7;
+
+  /*
+   * Make all possible cast rows visible while rebuilding.
+   */
+  inOut.showRows(
+    START_ROW,
+    NUM_ROWS
+  );
+
+  inOut.showRows(
+    layout.staffingStartRow,
+    layout.staffingNumRows
+  );
+
+  /*
+   * Clear the values controlled by Prep.
+   */
+  inOut
+    .getRange(
+      START_ROW,
+      layout.outCol,
+      NUM_ROWS,
+      1
+    )
+    .clearContent();
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.inCol,
+      NUM_ROWS,
+      1
+    )
+    .clearContent();
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.roleCol,
+      NUM_ROWS,
+      1
+    )
+    .clearContent();
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.reasonCol,
+      NUM_ROWS,
+      1
+    )
+    .clearContent();
+
+  /*
+   * Normalize every possible cast-row border first.
+   *
+   * This removes the prior performance's medium border,
+   * so it cannot remain floating in the middle of the list.
+   */
+  prepSetInOutBlockBorders_(
+    inOut,
+    START_ROW,
+    NUM_ROWS,
+    LEFT_START_COL,
+    BLOCK_WIDTH,
+    SpreadsheetApp.BorderStyle.SOLID
+  );
+
+  prepSetInOutBlockBorders_(
+    inOut,
+    START_ROW,
+    NUM_ROWS,
+    RIGHT_START_COL,
+    BLOCK_WIDTH,
+    SpreadsheetApp.BorderStyle.SOLID
+  );
+
+  /*
+   * LOA and MLOA still travel to the report, trackers,
+   * payroll, etc., but are excluded from the IN/OUT sheet.
+   */
+  const castOuts =
+  (payload.castOuts || [])
+    .filter(function (item) {
+      return (
+        item.writeToInOutSheet !== false &&
+        item.isContractLOA !== true &&
+        (
+          item.out ||
+          item.in ||
+          item.role ||
+          item.reason
+        )
+      );
+    });
+
+  /*
+   * No cast IN/OUT rows:
+   * hide the cast grid, but keep staffing visible.
+   */
+  if (!castOuts.length) {
+    inOut.hideRows(
+      START_ROW,
+      NUM_ROWS
+    );
+
+    inOut.showRows(
+      layout.staffingStartRow,
+      layout.staffingNumRows
+    );
+
+    return;
+  }
+
+  const writable =
+    castOuts.slice(0, NUM_ROWS);
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.outCol,
+      writable.length,
+      1
+    )
+    .setValues(
+      writable.map(function (item) {
+        return [item.out || ""];
+      })
+    );
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.inCol,
+      writable.length,
+      1
+    )
+    .setValues(
+      writable.map(function (item) {
+        return [item.in || ""];
+      })
+    );
+
+  inOut
+    .getRange(
+      START_ROW,
+      layout.roleCol,
+      writable.length,
+      1
+    )
+    .setValues(
+      writable.map(function (item) {
+        return [item.role || ""];
+      })
+    );
+
+  /*
+   * IN/OUT does not always visually need the reason,
+   * but retain it because the current layout includes it.
+   */
+  inOut
+    .getRange(
+      START_ROW,
+      layout.reasonCol,
+      writable.length,
+      1
+    )
+    .setValues(
+      writable.map(function (item) {
+        return [item.reason || ""];
+      })
+    );
+
+  const lastUsedRow =
+    START_ROW + writable.length - 1;
+
+  /*
+   * Add the medium final border only beneath the
+   * current final populated row.
+   *
+   * A:G and I:O always receive the same border.
+   */
+  prepSetInOutFinalBorder_(
+    inOut,
+    lastUsedRow,
+    LEFT_START_COL,
+    BLOCK_WIDTH
+  );
+
+  prepSetInOutFinalBorder_(
+    inOut,
+    lastUsedRow,
+    RIGHT_START_COL,
+    BLOCK_WIDTH
+  );
+
+  /*
+   * Hide unused cast rows below the final entry.
+   */
+  if (lastUsedRow < END_ROW) {
+    inOut.hideRows(
+      lastUsedRow + 1,
+      END_ROW - lastUsedRow
+    );
+  }
+
+  /*
+   * Staffing/signature area must always remain visible.
+   */
+  inOut.showRows(
+    layout.staffingStartRow,
+    layout.staffingNumRows
+  );
+}
+
+
+/* =========================================================
+ * BORDER HELPERS
+ * ========================================================= */
+
+function prepSetInOutBlockBorders_(
+  sheet,
+  startRow,
+  numRows,
+  startColumn,
+  numColumns,
+  borderStyle
+) {
+  /*
+   * Applying the normal border across the complete block
+   * resets any previous medium bottom edge.
+   */
+  sheet
+    .getRange(
+      startRow,
+      startColumn,
+      numRows,
+      numColumns
+    )
+    .setBorder(
+      null,   // top
+      null,   // left
+      true,   // bottom
+      null,   // right
+      null,   // vertical
+      true,   // horizontal
+      "black",
+      borderStyle
+    );
+}
+
+
+function prepSetInOutFinalBorder_(
+  sheet,
+  row,
+  startColumn,
+  numColumns
+) {
+  sheet
+    .getRange(
+      row,
+      startColumn,
+      1,
+      numColumns
+    )
+    .setBorder(
+      null,   // top
+      null,   // left
+      true,   // bottom
+      null,   // right
+      null,   // vertical
+      null,   // horizontal
+      "black",
+      SpreadsheetApp.BorderStyle.SOLID_MEDIUM
+    );
+}
+
+
+/* =========================================================
+ * CONTRACT LEAVE
+ * ========================================================= */
+
+function isPrepContractLeave_(reason) {
+  const text =
+    String(reason || "")
+      .trim()
+      .toUpperCase();
+
+  return (
+    text === "LOA" ||
+    text === "MLOA"
+  );
+}

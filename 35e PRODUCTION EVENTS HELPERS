@@ -1,0 +1,205 @@
+/*************************************************
+ * 35e PRODUCTION EVENTS HELPERS
+ * Version: 2.0.0
+ *************************************************/
+
+function productionEventsActorMapV1_(castList) {
+  const data = castList.getRange(1, 1, castList.getLastRow(), 3).getValues();
+  const map = {};
+
+  data.forEach(function (row) {
+    const role = String(row[0] || "").trim();
+    const fullName = String(row[1] || "").trim();
+    const reportName = String(row[2] || "").trim();
+
+    if (!fullName) return;
+    if (fullName.toUpperCase() === "FULL NAME") return;
+
+    map[fullName.toLowerCase()] = {
+      role: role,
+      shortName: reportName || productionEventsShortNameV1_(fullName)
+    };
+  });
+
+  return map;
+}
+
+function productionEventsShortNameV1_(name) {
+  const parts = String(name || "").trim().split(/\s+/);
+  if (parts.length < 2) return String(name || "").trim();
+  return parts[0] + " " + parts[parts.length - 1].charAt(0) + ".";
+}
+
+function productionEventsOfficeLabelV1_(name, info) {
+  const key = String(name || "").trim().toLowerCase();
+
+  const overrides = {
+    "rachel a. zucker": "RZ",
+    "chris steckel": "Chris S.",
+    "kristin newhouse": "Kristin N.",
+    "zach de brino": "Zach D."
+  };
+
+  if (overrides[key]) return overrides[key];
+  if (info && info.shortName) return info.shortName;
+
+  return productionEventsShortNameV1_(name);
+}
+
+function productionEventsRoleKeyV1_(role) {
+  const text = String(role || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  if (text.includes("barfee")) return "barfee";
+  if (text.includes("leaf")) return "leaf";
+  if (text.includes("olive")) return "olive";
+  if (text.includes("chip")) return "chip";
+  if (text.includes("rona")) return "rona";
+  if (text.includes("panch")) return "panch";
+  if (text.includes("marcy")) return "marcy";
+  if (text.includes("mitch")) return "mitch";
+  if (text.includes("schwartzy")) return "schwartzy";
+
+  return text;
+}
+
+function productionEventsDisplayRoleV1_(role) {
+  const key = productionEventsRoleKeyV1_(role);
+
+  const map = {
+    barfee: "Barfée",
+    leaf: "Leaf",
+    olive: "Olive",
+    chip: "Chip",
+    rona: "Rona",
+    panch: "Panch",
+    marcy: "Marcy",
+    mitch: "Mitch",
+    schwartzy: "Schwartzy"
+  };
+
+  return map[key] || String(role || "").trim();
+}
+
+function productionEventsIsSMSubV1_(person) {
+  const role = String(person && person.role || "").toLowerCase();
+  const key = String(person && person.key || "").toLowerCase();
+
+  return (
+    role.includes("sub") ||
+    key.includes("zach de brino") ||
+    key.includes("kristin newhouse")
+  );
+}
+
+function productionEventsShouldCountOutLineV1_(line, fullCellText) {
+  const lowerLine = String(line || "").toLowerCase();
+  const lowerCell = String(fullCellText || "").toLowerCase();
+
+  if (lowerLine.includes("from reh")) return false;
+  if (lowerLine.includes("from rehearsal")) return false;
+
+  const hasShowLanguage =
+    lowerLine.includes("mat") ||
+    lowerLine.includes("eve") ||
+    lowerCell.includes("show call");
+
+  const hasRehearsalLanguage =
+    lowerCell.includes("rehearsal") ||
+    lowerCell.includes("put-in") ||
+    lowerCell.includes("put in");
+
+  if (hasRehearsalLanguage && !hasShowLanguage) return false;
+
+  return true;
+}
+
+function productionEventsReasonSummaryV1_(reasonCounts, totalShows) {
+  return Object.entries(reasonCounts)
+    .map(function (entry) {
+      const reason = entry[0];
+      const count = entry[1];
+
+      if (count === totalShows) return reason;
+      return count + " " + reason;
+    })
+    .join(" + ");
+}
+
+function productionEventsSortV1_(events) {
+  return events.sort(function (a, b) {
+    const priorityA = Number(a.priority || 999);
+    const priorityB = Number(b.priority || 999);
+
+    if (priorityA !== priorityB) return priorityA - priorityB;
+
+    return String(a.type || "").localeCompare(String(b.type || ""));
+  });
+}
+
+function productionEventsFindSheetV1_(ss, possibleNames) {
+  for (let i = 0; i < possibleNames.length; i++) {
+    const sheet = ss.getSheetByName(possibleNames[i]);
+    if (sheet) return sheet;
+  }
+
+  return null;
+}
+
+function productionEventsFindHeaderColV1_(headers, possibleNames) {
+  for (let i = 0; i < headers.length; i++) {
+    const header = String(headers[i] || "").trim().toLowerCase();
+
+    for (let j = 0; j < possibleNames.length; j++) {
+      if (header === possibleNames[j]) return i;
+    }
+  }
+
+  return -1;
+}
+
+function productionEventsFindNotesRowV1_(sheet) {
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || "").trim().toUpperCase() === "NOTES") {
+      return i + 1;
+    }
+  }
+
+  return sheet.getLastRow();
+}
+
+function productionEventsFindCurrentWeeklyV1_(ss) {
+  const payroll = ss.getSheetByName("Payroll");
+  if (!payroll) return null;
+
+  const mondayDisplay = payroll.getRange("B3").getDisplayValue();
+
+  const weeklySheets = ss.getSheets().filter(function (sh) {
+    return /^Weekly Schedule/i.test(sh.getName());
+  });
+
+  if (!weeklySheets.length) return null;
+
+  const match = String(mondayDisplay || "").match(/(\w+),\s+(\w+)\s+(\d+)/);
+
+  if (match) {
+    const month = match[2];
+    const day = Number(match[3]);
+
+    for (let i = 0; i < weeklySheets.length; i++) {
+      const name = weeklySheets[i].getName();
+
+      if (name.includes(month.slice(0, 3)) && name.includes(String(day))) {
+        return weeklySheets[i];
+      }
+    }
+  }
+
+  return weeklySheets[weeklySheets.length - 1];
+}

@@ -1,0 +1,1049 @@
+/*************************************************
+ * 97 STAGEOS BUILDER
+ * Version: 0.2.0
+ *
+ * Creates and manages the StageOS Builder workbook.
+ *************************************************/
+
+const STAGEOS_PROJECT_TRACKER = {
+  propertyKey: "STAGEOS_PROJECT_TRACKER_ID",
+  workbookName: "StageOS Builder",
+  homeSheet: "Home",
+  roadmapSheet: "Roadmap",
+  parkingLotSheet: "Parking Lot",
+  logSheet: "Build Journal",
+  dependencySheet: "Dependencies",
+  releaseSheet: "Release Plan",
+  philosophySheet: "Philosophy",
+  statsSheet: "Stats"
+};
+
+/*************************************************
+ * CREATE / OPEN
+ *************************************************/
+
+function createStageOSProjectTracker() {
+  const props = PropertiesService.getDocumentProperties();
+  let trackerId = props.getProperty(STAGEOS_PROJECT_TRACKER.propertyKey);
+
+  let tracker;
+
+  if (trackerId) {
+    tracker = SpreadsheetApp.openById(trackerId);
+  } else {
+    tracker = SpreadsheetApp.create(STAGEOS_PROJECT_TRACKER.workbookName);
+    props.setProperty(STAGEOS_PROJECT_TRACKER.propertyKey, tracker.getId());
+  }
+
+  buildStageOSBuilder_(tracker);
+
+  SpreadsheetApp.getUi().alert(
+    "StageOS Builder ready.\n\n" +
+    tracker.getUrl()
+  );
+
+  return tracker.getUrl();
+}
+
+function openStageOSProjectTracker() {
+  const tracker = getStageOSProjectTracker_();
+  SpreadsheetApp.getUi().alert("StageOS Builder:\n\n" + tracker.getUrl());
+}
+
+function getStageOSProjectTracker_() {
+  const props = PropertiesService.getDocumentProperties();
+  const trackerId = props.getProperty(STAGEOS_PROJECT_TRACKER.propertyKey);
+
+  if (!trackerId) {
+    throw new Error("No StageOS Builder found. Run createStageOSProjectTracker() first.");
+  }
+
+  return SpreadsheetApp.openById(trackerId);
+}
+
+/*************************************************
+ * BUILD ALL SHEETS
+ *************************************************/
+
+function buildStageOSBuilder_(tracker) {
+  buildBuilderRoadmap_(tracker);
+  buildBuilderParkingLot_(tracker);
+  buildBuilderJournal_(tracker);
+  buildBuilderDependencies_(tracker);
+  buildBuilderReleasePlan_(tracker);
+  buildBuilderPhilosophy_(tracker);
+  buildBuilderStats_(tracker);
+  buildBuilderHome_(tracker);
+
+  tracker.setActiveSheet(tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.homeSheet));
+}
+
+/*************************************************
+ * HOME
+ *************************************************/
+
+function buildBuilderHome_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.homeSheet);
+  sh.clear();
+
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+  const data = roadmap.getDataRange().getDisplayValues();
+
+  const rows = data.slice(1).filter(row => row[0]);
+  const complete = rows.filter(row => row[4] === "Complete").length;
+  const total = rows.length;
+  const remaining = total - complete;
+  const progress = total ? complete / total : 0;
+
+  const next = rows.find(row =>
+    row[4] !== "Complete" &&
+    row[4] !== "Paused" &&
+    row[5] === "High"
+  ) || rows.find(row => row[4] !== "Complete") || [];
+
+  sh.getRange("A1:H1").merge()
+    .setValue("StageOS Builder")
+    .setFontSize(28)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center")
+    .setBackground("#2457c5")
+    .setFontColor("#ffd84d");
+
+  sh.getRange("A3").setValue("Development Dashboard").setFontSize(18).setFontWeight("bold");
+
+  sh.getRange("A5").setValue("Overall Progress").setFontWeight("bold");
+  sh.getRange("B5").setValue(Math.round(progress * 100) + "%");
+
+  sh.getRange("A6").setValue("Completed Tasks").setFontWeight("bold");
+  sh.getRange("B6").setValue(complete);
+
+  sh.getRange("A7").setValue("Remaining Tasks").setFontWeight("bold");
+  sh.getRange("B7").setValue(remaining);
+
+  sh.getRange("A9").setValue("Recommended Next").setFontWeight("bold");
+  sh.getRange("B9").setValue(next[3] || "No task found");
+
+  sh.getRange("A10").setValue("Subsystem").setFontWeight("bold");
+  sh.getRange("B10").setValue(next[2] || "");
+
+  sh.getRange("A11").setValue("Estimate").setFontWeight("bold");
+  sh.getRange("B11").setValue(next[6] || "");
+
+  sh.getRange("A13").setValue("Current Sprint").setFontWeight("bold");
+  const sprint = rows.filter(row => row[4] === "In Progress").slice(0, 8);
+  if (sprint.length) {
+    sh.getRange(14, 1, sprint.length, 3)
+      .setValues(sprint.map(row => [row[0], row[2], row[3]]));
+  } else {
+    sh.getRange("A14").setValue("No tasks currently in progress.");
+  }
+
+  sh.getRange("E5").setValue("Quick Actions").setFontWeight("bold");
+  sh.getRange("E6").setValue("Use menu in the main StageOS workbook:");
+  sh.getRange("E7").setValue("Bee Tools → StageOS Project");
+  sh.getRange("E9").setValue("Sheets").setFontWeight("bold");
+  sh.getRange("E10:E16").setValues([
+    ["Roadmap"],
+    ["Parking Lot"],
+    ["Build Journal"],
+    ["Dependencies"],
+    ["Release Plan"],
+    ["Stats"],
+    ["Philosophy"]
+  ]);
+
+  sh.setColumnWidths(1, 8, 170);
+  sh.setRowHeights(1, 1, 48);
+}
+
+/*************************************************
+ * ROADMAP
+ *************************************************/
+
+function buildBuilderRoadmap_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.roadmapSheet);
+
+  const existing = sh.getDataRange().getDisplayValues();
+  const hasExistingTasks = existing.length > 1 && existing[1][0];
+
+  sh.clear();
+
+  const headers = [
+    "Task ID",
+    "Phase",
+    "Subsystem",
+    "Task",
+    "Status",
+    "Priority",
+    "Estimate",
+    "Completed At",
+    "Notes",
+    "Pipeline",
+    "Dependencies",
+    "Version"
+  ];
+
+  sh.getRange(1, 1, 1, headers.length)
+    .setValues([headers])
+    .setFontWeight("bold")
+    .setBackground("#cfe2f3");
+
+  const rows = hasExistingTasks
+    ? normalizeRoadmapRows_(existing.slice(1), headers.length)
+    : getStageOSRoadmapSeedRows_();
+
+  if (rows.length) {
+    sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, headers.length);
+
+  const statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Backlog", "In Progress", "Testing", "Complete", "Paused"], true)
+    .build();
+
+  const priorityRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Critical", "High", "Medium", "Low", "Dream"], true)
+    .build();
+
+  const pipelineRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Dream", "Design", "Architecture", "Building", "Testing", "Released"], true)
+    .build();
+
+  sh.getRange(2, 5, 500, 1).setDataValidation(statusRule);
+  sh.getRange(2, 6, 500, 1).setDataValidation(priorityRule);
+  sh.getRange(2, 10, 500, 1).setDataValidation(pipelineRule);
+
+  applyRoadmapFormatting_(sh);
+  sortStageOSRoadmap_(sh);
+}
+
+function normalizeRoadmapRows_(rows, width) {
+  return rows
+    .filter(row => row[0])
+    .map(row => {
+      const next = row.slice(0, width);
+      while (next.length < width) next.push("");
+
+      if (!next[9]) next[9] = next[4] === "Complete" ? "Released" : "Dream";
+      if (!next[11]) next[11] = "";
+
+      return next;
+    });
+}
+
+function applyRoadmapFormatting_(sh) {
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const range = sh.getRange(2, 1, lastRow - 1, 12);
+
+  const rules = [
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("Complete")
+      .setBackground("#d9ead3")
+      .setRanges([sh.getRange(2, 5, lastRow - 1, 1)])
+      .build(),
+
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("In Progress")
+      .setBackground("#fff2cc")
+      .setRanges([sh.getRange(2, 5, lastRow - 1, 1)])
+      .build(),
+
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("Critical")
+      .setBackground("#f4cccc")
+      .setRanges([sh.getRange(2, 6, lastRow - 1, 1)])
+      .build(),
+
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("High")
+      .setBackground("#fce5cd")
+      .setRanges([sh.getRange(2, 6, lastRow - 1, 1)])
+      .build()
+  ];
+
+  sh.setConditionalFormatRules(rules);
+}
+
+/*************************************************
+ * PARKING LOT
+ *************************************************/
+
+function buildBuilderParkingLot_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.parkingLotSheet);
+
+  if (sh.getLastRow() > 0) return;
+
+  sh.getRange(1, 1, 1, 6)
+    .setValues([["Idea ID", "Idea", "Category", "Added At", "Promoted?", "Notes"]])
+    .setFontWeight("bold")
+    .setBackground("#eadcf8");
+
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, 6);
+}
+
+function addStageOSParkingLotIdeaPrompt() {
+  const ui = SpreadsheetApp.getUi();
+
+  const response = ui.prompt(
+    "Add Parking Lot Idea",
+    "What's the idea?",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const idea = response.getResponseText().trim();
+  if (!idea) return;
+
+  addStageOSParkingLotIdea_(idea, "");
+
+  ui.alert("Idea added to Parking Lot.");
+}
+
+function addStageOSParkingLotIdea_(idea, notes) {
+  const tracker = getStageOSProjectTracker_();
+  const sh = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.parkingLotSheet);
+  const nextId = "IDEA-" + String(Math.max(1, sh.getLastRow())).padStart(3, "0");
+
+  sh.appendRow([
+    nextId,
+    idea,
+    classifyParkingLotIdea_(idea),
+    new Date(),
+    "No",
+    notes || ""
+  ]);
+}
+
+function classifyParkingLotIdea_(idea) {
+  const text = String(idea || "").toLowerCase();
+
+  if (text.includes("snapshot") || text.includes("decision")) return "Core";
+  if (text.includes("payroll")) return "Payroll";
+  if (text.includes("calendar")) return "Calendar";
+  if (text.includes("report")) return "Report";
+  if (text.includes("home") || text.includes("dashboard")) return "Dashboard";
+  if (text.includes("call") || text.includes("notification")) return "Quality of Life";
+
+  return "Idea";
+}
+
+/*************************************************
+ * BUILD JOURNAL
+ *************************************************/
+
+function buildBuilderJournal_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.logSheet);
+
+  if (sh.getLastRow() > 0) return;
+
+  sh.getRange(1, 1, 1, 8)
+    .setValues([["Timestamp", "Task ID", "Subsystem", "Task", "Completed By", "Version", "Hours", "Notes"]])
+    .setFontWeight("bold")
+    .setBackground("#d9ead3");
+
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, 8);
+}
+
+/*************************************************
+ * DEPENDENCIES
+ *************************************************/
+
+function buildBuilderDependencies_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.dependencySheet);
+  sh.clear();
+
+  const rows = [
+    ["Subsystem", "Depends On", "Reason", "Status"],
+    ["DecisionOS", "SnapshotOS", "Needs previous performance data to compare intelligently.", "Waiting"],
+    ["PayrollOS", "AssignmentOS", "Needs office show, training, crew assignment data.", "Waiting"],
+    ["PayrollOS", "SnapshotOS", "Needs historical performance state.", "Waiting"],
+    ["DashboardOS", "SnapshotOS", "Needs current/latest performance state.", "Waiting"],
+    ["CallOS", "ShowState", "Needs performance time and show schedule.", "Ready"],
+    ["Out Request Wizard", "CalendarOS", "Needs stable calendar write layer.", "Ready"],
+    ["ReportOS", "DecisionOS", "Needs smart note compare before reset.", "Waiting"]
+  ];
+
+  sh.getRange(1, 1, rows.length, 4).setValues(rows);
+  sh.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground("#fce5cd");
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, 4);
+}
+
+/*************************************************
+ * RELEASE PLAN
+ *************************************************/
+
+function buildBuilderReleasePlan_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.releaseSheet);
+  sh.clear();
+
+  const rows = [
+    ["Version", "Theme", "Included Work", "Status"],
+    ["v0.7", "AssignmentOS + Project Builder", "Department cards, training UI, StageOS Builder", "In Progress"],
+    ["v0.8", "Snapshot Engine", "Performance snapshots, latest snapshot reader", "Planned"],
+    ["v0.9", "Decision Intelligence", "Smart report checks, note compare", "Planned"],
+    ["v1.0", "Production Ready Core", "Docs, testing, new show setup baseline", "Planned"],
+    ["v1.1", "Payroll Rewrite", "Snapshot-driven payroll, office show, training pay", "Planned"],
+    ["v1.2", "Out Request Wizard", "Cast/crew outs to trackers and calendars", "Planned"]
+  ];
+
+  sh.getRange(1, 1, rows.length, 4).setValues(rows);
+  sh.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground("#cfe2f3");
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, 4);
+}
+
+/*************************************************
+ * PHILOSOPHY
+ *************************************************/
+
+function buildBuilderPhilosophy_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.philosophySheet);
+  sh.clear();
+
+  const rows = [
+    ["StageOS Product Philosophy"],
+    ["One source of truth."],
+    ["Automate repetitive work."],
+    ["Never overwrite user work without a check."],
+    ["Snapshots before destructive actions."],
+    ["Simple things are simple. Complex things are possible."],
+    ["Build systems, not one-off scripts."],
+    ["Every subsystem should have one clear responsibility."],
+    ["The spreadsheet is the interface. StageOS is the operating system."],
+    ["Preserve history whenever possible."],
+    ["Make daily workflows faster, not heavier."]
+  ];
+
+  sh.getRange(1, 1, rows.length, 1).setValues(rows);
+  sh.getRange("A1").setFontSize(18).setFontWeight("bold").setBackground("#2457c5").setFontColor("#ffd84d");
+  sh.autoResizeColumn(1);
+}
+
+/*************************************************
+ * STATS
+ *************************************************/
+
+function buildBuilderStats_(tracker) {
+  const sh = getOrCreateTrackerSheet_(tracker, STAGEOS_PROJECT_TRACKER.statsSheet);
+  sh.clear();
+
+  sh.getRange("A1").setValue("StageOS Builder Stats").setFontSize(18).setFontWeight("bold");
+
+  sh.getRange("A3").setValue("This sheet refreshes when you run refreshStageOSBuilder().");
+}
+
+/*************************************************
+ * REFRESH
+ *************************************************/
+
+function refreshStageOSBuilder() {
+  const tracker = getStageOSProjectTracker_();
+  buildBuilderStats_(tracker);
+  refreshBuilderStats_(tracker);
+  buildBuilderHome_(tracker);
+
+  SpreadsheetApp.getUi().alert("StageOS Builder refreshed.");
+}
+
+function refreshBuilderStats_(tracker) {
+  const stats = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.statsSheet);
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+  const journal = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.logSheet);
+
+  const rows = roadmap.getDataRange().getDisplayValues().slice(1).filter(row => row[0]);
+  const completed = rows.filter(row => row[4] === "Complete");
+  const inProgress = rows.filter(row => row[4] === "In Progress");
+
+  const bySubsystem = {};
+  rows.forEach(row => {
+    bySubsystem[row[2]] = (bySubsystem[row[2]] || 0) + 1;
+  });
+
+  const topSubsystem = Object.keys(bySubsystem).sort((a, b) => bySubsystem[b] - bySubsystem[a])[0] || "";
+
+  const output = [
+    ["Metric", "Value"],
+    ["Total Tasks", rows.length],
+    ["Completed", completed.length],
+    ["In Progress", inProgress.length],
+    ["Remaining", rows.length - completed.length],
+    ["Largest Subsystem", topSubsystem],
+    ["Build Journal Entries", Math.max(0, journal.getLastRow() - 1)]
+  ];
+
+  stats.getRange(3, 1, output.length, 2).setValues(output);
+  stats.getRange(3, 1, 1, 2).setFontWeight("bold").setBackground("#cfe2f3");
+  stats.autoResizeColumns(1, 2);
+}
+
+/*************************************************
+ * ADD TASKS
+ *************************************************/
+
+function addStageOSTaskPrompt() {
+  const ui = SpreadsheetApp.getUi();
+
+  const taskResponse = ui.prompt(
+    "Add StageOS Task",
+    "What do we need to build/fix?",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (taskResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  const taskName = taskResponse.getResponseText().trim();
+  if (!taskName) return;
+
+  const classified = classifyStageOSTask_(taskName);
+
+  const notesResponse = ui.prompt(
+    "Task Details",
+    "Optional notes/context:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  const notes =
+    notesResponse.getSelectedButton() === ui.Button.OK
+      ? notesResponse.getResponseText().trim()
+      : "";
+
+  const result = addStageOSTask_({
+    phase: classified.phase,
+    subsystem: classified.subsystem,
+    task: taskName,
+    status: "Backlog",
+    priority: classified.priority,
+    estimate: classified.estimate,
+    notes: notes,
+    pipeline: "Dream",
+    dependencies: classified.dependencies || "",
+    version: classified.version || ""
+  });
+
+  refreshStageOSBuilderSilent_();
+
+  ui.alert(
+    "Task added.\n\n" +
+    "Task ID: " + result.taskId + "\n" +
+    "Subsystem: " + classified.subsystem + "\n" +
+    "Estimate: " + classified.estimate
+  );
+}
+
+function addStageOSTask_(task) {
+  const tracker = getStageOSProjectTracker_();
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+
+  const taskId = buildNextStageOSTaskId_(roadmap, task.subsystem);
+
+  roadmap.appendRow([
+    taskId,
+    task.phase || "Backlog",
+    task.subsystem || "General",
+    task.task || "",
+    task.status || "Backlog",
+    task.priority || "Medium",
+    task.estimate || "2 hrs",
+    "",
+    task.notes || "",
+    task.pipeline || "Dream",
+    task.dependencies || "",
+    task.version || ""
+  ]);
+
+  sortStageOSRoadmap_(roadmap);
+  roadmap.autoResizeColumns(1, 12);
+
+  return { taskId };
+}
+
+/*************************************************
+ * COMPLETE TASKS
+ *************************************************/
+
+function completeStageOSTaskPrompt() {
+  const ui = SpreadsheetApp.getUi();
+
+  const task = ui.prompt(
+    "Complete StageOS Task",
+    "Enter Task ID:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (task.getSelectedButton() !== ui.Button.OK) return;
+
+  const notes = ui.prompt(
+    "Completion Notes",
+    "Optional notes:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  completeStageOSTask(
+    task.getResponseText(),
+    notes.getSelectedButton() === ui.Button.OK ? notes.getResponseText() : ""
+  );
+
+  ui.alert("Task marked complete.");
+}
+
+function completeStageOSTask(taskId, notes) {
+  const tracker = getStageOSProjectTracker_();
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+  const log = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.logSheet);
+
+  const values = roadmap.getDataRange().getValues();
+  const now = new Date();
+
+  for (let r = 1; r < values.length; r++) {
+    if (String(values[r][0]).trim() === String(taskId).trim()) {
+      roadmap.getRange(r + 1, 5).setValue("Complete");
+      roadmap.getRange(r + 1, 8).setValue(now);
+      roadmap.getRange(r + 1, 10).setValue("Released");
+
+      if (notes) {
+        roadmap.getRange(r + 1, 9).setValue(notes);
+      }
+
+      log.appendRow([
+        now,
+        values[r][0],
+        values[r][2],
+        values[r][3],
+        Session.getActiveUser().getEmail() || "StageOS",
+        values[r][11] || "",
+        "",
+        notes || ""
+      ]);
+
+      refreshStageOSBuilderSilent_();
+      return true;
+    }
+  }
+
+  throw new Error("Could not find task ID: " + taskId);
+}
+
+/*************************************************
+ * CLASSIFIER
+ *************************************************/
+
+function classifyStageOSTask_(taskName) {
+  const text = String(taskName || "").toLowerCase();
+
+  if (text.includes("snapshot") || text.includes("history")) {
+    return taskClass_("Phase 1", "SnapshotOS", "Critical", "6 hrs", "AssignmentOS", "v0.8");
+  }
+
+  if (text.includes("decision") || text.includes("smart") || text.includes("compare")) {
+    return taskClass_("Phase 1", "DecisionOS", "Critical", "6 hrs", "SnapshotOS", "v0.9");
+  }
+
+  if (
+    text.includes("assignment") ||
+    text.includes("calling") ||
+    text.includes("deck") ||
+    text.includes("a1") ||
+    text.includes("office show") ||
+    text.includes("training")
+  ) {
+    return taskClass_("AssignmentOS", "AssignmentOS", "High", "3 hrs", "", "v0.7");
+  }
+
+  if (
+    text.includes("report") ||
+    text.includes("pdf") ||
+    text.includes("notes") ||
+    text.includes("guest speller")
+  ) {
+    return taskClass_("Performance Report", "ReportOS", "High", "3 hrs", "SnapshotOS / DecisionOS", "v0.9");
+  }
+
+  if (text.includes("calendar") || text.includes("expanded") || text.includes("cancellation")) {
+    return taskClass_("CalendarOS", "CalendarOS", "Medium", "4 hrs", "", "v1.2");
+  }
+
+  if (text.includes("out request") || text.includes("pd tracker") || text.includes("vacation")) {
+    return taskClass_("Wizards", "Out Request Wizard", "High", "6 hrs", "CalendarOS", "v1.2");
+  }
+
+  if (text.includes("new hire") || text.includes("company wizard")) {
+    return taskClass_("Wizards", "New Hire Wizard", "High", "6 hrs", "", "v1.0");
+  }
+
+  if (text.includes("weekly")) {
+    return taskClass_("Weekly", "Weekly Builder", "Medium", "3 hrs", "CalendarOS", "v1.1");
+  }
+
+  if (text.includes("email") || text.includes("gmail") || text.includes("draft")) {
+    return taskClass_("EmailOS", "EmailOS", "Medium", "3 hrs", "", "v1.1");
+  }
+
+  if (text.includes("payroll")) {
+    return taskClass_("PayrollOS", "PayrollOS", "High", "4 hrs", "SnapshotOS / AssignmentOS", "v1.1");
+  }
+
+  if (text.includes("home") || text.includes("dashboard")) {
+    return taskClass_("Home", "Home", "Medium", "3 hrs", "SnapshotOS", "v1.0");
+  }
+
+  if (text.includes("call") || text.includes("notification") || text.includes("places")) {
+    return taskClass_("CallOS", "CallOS", "High", "6 hrs", "ShowState", "v1.3");
+  }
+
+  if (text.includes("dependency") || text.includes("scanner") || text.includes("developer")) {
+    return taskClass_("DeveloperOS", "DeveloperOS", "Medium", "4 hrs", "", "v1.3");
+  }
+
+  if (text.includes("money")) {
+    return taskClass_("MoneyOS", "MoneyOS", "Medium", "4 hrs", "", "");
+  }
+
+  return taskClass_("Backlog", "General", "Medium", "2 hrs", "", "");
+}
+
+function taskClass_(phase, subsystem, priority, estimate, dependencies, version) {
+  return {
+    phase,
+    subsystem,
+    priority,
+    estimate,
+    dependencies: dependencies || "",
+    version: version || ""
+  };
+}
+
+/*************************************************
+ * TASK IDS + SORTING
+ *************************************************/
+
+function buildNextStageOSTaskId_(roadmap, subsystem) {
+  const prefix = getStageOSTaskPrefix_(subsystem);
+  const values = roadmap.getDataRange().getDisplayValues();
+
+  let max = 0;
+
+  values.forEach(row => {
+    const id = String(row[0] || "");
+    const match = id.match(new RegExp("^" + prefix + "-(\\d+)$"));
+
+    if (match) {
+      max = Math.max(max, Number(match[1]));
+    }
+  });
+
+  return prefix + "-" + String(max + 1).padStart(3, "0");
+}
+
+function getStageOSTaskPrefix_(subsystem) {
+  const key = String(subsystem || "").toLowerCase();
+
+  if (key.includes("snapshot")) return "SNAP";
+  if (key.includes("decision")) return "DECIDE";
+  if (key.includes("assignment")) return "ASSIGN";
+  if (key.includes("report")) return "REPORT";
+  if (key.includes("cast")) return "CAST";
+  if (key.includes("calendar")) return "CAL";
+  if (key.includes("out request")) return "OUT";
+  if (key.includes("new hire")) return "HIRE";
+  if (key.includes("weekly")) return "WEEKLY";
+  if (key.includes("email")) return "EMAIL";
+  if (key.includes("payroll")) return "PAYROLL";
+  if (key.includes("home")) return "HOME";
+  if (key.includes("intelligence")) return "INTEL";
+  if (key.includes("call")) return "CALL";
+  if (key.includes("developer")) return "DEV";
+  if (key.includes("money")) return "MONEY";
+
+  return "TASK";
+}
+
+function sortStageOSRoadmap_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 2) return;
+
+  sheet.getRange(2, 1, lastRow - 1, 12).sort([
+    { column: 2, ascending: true },
+    { column: 3, ascending: true },
+    { column: 6, ascending: true },
+    { column: 1, ascending: true }
+  ]);
+}
+
+/*************************************************
+ * SEED ROADMAP
+ *************************************************/
+
+function getStageOSRoadmapSeedRows_() {
+  return [
+    ["SNAP-001", "Phase 1", "SnapshotOS", "Performance Snapshot Engine", "Backlog", "Critical", "6-8 hrs", "", "", "Dream", "AssignmentOS", "v0.8"],
+    ["DECIDE-001", "Phase 1", "DecisionOS", "Compare snapshots for smart report checks", "Backlog", "Critical", "8-12 hrs", "", "", "Dream", "SnapshotOS", "v0.9"],
+    ["ASSIGN-001", "AssignmentOS", "AssignmentOS", "Auto-fill defaults", "Backlog", "High", "3 hrs", "", "", "Dream", "", "v0.7"],
+    ["ASSIGN-002", "AssignmentOS", "AssignmentOS", "Office Show workflow", "Backlog", "High", "4 hrs", "", "", "Dream", "", "v0.7"],
+    ["ASSIGN-003", "AssignmentOS", "AssignmentOS", "Training workflow", "In Progress", "High", "5 hrs", "", "", "Building", "", "v0.7"],
+    ["ASSIGN-004", "AssignmentOS", "AssignmentOS", "Subbing engine", "Backlog", "Medium", "4 hrs", "", "", "Dream", "CastResolverOS", "v0.9"],
+    ["ASSIGN-005", "AssignmentOS", "AssignmentOS", "Assignment history", "Backlog", "Medium", "4 hrs", "", "", "Dream", "SnapshotOS", "v0.8"],
+
+    ["REPORT-001", "Performance Report", "ReportOS", "Snapshot-driven report check", "Backlog", "High", "6 hrs", "", "", "Dream", "SnapshotOS / DecisionOS", "v0.9"],
+    ["REPORT-002", "Performance Report", "ReportOS", "Preserve/reset notes intelligently", "In Progress", "High", "4 hrs", "", "", "Building", "DecisionOS", "v0.9"],
+    ["REPORT-003", "Performance Report", "ReportOS", "Improve PDF output clarity", "Backlog", "Medium", "2 hrs", "", "", "Dream", "", ""],
+    ["REPORT-004", "Performance Report", "ReportOS", "Automatic staffing notes", "Backlog", "High", "3 hrs", "", "", "Dream", "AssignmentOS", "v0.8"],
+    ["REPORT-005", "Performance Report", "ReportOS", "Automatic training notes", "Backlog", "High", "2 hrs", "", "", "Dream", "AssignmentOS", "v0.8"],
+
+    ["CAST-001", "CastResolverOS", "CastResolverOS", "Crew Resolver", "Backlog", "Medium", "6 hrs", "", "", "Dream", "", ""],
+    ["CAST-002", "CastResolverOS", "CastResolverOS", "Multi-layer substitutions", "Backlog", "Medium", "5 hrs", "", "", "Dream", "", ""],
+    ["CAST-003", "CastResolverOS", "CastResolverOS", "Training awareness", "Backlog", "Medium", "4 hrs", "", "", "Dream", "AssignmentOS", ""],
+
+    ["CAL-001", "CalendarOS", "CalendarOS", "Month Builder", "Backlog", "Medium", "4 hrs", "", "", "Dream", "", ""],
+    ["CAL-002", "CalendarOS", "CalendarOS", "Random cancellations", "Backlog", "High", "4 hrs", "", "", "Dream", "", ""],
+    ["CAL-003", "CalendarOS", "CalendarOS", "Mid-run schedule edits", "Backlog", "High", "6 hrs", "", "", "Dream", "", ""],
+    ["CAL-004", "CalendarOS", "CalendarOS", "Known future outs", "Backlog", "Medium", "5 hrs", "", "", "Dream", "", ""],
+
+    ["OUT-001", "Wizards", "Out Request Wizard", "Cast/crew out request automation", "Backlog", "High", "12 hrs", "", "", "Dream", "CalendarOS", "v1.2"],
+    ["HIRE-001", "Wizards", "New Hire Wizard", "Finish reusable new hire flow", "Backlog", "High", "12 hrs", "", "", "Dream", "", "v1.0"],
+
+    ["WEEKLY-001", "Weekly", "Weekly Builder", "Version 2 weekly builder", "Backlog", "Medium", "6 hrs", "", "", "Dream", "CalendarOS", "v1.1"],
+    ["WEEKLY-002", "Weekly", "Weekly Builder", "Outs integration", "Backlog", "Medium", "4 hrs", "", "", "Dream", "CalendarOS", "v1.1"],
+
+    ["EMAIL-001", "EmailOS", "EmailOS", "Refine weekly email builder", "Backlog", "Medium", "4 hrs", "", "", "Dream", "", "v1.1"],
+    ["EMAIL-002", "EmailOS", "EmailOS", "Improve report email/PDF draft", "Backlog", "Medium", "3 hrs", "", "", "Dream", "ReportOS", "v1.1"],
+
+    ["PAYROLL-001", "PayrollOS", "PayrollOS", "Training pay logic", "Backlog", "High", "4 hrs", "", "", "Dream", "AssignmentOS", "v1.1"],
+    ["PAYROLL-002", "PayrollOS", "PayrollOS", "Office Show logic", "Backlog", "High", "4 hrs", "", "", "Dream", "AssignmentOS", "v1.1"],
+    ["PAYROLL-003", "PayrollOS", "PayrollOS", "Crew staffing support", "Backlog", "Medium", "4 hrs", "", "", "Dream", "SnapshotOS", "v1.1"],
+
+    ["HOME-001", "Home", "Home", "Resolver health card", "Backlog", "Medium", "3 hrs", "", "", "Dream", "CastResolverOS", "v1.0"],
+    ["HOME-002", "Home", "Home", "Tonight status card", "Backlog", "Medium", "4 hrs", "", "", "Dream", "SnapshotOS", "v1.0"],
+
+    ["CALL-001", "CallOS", "CallOS", "Quiet Show Call Reminder System", "Backlog", "High", "6 hrs", "", "", "Dream", "ShowState", "v1.3"],
+    ["DEV-001", "DeveloperOS", "DeveloperOS", "Dependency Scanner", "Backlog", "Medium", "8-10 hrs", "", "", "Dream", "", "v1.3"],
+    ["DEV-002", "DeveloperOS", "DeveloperOS", "Expanded Calendar H:Z Dependency Check", "Backlog", "Medium", "2 hrs", "", "", "Dream", "", "v1.3"]
+  ];
+}
+
+/*************************************************
+ * SILENT REFRESH + HELPERS
+ *************************************************/
+
+function refreshStageOSBuilderSilent_() {
+  const tracker = getStageOSProjectTracker_();
+  buildBuilderStats_(tracker);
+  refreshBuilderStats_(tracker);
+  buildBuilderHome_(tracker);
+}
+
+function getOrCreateTrackerSheet_(ss, name) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  return sh;
+}
+
+/*************************************************
+ * STAGEOS BUILDER v2.1
+ * Seed missing default tasks + easier task tools
+ *************************************************/
+
+function seedMissingStageOSTasks() {
+  const tracker = getStageOSProjectTracker_();
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+
+  const existingIds = roadmap
+    .getDataRange()
+    .getDisplayValues()
+    .slice(1)
+    .map(row => String(row[0] || "").trim())
+    .filter(Boolean);
+
+  const existingSet = new Set(existingIds);
+  const seedRows = getStageOSRoadmapSeedRows_();
+
+  let added = 0;
+
+  seedRows.forEach(row => {
+    const taskId = String(row[0] || "").trim();
+    if (!taskId || existingSet.has(taskId)) return;
+
+    roadmap.appendRow(row);
+    added++;
+  });
+
+  sortStageOSRoadmap_(roadmap);
+  roadmap.autoResizeColumns(1, 12);
+  refreshStageOSBuilderSilent_();
+
+  SpreadsheetApp.getUi().alert(
+    "Seed missing tasks complete.\n\nAdded: " + added
+  );
+}
+
+function completeStageOSTaskBySearchPrompt() {
+  const ui = SpreadsheetApp.getUi();
+
+  const response = ui.prompt(
+    "Complete StageOS Task",
+    "Type part of the task name or task ID:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const search = response.getResponseText().trim();
+  if (!search) return;
+
+  const matches = findStageOSTaskMatches_(search);
+
+  if (!matches.length) {
+    ui.alert("No matching tasks found.");
+    return;
+  }
+
+  if (matches.length > 10) {
+    ui.alert(
+      "Too many matches found.\n\nTry a more specific search."
+    );
+    return;
+  }
+
+  const message =
+    "Matching tasks:\n\n" +
+    matches.map((task, index) =>
+      (index + 1) + ". " + task.taskId + " — " + task.task
+    ).join("\n") +
+    "\n\nEnter the number to complete:";
+
+  const choice = ui.prompt(
+    "Choose Task",
+    message,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (choice.getSelectedButton() !== ui.Button.OK) return;
+
+  const index = Number(choice.getResponseText()) - 1;
+  if (isNaN(index) || !matches[index]) {
+    ui.alert("Invalid selection.");
+    return;
+  }
+
+  const notes = ui.prompt(
+    "Completion Notes",
+    "Optional notes:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  completeStageOSTask(
+    matches[index].taskId,
+    notes.getSelectedButton() === ui.Button.OK ? notes.getResponseText() : ""
+  );
+
+  ui.alert("Task completed:\n\n" + matches[index].task);
+}
+
+function findStageOSTaskMatches_(searchText) {
+  const tracker = getStageOSProjectTracker_();
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+  const values = roadmap.getDataRange().getDisplayValues();
+
+  const search = String(searchText || "").toLowerCase().trim();
+
+  return values.slice(1)
+    .filter(row => row[0])
+    .filter(row => String(row[4] || "") !== "Complete")
+    .map(row => ({
+      taskId: String(row[0] || "").trim(),
+      phase: row[1],
+      subsystem: row[2],
+      task: row[3],
+      status: row[4],
+      priority: row[5]
+    }))
+    .filter(task => {
+      const blob = [
+        task.taskId,
+        task.phase,
+        task.subsystem,
+        task.task,
+        task.status,
+        task.priority
+      ].join(" ").toLowerCase();
+
+      return blob.includes(search);
+    });
+}
+
+function setStageOSTaskStatusPrompt() {
+  const ui = SpreadsheetApp.getUi();
+
+  const taskResponse = ui.prompt(
+    "Update Task Status",
+    "Enter task ID:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (taskResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  const taskId = taskResponse.getResponseText().trim();
+  if (!taskId) return;
+
+  const statusResponse = ui.prompt(
+    "New Status",
+    "Enter one: Backlog, In Progress, Testing, Complete, Paused",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (statusResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  updateStageOSTaskStatus_(taskId, statusResponse.getResponseText().trim());
+
+  ui.alert("Task updated.");
+}
+
+function updateStageOSTaskStatus_(taskId, status) {
+  const allowed = ["Backlog", "In Progress", "Testing", "Complete", "Paused"];
+  if (!allowed.includes(status)) {
+    throw new Error("Invalid status: " + status);
+  }
+
+  const tracker = getStageOSProjectTracker_();
+  const roadmap = tracker.getSheetByName(STAGEOS_PROJECT_TRACKER.roadmapSheet);
+  const values = roadmap.getDataRange().getValues();
+
+  for (let r = 1; r < values.length; r++) {
+    if (String(values[r][0]).trim() === String(taskId).trim()) {
+      roadmap.getRange(r + 1, 5).setValue(status);
+
+      if (status === "Complete") {
+        roadmap.getRange(r + 1, 8).setValue(new Date());
+        roadmap.getRange(r + 1, 10).setValue("Released");
+      }
+
+      refreshStageOSBuilderSilent_();
+      return true;
+    }
+  }
+
+  throw new Error("Could not find task ID: " + taskId);
+}
+
+function addStageOSCallOSTask() {
+  addStageOSTask_({
+    phase: "CallOS",
+    subsystem: "CallOS",
+    task: "Quiet Show Call Reminder System",
+    status: "Backlog",
+    priority: "High",
+    estimate: "6 hrs",
+    notes: "Non-blocking spreadsheet toast reminders for Half Hour, 15, 10, 5, and Places.",
+    pipeline: "Dream",
+    dependencies: "ShowState",
+    version: "v1.3"
+  });
+
+  refreshStageOSBuilderSilent_();
+  SpreadsheetApp.getUi().alert("CallOS task added.");
+}

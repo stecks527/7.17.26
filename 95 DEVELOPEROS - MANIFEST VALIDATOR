@@ -1,0 +1,50 @@
+/*************************************************
+ * 95 DEVELOPEROS - MANIFEST VALIDATOR
+ * Version: 1.0.0
+ *
+ * Verifies that the StageOS architecture matches
+ * the StageOS Manifest.
+ *************************************************/
+
+function developerOSValidateManifest() {
+
+  Logger.log("================================");
+  Logger.log("STAGEOS MANIFEST VALIDATION");
+  Logger.log("================================");
+
+  const systems = [
+    "HomeOS",
+    "ShowStateOS",
+    "PerformanceAssignmentOS",
+    "PerformanceStaffingOS",
+    "CastResolverOS",
+    "DecisionOS",
+    "PrepOS",
+    "ReportOS",
+    "SnapshotOS",
+    "PayrollOS",
+    "WeeklyOS",
+    "CompanyOS",
+    "DeveloperOS"
+  ];
+
+  const results = systems.map(function(name){
+
+    return {
+      system: name,
+      available:
+        typeof this[name] === "function"
+    };
+
+  }, globalThis);
+
+  Logger.log(
+    JSON.stringify(results, null, 2)
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "Manifest validation complete.\n\nSee Execution Log."
+  );
+
+  return results;
+}

@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    :root {
+      --page: #f3f1ec;
+      --paper: #ffffff;
+      --ink: #171717;
+      --muted: #706b63;
+      --line: #1e1e1e;
+      --soft-line: #d9d4ca;
+      --blue: #315fae;
+      --blue-soft: #eef4ff;
+      --gold: #b68a28;
+      --gold-soft: #fff8e5;
+      --neutral: #f7f6f2;
+      --danger: #9b2828;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: Arial, sans-serif;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: var(--blue);
+      color: white;
+      padding: 18px 24px 16px;
+      border-bottom: 4px solid #244985;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      opacity: .82;
+      text-transform: uppercase;
+    }
+
+    .performance {
+      margin-top: 4px;
+      font-size: 25px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .date {
+      margin-top: 4px;
+      font-size: 17px;
+      text-align: center;
+    }
+
+    .content {
+      padding: 18px 20px 105px;
+    }
+
+    .summary {
+      max-width: 800px;
+      margin: 0 auto 14px;
+      background: var(--paper);
+      border: 1px solid var(--soft-line);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .summary-title {
+      font-size: 14px;
+      font-weight: 900;
+      margin-bottom: 7px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .summary-stat {
+      background: var(--neutral);
+      border: 1px solid var(--soft-line);
+      border-radius: 9px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    .summary-number {
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .summary-label {
+      margin-top: 2px;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .source-note {
+      max-width: 800px;
+      margin: 0 auto 14px;
+      padding: 11px 14px;
+      background: var(--gold-soft);
+      border: 1px solid #dec36f;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .bulk-controls {
+      max-width: 800px;
+      margin: 0 auto 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 9px;
+      padding: 10px 14px;
+      font-family: Arial, sans-serif;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .bulk-button {
+      background: white;
+      border: 1px solid var(--soft-line);
+      color: var(--ink);
+    }
+
+    .report-paper {
+      max-width: 800px;
+      margin: 0 auto;
+      background: var(--paper);
+      border: 2px solid var(--line);
+      box-shadow: 0 7px 22px rgba(0, 0, 0, .08);
+    }
+
+    .report-group {
+      border-bottom: 2px solid var(--line);
+    }
+
+    .report-group:last-child {
+      border-bottom: 0;
+    }
+
+    .group-title {
+      padding: 8px 10px 7px;
+      border-bottom: 2px solid var(--line);
+      font-size: 15px;
+      font-weight: 900;
+      text-decoration: underline;
+      background: #fff;
+    }
+
+    .section-row {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-row:last-child {
+      border-bottom: 0;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      padding: 8px 10px 5px;
+      font-size: 13px;
+      font-weight: 900;
+      text-decoration: underline;
+    }
+
+    .section-body {
+      min-height: 38px;
+      padding: 1px 10px 10px;
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.42;
+    }
+
+    .section-row.existing {
+      background: var(--gold-soft);
+    }
+
+    .section-row.existing.keep {
+      background: var(--blue-soft);
+    }
+
+    .section-row.neutral {
+      background: #fff;
+      color: var(--muted);
+    }
+
+    .keep-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      text-decoration: none;
+      color: var(--ink);
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .keep-control input {
+      width: 17px;
+      height: 17px;
+      margin: 0;
+    }
+
+    .neutral-pill {
+      border: 1px solid var(--soft-line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: var(--neutral);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+
+    .neutral-copy {
+      color: #8a857d;
+      font-style: italic;
+    }
+
+    .footer {
+      position: fixed;
+      z-index: 8;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px;
+      background: rgba(243, 241, 236, .98);
+      border-top: 1px solid var(--soft-line);
+      box-shadow: 0 -4px 15px rgba(0, 0, 0, .06);
+    }
+
+    .status {
+      margin-right: auto;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .cancel {
+      background: white;
+      border: 1px solid var(--soft-line);
+      color: var(--ink);
+    }
+
+    .reset {
+      background: var(--blue);
+      color: white;
+      min-width: 165px;
+    }
+
+    .reset:disabled,
+    .cancel:disabled,
+    .bulk-button:disabled {
+      opacity: .55;
+      cursor: default;
+    }
+
+    @media (max-width: 680px) {
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .performance {
+        font-size: 21px;
+      }
+
+      .footer {
+        flex-wrap: wrap;
+      }
+
+      .status {
+        width: 100%;
+        margin-right: 0;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="eyebrow">
+      Performance Report Reset Preview
+    </div>
+
+    <div
+      class="performance"
+      id="performance"
+    ></div>
+
+    <div
+      class="date"
+      id="date"
+    ></div>
+  </header>
+
+  <main class="content">
+    <section
+      class="summary"
+    >
+      <div class="summary-title">
+        Reset review
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-stat">
+          <div
+            class="summary-number"
+            id="existingCount"
+          >
+            0
+          </div>
+
+          <div class="summary-label">
+            Existing Notes
+          </div>
+        </div>
+
+        <div class="summary-stat">
+          <div
+            class="summary-number"
+            id="keepCount"
+          >
+            0
+          </div>
+
+          <div class="summary-label">
+            Keeping
+          </div>
+        </div>
+
+        <div class="summary-stat">
+          <div
+            class="summary-number"
+            id="neutralCount"
+          >
+            0
+          </div>
+
+          <div class="summary-label">
+            Neutral Sections
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="source-note">
+      Fresh IN/OUT notes will still be routed automatically.
+      Existing notes checked below will be merged with those
+      new notes after the report resets.
+    </div>
+
+    <div class="bulk-controls">
+      <button
+        class="bulk-button"
+        type="button"
+        onclick="setAllExisting(true)"
+      >
+        Keep All Existing Notes
+      </button>
+
+      <button
+        class="bulk-button"
+        type="button"
+        onclick="setAllExisting(false)"
+      >
+        Reset All Existing Notes
+      </button>
+    </div>
+
+    <section
+      class="report-paper"
+      id="reportPaper"
+    ></section>
+  </main>
+
+  <footer class="footer">
+    <div
+      class="status"
+      id="status"
+    ></div>
+
+    <button
+      class="cancel"
+      type="button"
+      onclick="closeDialog()"
+    >
+      Cancel
+    </button>
+
+    <button
+      class="reset"
+      id="runButton"
+      type="button"
+      onclick="runReset()"
+    >
+      Reset Performance Report
+    </button>
+  </footer>
+
+  <script>
+    const data =
+      <?!= dataJson ?>;
+
+    function render() {
+      const decision =
+        data.decision || {};
+
+      const state =
+        data.state || {};
+
+      document
+        .getElementById(
+          "performance"
+        )
+        .textContent =
+          decision.performance ||
+          readPerformanceFromState_(state) ||
+          "PERFORMANCE REPORT";
+
+      document
+        .getElementById(
+          "date"
+        )
+        .textContent =
+          buildDateLine_(
+            decision,
+            state
+          );
+
+      document
+        .getElementById(
+          "existingCount"
+        )
+        .textContent =
+          decision.counts
+            ? decision.counts.real
+            : 0;
+
+      document
+        .getElementById(
+          "neutralCount"
+        )
+        .textContent =
+          decision.counts
+            ? decision.counts.neutral
+            : 0;
+
+      const groups =
+        decision.groups || [];
+
+      document
+        .getElementById(
+          "reportPaper"
+        )
+        .innerHTML =
+          groups.map(
+            renderGroup_
+          ).join("");
+
+      refreshKeepCount_();
+      refreshRowStyles_();
+    }
+
+
+    function renderGroup_(
+      group
+    ) {
+      const sections =
+        group.sections || [];
+
+      return `
+        <div class="report-group">
+          <div class="group-title">
+            ${escapeHtml_(
+              group.title || ""
+            )}
+          </div>
+
+          ${sections.map(
+            renderSection_
+          ).join("")}
+        </div>
+      `;
+    }
+
+
+    function renderSection_(
+      section
+    ) {
+      const sectionId =
+        "section_" +
+        escapeAttr_(
+          section.id || ""
+        );
+
+      const rowClass =
+        section.isReal
+          ? "section-row existing keep"
+          : "section-row neutral";
+
+      const control =
+        section.isReal
+          ? `
+              <label class="keep-control">
+                <input
+                  type="checkbox"
+                  class="preserve-note"
+                  data-header="${escapeAttr_(
+                    section.header || ""
+                  )}"
+                  data-row="${escapeAttr_(
+                    section.row || ""
+                  )}"
+                  checked
+                  onchange="noteChoiceChanged_()"
+                >
+                KEEP
+              </label>
+            `
+          : `
+              <span class="neutral-pill">
+                Resets Normally
+              </span>
+            `;
+
+      const bodyClass =
+        section.isReal
+          ? "section-body"
+          : "section-body neutral-copy";
+
+      return `
+        <div
+          class="${rowClass}"
+          id="${sectionId}"
+          data-section-id="${escapeAttr_(
+            section.id || ""
+          )}"
+        >
+          <div class="section-header">
+            <span>
+              ${escapeHtml_(
+                section.label || ""
+              )}
+            </span>
+
+            ${control}
+          </div>
+
+          <div class="${bodyClass}">
+            ${escapeHtml_(
+              section.displayText || ""
+            )}
+          </div>
+        </div>
+      `;
+    }
+
+
+    function noteChoiceChanged_() {
+      refreshKeepCount_();
+      refreshRowStyles_();
+    }
+
+
+    function refreshKeepCount_() {
+      const checked =
+        document.querySelectorAll(
+          ".preserve-note:checked"
+        ).length;
+
+      document
+        .getElementById(
+          "keepCount"
+        )
+        .textContent =
+          checked;
+    }
+
+
+    function refreshRowStyles_() {
+      document
+        .querySelectorAll(
+          ".preserve-note"
+        )
+        .forEach(
+          function (
+            checkbox
+          ) {
+            const row =
+              checkbox.closest(
+                ".section-row"
+              );
+
+            if (!row) {
+              return;
+            }
+
+            row.classList.toggle(
+              "keep",
+              checkbox.checked
+            );
+          }
+        );
+    }
+
+
+    function setAllExisting(
+      checked
+    ) {
+      document
+        .querySelectorAll(
+          ".preserve-note"
+        )
+        .forEach(
+          function (
+            checkbox
+          ) {
+            checkbox.checked =
+              checked;
+          }
+        );
+
+      document
+        .getElementById(
+          "status"
+        )
+        .textContent =
+          checked
+            ? "All existing notes will be kept."
+            : "All existing notes will reset to neutral.";
+
+      refreshKeepCount_();
+      refreshRowStyles_();
+    }
+
+
+    function getPreservedSelections_() {
+      return Array.from(
+        document.querySelectorAll(
+          ".preserve-note:checked"
+        )
+      ).map(
+        function (
+          checkbox
+        ) {
+          return {
+            header:
+              checkbox.getAttribute(
+                "data-header"
+              ) || "",
+
+            row:
+              Number(
+                checkbox.getAttribute(
+                  "data-row"
+                ) || 0
+              )
+          };
+        }
+      ).filter(
+        function (
+          selection
+        ) {
+          return (
+            selection.header &&
+            selection.row
+          );
+        }
+      );
+    }
+
+
+    function runReset() {
+      const button =
+        document.getElementById(
+          "runButton"
+        );
+
+      setBusy_(
+        true
+      );
+
+      document
+        .getElementById(
+          "status"
+        )
+        .textContent =
+          "Resetting Performance Report...";
+
+      google.script.run
+        .withSuccessHandler(
+          function (
+            result
+          ) {
+            if (
+              !result ||
+              result.success === false
+            ) {
+              setBusy_(
+                false
+              );
+
+              document
+                .getElementById(
+                  "status"
+                )
+                .textContent =
+                  "Error: " +
+                  (
+                    result &&
+                    result.message
+                      ? result.message
+                      : "Unknown error"
+                  );
+
+              return;
+            }
+
+            document
+              .getElementById(
+                "status"
+              )
+              .textContent =
+                "Reset complete. " +
+                (
+                  result.restored ||
+                  0
+                ) +
+                " existing note section" +
+                (
+                  Number(
+                    result.restored ||
+                    0
+                  ) === 1
+                    ? ""
+                    : "s"
+                ) +
+                " kept.";
+
+            setTimeout(
+              function () {
+                google.script.host.close();
+              },
+              900
+            );
+          }
+        )
+        .withFailureHandler(
+          function (
+            err
+          ) {
+            setBusy_(
+              false
+            );
+
+            document
+              .getElementById(
+                "status"
+              )
+              .textContent =
+                "Error: " +
+                (
+                  err &&
+                  err.message
+                    ? err.message
+                    : err
+                );
+          }
+        )
+        .reportOSRunResetWithDecision(
+          data.mode ||
+          "AUTO",
+          getPreservedSelections_()
+        );
+    }
+
+
+    function setBusy_(
+      busy
+    ) {
+      document
+        .querySelectorAll(
+          "button, input"
+        )
+        .forEach(
+          function (
+            element
+          ) {
+            element.disabled =
+              busy;
+          }
+        );
+    }
+
+
+    function closeDialog() {
+      google.script.host.close();
+    }
+
+
+    function buildDateLine_(
+      decision,
+      state
+    ) {
+      const date =
+        decision.date ||
+        state.date ||
+        "";
+
+      const mode =
+        decision.mode &&
+        decision.mode !== "AUTO"
+          ? decision.mode
+          : (
+              state.mode &&
+              state.mode !== "UNKNOWN"
+                ? state.mode
+                : ""
+            );
+
+      return [
+        date,
+        mode
+      ]
+        .filter(
+          Boolean
+        )
+        .join(
+          " • "
+        );
+    }
+
+
+    function readPerformanceFromState_(
+      state
+    ) {
+      const reportHeader =
+        state.reportHeader ||
+        {};
+
+      return (
+        state.performance ||
+        state.performanceText ||
+        reportHeader.number ||
+        reportHeader.performance ||
+        ""
+      );
+    }
+
+
+    function escapeHtml_(
+      value
+    ) {
+      return String(
+        value == null
+          ? ""
+          : value
+      )
+        .replace(
+          /&/g,
+          "&amp;"
+        )
+        .replace(
+          /</g,
+          "&lt;"
+        )
+        .replace(
+          />/g,
+          "&gt;"
+        )
+        .replace(
+          /"/g,
+          "&quot;"
+        )
+        .replace(
+          /'/g,
+          "&#39;"
+        );
+    }
+
+
+    function escapeAttr_(
+      value
+    ) {
+      return escapeHtml_(
+        value
+      );
+    }
+
+
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+/*************************************************
+ * REPORT WRITER OS
+ * Version: 0.1.0
+ *
+ * Coordinates all ReportOS section writers.
+ *************************************************/
+
+function ReportWriterOS() {
+  return {
+    header: reportWriterHeader_,
+    staffing: reportWriterStaffing_,
+    cast: reportWriterCast_,
+    schedule: reportWriterSchedule_,
+    notes: reportWriterNotes_,
+    guest: reportWriterGuest_,
+    all: reportWriterAll_
+  };
+}
+
+function reportWriterHeader_(state) {
+  reportOSWriteHeader_(state);
+}
+
+function reportWriterStaffing_(state) {
+  reportOSWriteStaffing_(state);
+}
+
+function reportWriterCast_(state) {
+  reportOSWriteCastOuts_(state);
+}
+
+function reportWriterSchedule_(state) {
+  reportOSWriteSchedule_(state);
+}
+
+function reportWriterNotes_(state) {
+  const notes = ReportNotesOS().collect(state);
+  const categorized = ReportNotesOS().categorize(notes);
+  const merged = ReportNotesOS().merge(categorized);
+
+  ReportNotesOS().write(merged);
+}
+
+function reportWriterGuest_(state) {
+  const guest = ReportGuestOS().build(state);
+  ReportGuestOS().write(guest);
+}
+
+function reportWriterAll_(state) {
+  reportWriterHeader_(state);
+  reportWriterStaffing_(state);
+  reportWriterCast_(state);
+  reportWriterSchedule_(state);
+  reportWriterNotes_(state);
+  reportWriterGuest_(state);
+}

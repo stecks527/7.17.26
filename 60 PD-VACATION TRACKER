@@ -1,0 +1,56 @@
+/*************************************************
+ * 60 PD/VACATION TRACKER
+ *************************************************/
+
+function updatePdVacationTrackerRows() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("PD/Vacation Tracker");
+  if (!sheet) throw new Error('Could not find tab "PD/Vacation Tracker".');
+
+  const START_ROW = 5;
+  const LAST_COL = 6; // A:F
+  const DATE_COL = 2; // B
+  const LIGHT_BLUE = "#cfe2f3";
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const sevenDaysFromNow = new Date(today);
+  sevenDaysFromNow.setDate(today.getDate() + 7);
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < START_ROW) return;
+
+  for (let row = lastRow; row >= START_ROW; row--) {
+    const dateValue = sheet.getRange(row, DATE_COL).getValue();
+
+    // Skip actor name rows / blank spacer rows
+    if (!(dateValue instanceof Date)) continue;
+
+    const rowDate = new Date(dateValue);
+    rowDate.setHours(0, 0, 0, 0);
+
+    // Delete rows after the date has passed
+    if (rowDate < today) {
+      sheet.deleteRow(row);
+      continue;
+    }
+
+    const rowRange = sheet.getRange(row, 1, 1, LAST_COL);
+
+    // Highlight rows happening within the next 7 days
+    if (rowDate <= sevenDaysFromNow) {
+      rowRange.setBackground(LIGHT_BLUE);
+    } else {
+      rowRange.setBackground(null);
+    }
+  }
+}
+
+function createPdVacationTrackerDailyTrigger() {
+  ScriptApp.newTrigger("updatePdVacationTrackerRows")
+    .timeBased()
+    .everyDays(1)
+    .atHour(7)
+    .create();
+}

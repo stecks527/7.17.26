@@ -1,0 +1,1025 @@
+/*************************************************
+ * 04 DEVELOPEROS - DEPENDENCY REGISTRY
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Adds registry-backed "Where is this used?" tools.
+ *
+ * IMPORTANT:
+ * This does not scan Apps Script source automatically.
+ * Relationships are seeded or added as we confirm them.
+ *************************************************/
+
+const DEVELOPEROS_DEPENDENCY_INDEX_SHEET =
+  "_STAGEOS_DEPENDENCY_INDEX";
+
+
+/*************************************************
+ * FIND FUNCTION USAGE
+ *************************************************/
+
+function developerOSFindFunctionUsagePrompt() {
+  const ui =
+    SpreadsheetApp.getUi();
+
+  const response =
+    ui.prompt(
+      "Where Is This Function Used?",
+      "Enter a function name or partial name:",
+      ui.ButtonSet.OK_CANCEL
+    );
+
+  if (
+    response.getSelectedButton() !==
+      ui.Button.OK
+  ) {
+    return null;
+  }
+
+  const query =
+    String(
+      response.getResponseText() || ""
+    ).trim();
+
+  if (!query) {
+    ui.alert(
+      "Enter a function name."
+    );
+
+    return null;
+  }
+
+  const result =
+    developerOSFindFunctionUsage_(
+      query
+    );
+
+  if (
+    !result.definitions.length &&
+    !result.relationships.length
+  ) {
+    ui.alert(
+      "No indexed definition or relationship matched:\n\n" +
+      query +
+      "\n\n" +
+      "Use Add Function Relationship after confirming a call or dependency."
+    );
+
+    return result;
+  }
+
+  const definitionText =
+    result.definitions.length
+      ? result.definitions
+          .slice(0, 10)
+          .map(
+            function (item) {
+              return (
+                "• " +
+                item.functionName +
+                "\n  File: " +
+                item.fileName +
+                "\n  System: " +
+                (
+                  item.system ||
+                  "Unassigned"
+                )
+              );
+            }
+          )
+          .join("\n\n")
+      : "No indexed definition.";
+
+  const incoming =
+    result.relationships.filter(
+      function (item) {
+        return (
+          developerOSNormalizeSearch_(
+            item.relatedFunction
+          ) ===
+          developerOSNormalizeSearch_(
+            result.bestFunctionName
+          )
+        );
+      }
+    );
+
+  const outgoing =
+    result.relationships.filter(
+      function (item) {
+        return (
+          developerOSNormalizeSearch_(
+            item.functionName
+          ) ===
+          developerOSNormalizeSearch_(
+            result.bestFunctionName
+          )
+        );
+      }
+    );
+
+  const incomingText =
+    incoming.length
+      ? incoming
+          .slice(0, 20)
+          .map(
+            function (item) {
+              return (
+                "• " +
+                item.functionName +
+                " (" +
+                item.relationship +
+                ")" +
+                "\n  File: " +
+                (
+                  item.fileName ||
+                  "Unknown"
+                )
+              );
+            }
+          )
+          .join("\n\n")
+      : "No registered callers.";
+
+  const outgoingText =
+    outgoing.length
+      ? outgoing
+          .slice(0, 20)
+          .map(
+            function (item) {
+              return (
+                "• " +
+                item.relationship +
+                " → " +
+                item.relatedFunction +
+                "\n  Related file: " +
+                (
+                  item.relatedFile ||
+                  "Unknown"
+                )
+              );
+            }
+          )
+          .join("\n\n")
+      : "No registered dependencies.";
+
+  ui.alert(
+    "Function Usage — " +
+    result.bestFunctionName,
+    [
+      "DEFINED IN",
+      definitionText,
+      "",
+      "CALLED / USED BY",
+      incomingText,
+      "",
+      "CALLS / DEPENDS ON",
+      outgoingText
+    ].join("\n"),
+    ui.ButtonSet.OK
+  );
+
+  return result;
+}
+
+
+function developerOSFindFunctionUsage_(
+  query
+) {
+  const definitions =
+    typeof developerOSFindFunction_ ===
+      "function"
+      ? developerOSFindFunction_(
+          query
+        )
+      : [];
+
+  const sheet =
+    developerOSGetOrCreateDependencyIndexSheet_();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  const relationships =
+    lastRow >= 2
+      ? sheet
+          .getRange(
+            2,
+            1,
+            lastRow - 1,
+            8
+          )
+          .getDisplayValues()
+          .map(
+            function (row) {
+              return {
+                functionName:
+                  row[0],
+
+                fileName:
+                  row[1],
+
+                relationship:
+                  row[2],
+
+                relatedFunction:
+                  row[3],
+
+                relatedFile:
+                  row[4],
+
+                system:
+                  row[5],
+
+                notes:
+                  row[6],
+
+                updatedAt:
+                  row[7]
+              };
+            }
+          )
+      : [];
+
+  const wanted =
+    developerOSNormalizeSearch_(
+      query
+    );
+
+  const matchingRelationships =
+    relationships.filter(
+      function (item) {
+        return (
+          developerOSNormalizeSearch_(
+            [
+              item.functionName,
+              item.relatedFunction,
+              item.fileName,
+              item.relatedFile,
+              item.system,
+              item.notes
+            ].join(" ")
+          ).includes(
+            wanted
+          )
+        );
+      }
+    );
+
+  const bestFunctionName =
+    definitions.length
+      ? definitions[0].functionName
+      : developerOSBestRelationshipFunctionName_(
+          matchingRelationships,
+          query
+        );
+
+  return {
+    query:
+      query,
+
+    bestFunctionName:
+      bestFunctionName || query,
+
+    definitions:
+      definitions,
+
+    relationships:
+      matchingRelationships
+  };
+}
+
+
+function developerOSBestRelationshipFunctionName_(
+  relationships,
+  query
+) {
+  const wanted =
+    developerOSNormalizeSearch_(
+      query
+    );
+
+  const candidates = [];
+
+  relationships.forEach(
+    function (item) {
+      [
+        item.functionName,
+        item.relatedFunction
+      ].forEach(
+        function (name) {
+          const normalized =
+            developerOSNormalizeSearch_(
+              name
+            );
+
+          if (
+            normalized &&
+            normalized.includes(
+              wanted
+            )
+          ) {
+            candidates.push(
+              name
+            );
+          }
+        }
+      );
+    }
+  );
+
+  return candidates.length
+    ? candidates[0]
+    : "";
+}
+
+
+/*************************************************
+ * ADD RELATIONSHIP
+ *************************************************/
+
+function developerOSAddFunctionRelationshipPrompt() {
+  const ui =
+    SpreadsheetApp.getUi();
+
+  const sourceResponse =
+    ui.prompt(
+      "Add Function Relationship",
+      "Source function (the function making the call):",
+      ui.ButtonSet.OK_CANCEL
+    );
+
+  if (
+    sourceResponse.getSelectedButton() !==
+      ui.Button.OK
+  ) {
+    return null;
+  }
+
+  const functionName =
+    String(
+      sourceResponse.getResponseText() || ""
+    ).trim();
+
+  if (!functionName) {
+    return null;
+  }
+
+  const relatedResponse =
+    ui.prompt(
+      "Add Function Relationship",
+      "Related function (the function being called or used):",
+      ui.ButtonSet.OK_CANCEL
+    );
+
+  if (
+    relatedResponse.getSelectedButton() !==
+      ui.Button.OK
+  ) {
+    return null;
+  }
+
+  const relatedFunction =
+    String(
+      relatedResponse.getResponseText() || ""
+    ).trim();
+
+  if (!relatedFunction) {
+    return null;
+  }
+
+  const sourceDefinition =
+    developerOSFindExactFunctionDefinition_(
+      functionName
+    );
+
+  const relatedDefinition =
+    developerOSFindExactFunctionDefinition_(
+      relatedFunction
+    );
+
+  const entry = {
+    functionName:
+      functionName,
+
+    fileName:
+      sourceDefinition
+        ? sourceDefinition.fileName
+        : "",
+
+    relationship:
+      "CALLS",
+
+    relatedFunction:
+      relatedFunction,
+
+    relatedFile:
+      relatedDefinition
+        ? relatedDefinition.fileName
+        : "",
+
+    system:
+      sourceDefinition
+        ? sourceDefinition.system
+        : "",
+
+    notes:
+      "Manually confirmed."
+  };
+
+  developerOSUpsertDependencyEntries_(
+    [entry]
+  );
+
+  ui.alert(
+    "Function relationship indexed:\n\n" +
+    functionName +
+    "\nCALLS\n" +
+    relatedFunction
+  );
+
+  return entry;
+}
+
+
+function developerOSFindExactFunctionDefinition_(
+  functionName
+) {
+  if (
+    typeof developerOSFindFunction_ !==
+      "function"
+  ) {
+    return null;
+  }
+
+  const wanted =
+    developerOSNormalizeSearch_(
+      functionName
+    );
+
+  return (
+    developerOSFindFunction_(
+      functionName
+    ).find(
+      function (item) {
+        return (
+          developerOSNormalizeSearch_(
+            item.functionName
+          ) === wanted
+        );
+      }
+    ) || null
+  );
+}
+
+
+/*************************************************
+ * OPEN DEPENDENCY INDEX
+ *************************************************/
+
+function developerOSOpenDependencyIndex() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheet =
+    developerOSGetOrCreateDependencyIndexSheet_();
+
+  if (sheet.isSheetHidden()) {
+    sheet.showSheet();
+  }
+
+  ss.setActiveSheet(
+    sheet
+  );
+
+  sheet.activate();
+
+  return true;
+}
+
+
+/*************************************************
+ * DEPENDENCY INDEX SHEET
+ *************************************************/
+
+function developerOSGetOrCreateDependencyIndexSheet_() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      DEVELOPEROS_DEPENDENCY_INDEX_SHEET
+    );
+
+  if (!sheet) {
+    sheet =
+      ss.insertSheet(
+        DEVELOPEROS_DEPENDENCY_INDEX_SHEET
+      );
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        8
+      )
+      .setValues([
+        [
+          "Function",
+          "File",
+          "Relationship",
+          "Related Function",
+          "Related File",
+          "System",
+          "Notes",
+          "Updated At"
+        ]
+      ])
+      .setFontWeight(
+        "bold"
+      )
+      .setBackground(
+        "#1f1b17"
+      )
+      .setFontColor(
+        "#ffffff"
+      );
+
+    sheet.setFrozenRows(
+      1
+    );
+
+    [
+      260,
+      300,
+      120,
+      260,
+      300,
+      150,
+      360,
+      170
+    ].forEach(
+      function (
+        width,
+        index
+      ) {
+        sheet.setColumnWidth(
+          index + 1,
+          width
+        );
+      }
+    );
+
+    sheet
+      .getRange(
+        1,
+        1,
+        sheet.getMaxRows(),
+        8
+      )
+      .setFontFamily(
+        "Arial"
+      )
+      .setVerticalAlignment(
+        "top"
+      );
+
+    sheet.hideSheet();
+  }
+
+  return sheet;
+}
+
+
+/*************************************************
+ * UPSERT RELATIONSHIPS
+ *************************************************/
+
+function developerOSUpsertDependencyEntries_(
+  entries
+) {
+  const sheet =
+    developerOSGetOrCreateDependencyIndexSheet_();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  const existing =
+    lastRow >= 2
+      ? sheet
+          .getRange(
+            2,
+            1,
+            lastRow - 1,
+            8
+          )
+          .getValues()
+      : [];
+
+  const rowByKey = {};
+
+  existing.forEach(
+    function (
+      row,
+      index
+    ) {
+      rowByKey[
+        developerOSDependencyKey_(
+          row[0],
+          row[2],
+          row[3]
+        )
+      ] =
+        index + 2;
+    }
+  );
+
+  const rowsToAppend = [];
+
+  entries.forEach(
+    function (entry) {
+      const functionName =
+        String(
+          entry.functionName || ""
+        ).trim();
+
+      const relationship =
+        String(
+          entry.relationship || "CALLS"
+        ).trim().toUpperCase();
+
+      const relatedFunction =
+        String(
+          entry.relatedFunction || ""
+        ).trim();
+
+      if (
+        !functionName ||
+        !relatedFunction
+      ) {
+        return;
+      }
+
+      const row = [
+        functionName,
+        entry.fileName || "",
+        relationship,
+        relatedFunction,
+        entry.relatedFile || "",
+        entry.system || "",
+        entry.notes || "",
+        new Date()
+      ];
+
+      const key =
+        developerOSDependencyKey_(
+          functionName,
+          relationship,
+          relatedFunction
+        );
+
+      if (rowByKey[key]) {
+        sheet
+          .getRange(
+            rowByKey[key],
+            1,
+            1,
+            8
+          )
+          .setValues([
+            row
+          ]);
+
+      } else {
+        rowsToAppend.push(
+          row
+        );
+      }
+    }
+  );
+
+  if (rowsToAppend.length) {
+    sheet
+      .getRange(
+        sheet.getLastRow() + 1,
+        1,
+        rowsToAppend.length,
+        8
+      )
+      .setValues(
+        rowsToAppend
+      );
+  }
+
+  if (sheet.getLastRow() >= 3) {
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        8
+      )
+      .sort([
+        {
+          column:
+            6,
+
+          ascending:
+            true
+        },
+
+        {
+          column:
+            1,
+
+          ascending:
+            true
+        },
+
+        {
+          column:
+            4,
+
+          ascending:
+            true
+        }
+      ]);
+  }
+
+  return {
+    processed:
+      entries.length,
+
+    appended:
+      rowsToAppend.length
+  };
+}
+
+
+/*************************************************
+ * SEED CONFIRMED RELATIONSHIPS
+ *************************************************/
+
+function developerOSSeedCoreDependencies() {
+  const entries = [
+    {
+      functionName:
+        "prepOS_applyPayload",
+
+      fileName:
+        "PREPOS V2.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "PrepOS",
+
+      relatedFile:
+        "PREPOS V2.gs",
+
+      system:
+        "PrepOS",
+
+      notes:
+        "Browser endpoint delegates to PrepOS().apply()."
+    },
+
+    {
+      functionName:
+        "prepOS_applyPayload",
+
+      fileName:
+        "PREPOS V2.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "prepStorePostResetPayload",
+
+      relatedFile:
+        "43b PREP POST COMMIT.gs",
+
+      system:
+        "PrepOS",
+
+      notes:
+        "Stores the complete successful Prep payload."
+    },
+
+    {
+      functionName:
+        "testPayrollScheduleOSPrepCoverage",
+
+      fileName:
+        "36a PAYROLLSCHEDULEOS - CORE.gs",
+
+      relationship:
+        "READS",
+
+      relatedFunction:
+        "prepStorePostResetPayload",
+
+      relatedFile:
+        "43b PREP POST COMMIT.gs",
+
+      system:
+        "PayrollOS",
+
+      notes:
+        "Reads the stored post-reset payload property."
+    },
+
+    {
+      functionName:
+        "fillPayrollFromCurrentWeekly",
+
+      fileName:
+        "36b PAYROLL - WEEKLY GENERATE.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "applyPayrollWeeklyOutOverlay_",
+
+      relatedFile:
+        "36b PAYROLL - WEEKLY GENERATE.gs",
+
+      system:
+        "PayrollOS",
+
+      notes:
+        "Current generator overlays planned OUT records."
+    },
+
+    {
+      functionName:
+        "testPayrollScheduleOS",
+
+      fileName:
+        "36a PAYROLLSCHEDULEOS - CORE.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "PayrollScheduleOS",
+
+      relatedFile:
+        "36a PAYROLLSCHEDULEOS - CORE.gs",
+
+      system:
+        "PayrollOS",
+
+      notes:
+        "Non-destructive platform model test."
+    },
+
+    {
+      functionName:
+        "operationsCommitPrep_",
+
+      fileName:
+        "02 OPERATIONS OS.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "operationsRefreshOperationalState_",
+
+      relatedFile:
+        "02 OPERATIONS OS.gs",
+
+      system:
+        "OperationsOS",
+
+      notes:
+        ""
+    },
+
+    {
+      functionName:
+        "prepPostCommitOperationalSync",
+
+      fileName:
+        "43b PREP POST COMMIT.gs",
+
+      relationship:
+        "CALLS",
+
+      relatedFunction:
+        "OperationsOS",
+
+      relatedFile:
+        "02 OPERATIONS OS.gs",
+
+      system:
+        "PrepOS",
+
+      notes:
+        "Legacy/synchronous post-Prep operations handoff."
+    }
+  ];
+
+  const result =
+    developerOSUpsertDependencyEntries_(
+      entries
+    );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "DeveloperOS dependency registry seeded.\n\n" +
+      "Relationships processed: " +
+      result.processed +
+      "\n" +
+      "New relationships: " +
+      result.appended
+    );
+
+  return result;
+}
+
+
+/*************************************************
+ * STATUS
+ *************************************************/
+
+function developerOSDependencyRegistryStatus() {
+  const sheet =
+    developerOSGetOrCreateDependencyIndexSheet_();
+
+  const result = {
+    system:
+      "DeveloperOS",
+
+    version:
+      "3.0.0",
+
+    dependencyEntries:
+      Math.max(
+        0,
+        sheet.getLastRow() - 1
+      ),
+
+    automaticSourceScanning:
+      false,
+
+    healthy:
+      true
+  };
+
+  Logger.log(
+    "DEVELOPEROS DEPENDENCY REGISTRY STATUS"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "DeveloperOS Dependency Registry\n\n" +
+      "Registered relationships: " +
+      result.dependencyEntries +
+      "\n" +
+      "Automatic source scanning: No\n" +
+      "Registry-backed usage lookup: Ready"
+    );
+
+  return result;
+}
+
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function developerOSDependencyKey_(
+  functionName,
+  relationship,
+  relatedFunction
+) {
+  return [
+    developerOSNormalizeSearch_(
+      functionName
+    ),
+
+    developerOSNormalizeSearch_(
+      relationship
+    ),
+
+    developerOSNormalizeSearch_(
+      relatedFunction
+    )
+  ].join("::");
+}

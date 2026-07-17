@@ -1,0 +1,294 @@
+/*************************************************
+ * 90 ENGINE ROUTER OS
+ * Version: 1.1.0
+ * Status: ACTIVE
+ * Single routing layer for Engine-first writes
+ *************************************************/
+
+function EngineRouterOS() {
+  return {
+    log: function (system, action, message, data) {
+      return engineRouterOSLog_(system, action, message, data);
+    },
+
+    warn: function (system, action, message, data) {
+      return engineRouterOSWarn_(system, action, message, data);
+    },
+
+    error: function (system, action, message, data) {
+      return engineRouterOSError_(system, action, message, data);
+    },
+
+    diagnostic: function (system, metric, value, notes) {
+      return engineRouterOSDiagnostic_(system, metric, value, notes);
+    },
+
+    resolver: function (entry) {
+      return engineRouterOSResolver_(entry);
+    },
+
+    resolverHistory: function (resolved) {
+      return engineRouterOSResolverHistory_(resolved);
+    },
+
+    assignment: function (payload) {
+      return engineRouterOSAssignment_(payload);
+    },
+
+    snapshot: function (entry) {
+      return engineRouterOSSnapshot_(entry);
+    },
+
+    wizard: function (action, message, data) {
+      return engineRouterOSWizard_(action, message, data);
+    },
+
+    cache: function () {
+      return engineRouterOSCache_();
+    },
+
+    history: function (system, action, data) {
+      return engineRouterOSHistory_(system, action, data);
+    },
+
+    timeline: function (system, event, data) {
+      return engineRouterOSTimeline_(system, event, data);
+    },
+
+    analytics: function (system, metric, value, data) {
+      return engineRouterOSAnalytics_(system, metric, value, data);
+    }
+  };
+}
+
+/*************************************************
+ * BASIC LOGGING
+ *************************************************/
+
+function engineRouterOSLog_(system, action, message, data) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().info(system, action, message, data || {});
+  }
+
+  Logger.log("[INFO] " + system + " | " + action + " | " + message);
+  return false;
+}
+
+function engineRouterOSWarn_(system, action, message, data) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().warn(system, action, message, data || {});
+  }
+
+  Logger.log("[WARN] " + system + " | " + action + " | " + message);
+  return false;
+}
+
+function engineRouterOSError_(system, action, message, data) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().error(system, action, message, data || {});
+  }
+
+  Logger.log("[ERROR] " + system + " | " + action + " | " + message);
+  return false;
+}
+
+function engineRouterOSDiagnostic_(system, metric, value, notes) {
+  if (typeof EngineLogOS === "function") {
+    return EngineLogOS().diagnostic(system, metric, value, notes);
+  }
+
+  Logger.log("[DIAGNOSTIC] " + system + " | " + metric + " | " + value);
+  return false;
+}
+
+/*************************************************
+ * DOMAIN ROUTES
+ *************************************************/
+
+function engineRouterOSResolver_(entry) {
+  if (typeof EngineResolverOS === "function") {
+    return EngineResolverOS().append(entry || {});
+  }
+
+  return engineRouterOSWarn_(
+    "EngineRouterOS",
+    "Resolver Route Fallback",
+    "EngineResolverOS unavailable.",
+    entry || {}
+  );
+}
+
+function engineRouterOSResolverHistory_(resolved) {
+  if (typeof EngineResolverHistoryOS === "function") {
+    return EngineResolverHistoryOS().record(resolved);
+  }
+
+  return engineRouterOSWarn_(
+    "EngineRouterOS",
+    "Resolver History Route Fallback",
+    "EngineResolverHistoryOS unavailable.",
+    resolved || {}
+  );
+}
+
+function engineRouterOSAssignment_(payload) {
+  if (typeof EngineAssignmentHistoryOS === "function") {
+    return EngineAssignmentHistoryOS().recordFromPrep(payload || {});
+  }
+
+  return engineRouterOSWarn_(
+    "EngineRouterOS",
+    "Assignment Route Fallback",
+    "EngineAssignmentHistoryOS unavailable.",
+    payload || {}
+  );
+}
+
+function engineRouterOSSnapshot_(entry) {
+  if (typeof EngineSnapshotOS === "function") {
+    return EngineSnapshotOS().append(entry || {});
+  }
+
+  return engineRouterOSWarn_(
+    "EngineRouterOS",
+    "Snapshot Route Fallback",
+    "EngineSnapshotOS unavailable.",
+    entry || {}
+  );
+}
+
+function engineRouterOSWizard_(action, message, data) {
+  if (typeof EngineWizardLogOS === "function") {
+    return EngineWizardLogOS().log(action || "", message || "", data || {});
+  }
+
+  return engineRouterOSLog_(
+    "Wizard",
+    action || "",
+    message || "",
+    data || {}
+  );
+}
+
+function engineRouterOSCache_() {
+  if (typeof writeStageCacheStatusToEngine === "function") {
+    writeStageCacheStatusToEngine();
+    return true;
+  }
+
+  return engineRouterOSWarn_(
+    "EngineRouterOS",
+    "Cache Route Fallback",
+    "StageCacheOS cache writer unavailable.",
+    {}
+  );
+}
+
+/*************************************************
+ * GENERIC ENGINE ROUTES
+ *************************************************/
+
+function engineRouterOSHistory_(system, action, data) {
+  const payload = {
+    Timestamp: new Date(),
+    System: system || "",
+    Action: action || "",
+    Data: JSON.stringify(data || {})
+  };
+
+  try {
+    EngineOS().sheet("assignments").appendObject(payload);
+    return true;
+  } catch (err) {
+    return engineRouterOSError_(
+      "EngineRouterOS",
+      "History Route Error",
+      err.message,
+      payload
+    );
+  }
+}
+
+function engineRouterOSTimeline_(system, event, data) {
+  const payload = {
+    Timestamp: new Date(),
+    System: system || "",
+    Event: event || "",
+    Data: JSON.stringify(data || {})
+  };
+
+  try {
+    EngineOS().sheet("performanceTimeline").appendObject(payload);
+    return true;
+  } catch (err) {
+    return engineRouterOSError_(
+      "EngineRouterOS",
+      "Timeline Route Error",
+      err.message,
+      payload
+    );
+  }
+}
+
+function engineRouterOSAnalytics_(system, metric, value, data) {
+  const payload = {
+    Timestamp: new Date(),
+    System: system || "",
+    Metric: metric || "",
+    Value: value !== undefined ? value : "",
+    Data: JSON.stringify(data || {})
+  };
+
+  try {
+    EngineOS().sheet("analytics").appendObject(payload);
+    return true;
+  } catch (err) {
+    return engineRouterOSError_(
+      "EngineRouterOS",
+      "Analytics Route Error",
+      err.message,
+      payload
+    );
+  }
+}
+
+/*************************************************
+ * TEST
+ *************************************************/
+
+function testEngineRouterOS() {
+  EngineRouterOS().log(
+    "EngineRouterOS",
+    "Test Log",
+    "EngineRouterOS log route working.",
+    { test: true }
+  );
+
+  EngineRouterOS().diagnostic(
+    "EngineRouterOS",
+    "Test Diagnostic",
+    1,
+    "EngineRouterOS diagnostic route working."
+  );
+
+  EngineRouterOS().timeline(
+    "EngineRouterOS",
+    "Test Timeline Event",
+    { test: true }
+  );
+
+  EngineRouterOS().analytics(
+    "EngineRouterOS",
+    "Test Metric",
+    1,
+    { test: true }
+  );
+
+  EngineRouterOS().wizard(
+    "Test Wizard Route",
+    "EngineRouterOS wizard route working.",
+    { test: true }
+  );
+
+  SpreadsheetApp.getUi().alert("EngineRouterOS test complete.");
+}

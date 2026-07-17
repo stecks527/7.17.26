@@ -1,0 +1,321 @@
+/*************************************************
+ * 35 PRODUCTION EVENTS ENGINE
+ * Version: 2.2.0
+ *
+ * Payroll Notes now use a unique direct build path
+ * so duplicate legacy engine functions cannot override
+ * swing / understudy OUT handling.
+ *************************************************/
+
+function PAYROLLNOTES() {
+  return stageOSBuildPayrollNotes_20260711_();
+}
+
+function PRODUCTIONEVENTNOTES() {
+  return ProductionEventsEngineV1_().notes();
+}
+
+function testProductionEventsEngineV1() {
+  const engine = ProductionEventsEngineV1_();
+
+  Logger.log(
+    JSON.stringify(
+      engine.events(),
+      null,
+      2
+    )
+  );
+}
+
+/*************************************************
+ * STANDARD PRODUCTION EVENTS ENGINE
+ *************************************************/
+
+function ProductionEventsEngineV1_() {
+  const context =
+    productionEventsBuildContextV1_();
+
+  const events =
+    stageOSBuildProductionEvents_20260711_(
+      context
+    );
+
+  return {
+    events: function() {
+      return events;
+    },
+
+    notes: function() {
+      return productionEventsFormatNotesV1_(
+        events
+      );
+    },
+
+    payrollNotes: function() {
+      return productionEventsFormatPayrollNotesV1_(
+        events,
+        context
+      );
+    }
+  };
+}
+
+/*************************************************
+ * BUILD CONTEXT
+ *************************************************/
+
+function productionEventsBuildContextV1_() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const context = {
+    ss: ss,
+
+    payroll:
+      ss.getSheetByName("Payroll"),
+
+    castList:
+      ss.getSheetByName("Cast List"),
+
+    wizardLog:
+      productionEventsFindSheetV1_(
+        ss,
+        [
+          "Wizard Log",
+          "New Hire Wizard Log",
+          "Personnel Log"
+        ]
+      ),
+
+    weekly:
+      productionEventsFindCurrentWeeklyV1_(
+        ss
+      ),
+
+    actorMap: {},
+    dateDisplays: [],
+    payrollPeople: [],
+    payrollPersonEvents: []
+  };
+
+  if (
+    !context.payroll ||
+    !context.castList
+  ) {
+    return context;
+  }
+
+  context.actorMap =
+    productionEventsActorMapV1_(
+      context.castList
+    );
+
+  context.dateDisplays =
+    context.payroll
+      .getRange("B3:H3")
+      .getDisplayValues()[0];
+
+  context.payrollPeople =
+    productionEventsReadPayrollPeopleV2_(
+      context.payroll,
+      context.dateDisplays,
+      context.actorMap
+    );
+
+  context.payrollPersonEvents =
+    productionEventsFlattenPersonEventsV2_(
+      context.payrollPeople
+    );
+
+  return context;
+}
+
+/*************************************************
+ * UNIQUE FULL EVENT BUILD PATH
+ *************************************************/
+
+function stageOSBuildProductionEvents_20260711_(
+  context
+) {
+  const events = [];
+
+  const people =
+    context.payrollPeople || [];
+
+  productionEventsBuildSMOfficeCoverageV1_(
+    people,
+    events
+  );
+
+  stageOSBuildPayrollActorOutNotes_20260711_(
+    people,
+    events
+  );
+
+  productionEventsFromWizardLogV1_(
+    context,
+    events
+  );
+
+  productionEventsFromWeeklyV1_(
+    context,
+    events
+  );
+
+  productionEventsBuildRehearsalCalloutNotesV1_(
+    context,
+    events
+  );
+
+  return productionEventsSortV1_(
+    events
+  );
+}
+
+/*************************************************
+ * UNIQUE DIRECT PAYROLL NOTES PATH
+ *
+ * This is what =PAYROLLNOTES() now uses.
+ *************************************************/
+
+function stageOSBuildPayrollNotes_20260711_() {
+  const context =
+    productionEventsBuildContextV1_();
+
+  const events = [];
+
+  const people =
+    context.payrollPeople || [];
+
+  productionEventsBuildSMOfficeCoverageV1_(
+    people,
+    events
+  );
+
+  stageOSBuildPayrollActorOutNotes_20260711_(
+    people,
+    events
+  );
+
+  productionEventsFromWizardLogV1_(
+    context,
+    events
+  );
+
+  productionEventsFromWeeklyV1_(
+    context,
+    events
+  );
+
+  productionEventsBuildRehearsalCalloutNotesV1_(
+    context,
+    events
+  );
+
+  const sortedEvents =
+    productionEventsSortV1_(
+      events
+    );
+
+  return productionEventsFormatPayrollNotesV1_(
+    sortedEvents,
+    context
+  );
+}
+
+/*************************************************
+ * PAYROLL NOTES V2
+ *
+ * Unique custom-function name that bypasses any
+ * older or duplicated PAYROLLNOTES definitions.
+ *************************************************/
+
+function PAYROLLNOTES2() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const payroll = ss.getSheetByName("Payroll");
+  const castList = ss.getSheetByName("Cast List");
+
+  if (!payroll || !castList) {
+    return "";
+  }
+
+  const actorMap =
+    productionEventsActorMapV1_(castList);
+
+  const dateDisplays =
+    payroll
+      .getRange("B3:H3")
+      .getDisplayValues()[0];
+
+  const people =
+    productionEventsReadPayrollPeopleV2_(
+      payroll,
+      dateDisplays,
+      actorMap
+    );
+
+  const context = {
+    ss: ss,
+    payroll: payroll,
+    castList: castList,
+    actorMap: actorMap,
+    dateDisplays: dateDisplays,
+    payrollPeople: people,
+    payrollPersonEvents:
+      productionEventsFlattenPersonEventsV2_(
+        people
+      ),
+
+    wizardLog:
+      productionEventsFindSheetV1_(
+        ss,
+        [
+          "Wizard Log",
+          "New Hire Wizard Log",
+          "Personnel Log"
+        ]
+      ),
+
+    weekly:
+      productionEventsFindCurrentWeeklyV1_(
+        ss
+      )
+  };
+
+  const events = [];
+
+  productionEventsBuildSMOfficeCoverageV1_(
+    people,
+    events
+  );
+
+  stageOSBuildPayrollActorOutNotes_20260711_(
+    people,
+    events
+  );
+
+  productionEventsFromWizardLogV1_(
+    context,
+    events
+  );
+
+  productionEventsFromWeeklyV1_(
+    context,
+    events
+  );
+
+  productionEventsBuildRehearsalCalloutNotesV1_(
+    context,
+    events
+  );
+
+  const sortedEvents =
+    productionEventsSortV1_(
+      events
+    );
+
+  return productionEventsFormatPayrollNotesV1_(
+    sortedEvents,
+    context
+  );
+}

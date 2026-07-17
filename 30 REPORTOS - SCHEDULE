@@ -1,0 +1,783 @@
+/*************************************************
+ * 30 REPORTOS - SCHEDULE
+ * Version: 0.1.0
+ * Owns today/upcoming schedule writing.
+ *************************************************/
+
+function reportOSWriteSchedule_(state) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = ss.getSheetByName("Performance Report");
+  const reportBuilder = ss.getSheetByName("Report Builder");
+  const layout = ReportLayout().schedule;
+
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+  if (!reportBuilder) throw new Error('Could not find "Report Builder" tab.');
+
+  const schedule = reportOSBuildScheduleState_(state);
+
+  reportBuilder.getRange(layout.builderTodayRehearsal).setValue(schedule.today.rehearsal);
+  reportBuilder.getRange(layout.builderTodayPerformance).setValue(schedule.today.performance);
+  reportBuilder.getRange(layout.builderTodayFinal).setValue(schedule.today.final);
+
+  reportBuilder.getRange(layout.builderUpcomingRehearsal).setValue(schedule.upcoming.rehearsal);
+  reportBuilder.getRange(layout.builderUpcomingPerformance).setValue(schedule.upcoming.performance);
+  reportBuilder.getRange(layout.builderUpcomingFinal).setValue(schedule.upcoming.final);
+
+  const ranges =
+    reportOSResolveScheduleRanges_(report);
+
+  /*
+  * DAILY SCHEDULE
+  */
+  ranges.dailySchedule
+  .setValue(
+    schedule.today.final
+  )
+  .setFontFamily("Arial")
+  .setFontSize(11)
+  .setWrap(true);
+
+  /*
+  * UPCOMING DATE
+  */
+  ranges.upcomingDate
+    .setValue(
+      schedule.upcoming.headerDate
+    )
+    .setFontFamily("Arial")
+    .setFontSize(11)
+    .setFontWeight("bold");
+
+  /*
+  * UPCOMING SCHEDULE
+  */
+  ranges.upcomingSchedule
+  .setValue(
+    schedule.upcoming.final
+  )
+  .setFontFamily("Arial")
+  .setFontSize(11)
+  .setWrap(true);
+
+  Logger.log("ReportOS schedule written.");
+}
+
+function reportOSBuildScheduleState_(state) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const reportDate = reportOSParseDateFromState_(state);
+
+  const todayWeekly = reportOSGetWeeklySheetForDate_(ss, reportDate);
+  const today = reportOSGetWeeklyDaySchedule_(todayWeekly, reportDate);
+
+  const upcoming = reportOSGetUpcomingSchedule_(ss, reportDate, state);
+
+  return {
+    today: today,
+    upcoming: upcoming
+  };
+}
+
+function reportOSGetUpcomingSchedule_(ss, reportDate, state) {
+  const mode = String(state.mode || "").toUpperCase();
+  const isMatReport = mode === "MAT";
+
+  if (isMatReport) {
+    const weekly = reportOSGetWeeklySheetForDate_(ss, reportDate);
+    const sameDay = reportOSGetWeeklyDaySchedule_(weekly, reportDate, {
+      onlyAfterHour: 15
+    });
+
+    return {
+      headerDate: reportOSFormatDisplayDate_(reportDate),
+      rehearsal: "",
+      performance: sameDay.performance,
+      final: sameDay.performance
+    };
+  }
+
+  const tomorrow = reportOSAddDays_(reportDate, 1);
+  const tomorrowWeekly = reportOSGetWeeklySheetForDate_(ss, tomorrow);
+  const tomorrowSchedule = reportOSGetWeeklyDaySchedule_(tomorrowWeekly, tomorrow);
+
+  if (
+    reportOSGetDayName_(reportDate) === "Monday" &&
+    String(tomorrowSchedule.final || "").toUpperCase().includes("AEA DAY OFF")
+  ) {
+    const wednesday = reportOSAddDays_(reportDate, 2);
+    const wedWeekly = reportOSGetWeeklySheetForDate_(ss, wednesday);
+    const wedSchedule = reportOSGetWeeklyDaySchedule_(wedWeekly, wednesday);
+    const wedHeader = reportOSFormatDisplayDate_(wednesday);
+
+    return {
+      headerDate: reportOSFormatDisplayDate_(tomorrow),
+      rehearsal: "AEA DAY OFF",
+      performance: wedHeader + "\n" + wedSchedule.final,
+      final: "AEA DAY OFF\n\n" + wedHeader + "\n" + wedSchedule.final
+    };
+  }
+
+  return {
+    headerDate: reportOSFormatDisplayDate_(tomorrow),
+    rehearsal: tomorrowSchedule.rehearsal,
+    performance: tomorrowSchedule.performance,
+    final: tomorrowSchedule.final
+  };
+}
+
+function reportOSCleanScheduleBlock_(
+  text
+) {
+  return String(
+    text || ""
+  )
+    .split("\n")
+    .map(function (line) {
+      return String(
+        line || ""
+      )
+        .replace(
+          /[ \t]+/g,
+          " "
+        )
+        .trim();
+    })
+    .join("\n")
+    .replace(
+      /\n{3,}/g,
+      "\n\n"
+    )
+    .trim();
+}
+
+/*************************************************
+ * WEEKLY PARSING
+ *************************************************/
+
+function reportOSGetWeeklySheetForDate_(ss, targetDate) {
+  const targetKey = reportOSDateKey_(targetDate);
+
+  const weeklySheets = ss.getSheets().filter(function(sheet) {
+    return sheet.getName().startsWith("Weekly Schedule");
+  });
+
+  for (let i = 0; i < weeklySheets.length; i++) {
+    const sheet = weeklySheets[i];
+    const name = sheet.getName();
+
+    const match = name.match(
+      /Mon\s+(\d{1,2})\.(\d{1,2})\.(\d{2})\s*-\s*Sun\s+(\d{1,2})\.(\d{1,2})\.(\d{2})/i
+    );
+
+    if (!match) continue;
+
+    const startKey = reportOSDateKeyFromParts_(match[1], match[2], match[3]);
+    const endKey = reportOSDateKeyFromParts_(match[4], match[5], match[6]);
+
+    if (targetKey >= startKey && targetKey <= endKey) {
+      return sheet;
+    }
+  }
+
+  throw new Error(
+    "ReportOS could not find weekly schedule tab for " +
+    Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "M/d/yy")
+  );
+}
+
+function reportOSGetWeeklyDaySchedule_(
+  sheet,
+  targetDate,
+  options
+) {
+  options = options || {};
+
+  const data =
+    sheet
+      .getDataRange()
+      .getDisplayValues();
+
+  const startRow =
+    reportOSGetWeeklyDayStartRow_(
+      sheet,
+      targetDate
+    );
+
+  if (startRow === -1) {
+    return {
+      rehearsal: "",
+      performance: "",
+      final: "",
+      events: []
+    };
+  }
+
+  const rehearsalLines = [];
+  const rawPerformanceLines = [];
+
+  let inPerformanceSection = false;
+
+  for (
+    let rowIndex = startRow;
+    rowIndex < data.length;
+    rowIndex++
+  ) {
+    const row =
+      data[rowIndex];
+
+    const fullRowText =
+      reportOSClean_(
+        row.join(" ")
+      );
+
+    const normalized =
+      reportOSNormalizeScheduleText_(
+        fullRowText
+      );
+
+    /*
+     * Stop when the next day begins.
+     */
+    if (
+      rowIndex !== startRow &&
+      /^(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)/.test(
+        normalized
+      )
+    ) {
+      break;
+    }
+
+    if (
+      normalized.includes(
+        "NOTES"
+      )
+    ) {
+      break;
+    }
+
+    const line =
+      reportOSFormatWeeklyRow_(
+        row
+      );
+
+    if (!line) {
+      continue;
+    }
+
+    /*
+     * Matinee preview:
+     * skip entries before the requested hour.
+     */
+    if (
+      options.onlyAfterHour
+    ) {
+      const hour =
+        reportOSParseTimeHour_(
+          line
+        );
+
+      if (
+        hour !== null &&
+        hour <
+          options.onlyAfterHour
+      ) {
+        continue;
+      }
+    }
+
+    if (
+      reportOSIsPerformanceSectionStart_(
+        line
+      )
+    ) {
+      inPerformanceSection =
+        true;
+    }
+
+    if (inPerformanceSection) {
+      rawPerformanceLines.push(
+        line
+      );
+    } else {
+      rehearsalLines.push(
+        line
+      );
+    }
+  }
+
+  /*
+   * Rehearsals, meetings, PT, and work calls are
+   * separate top-level events.
+   */
+  const rehearsalBlocks =
+    rehearsalLines
+      .map(function (line) {
+        return reportOSCleanScheduleBlock_(
+          line
+        );
+      })
+      .filter(Boolean);
+
+  /*
+   * Split the continuous performance section into
+   * individual show-call blocks.
+   */
+  const performanceBlocks =
+    reportOSBuildPerformanceScheduleBlocks_(
+      rawPerformanceLines
+    );
+
+  const rehearsal =
+    rehearsalBlocks.join(
+      "\n\n"
+    );
+
+  const performance =
+    performanceBlocks
+      .map(function (block) {
+        return block.text;
+      })
+      .filter(Boolean)
+      .join(
+        "\n\n"
+      );
+
+  const final =
+    [
+      rehearsal,
+      performance
+    ]
+      .filter(Boolean)
+      .join(
+        "\n\n"
+      );
+
+  const events = [];
+
+  rehearsalBlocks.forEach(
+    function (text) {
+      events.push({
+        type:
+          reportOSGuessScheduleEventType_(
+            text
+          ),
+
+        text:
+          text,
+
+        lines:
+          text.split("\n")
+      });
+    }
+  );
+
+  performanceBlocks.forEach(
+    function (block) {
+      events.push(block);
+    }
+  );
+
+  return {
+    rehearsal:
+      rehearsal,
+
+    performance:
+      performance,
+
+    final:
+      final,
+
+    events:
+      events
+  };
+}
+
+/* =========================================================
+ * STRUCTURED PERFORMANCE BLOCKS
+ * ========================================================= */
+
+function reportOSBuildPerformanceScheduleBlocks_(
+  lines
+) {
+  const blocks = [];
+  let currentLines = [];
+
+  (
+    lines || []
+  ).forEach(function (line) {
+    const cleaned =
+      String(
+        line || ""
+      ).trim();
+
+    if (!cleaned) {
+      return;
+    }
+
+    /*
+     * Once a performance has occurred in the current
+     * block, the next show-call line begins a new block.
+     *
+     * Example:
+     * 2:00 PM PERFORMANCE
+     * coverage
+     *
+     * 5:00 PM Wardrobe Crew Call ← new show block
+     */
+    const startsNewBlock =
+      currentLines.length > 0 &&
+      reportOSPerformanceBlockIsComplete_(
+        currentLines
+      ) &&
+      reportOSIsNewPerformanceCallBlock_(
+        cleaned
+      );
+
+    if (startsNewBlock) {
+      blocks.push(
+        reportOSFinalizePerformanceBlock_(
+          currentLines
+        )
+      );
+
+      currentLines = [];
+    }
+
+    currentLines.push(
+      cleaned
+    );
+  });
+
+  if (currentLines.length) {
+    blocks.push(
+      reportOSFinalizePerformanceBlock_(
+        currentLines
+      )
+    );
+  }
+
+  return blocks;
+}
+
+
+function reportOSPerformanceBlockIsComplete_(
+  lines
+) {
+  return (
+    lines || []
+  ).some(function (line) {
+    return /PERFORMANCE\s*#?\s*\d+/i.test(
+      String(
+        line || ""
+      )
+    );
+  });
+}
+
+
+function reportOSIsNewPerformanceCallBlock_(
+  line
+) {
+  const upper =
+    String(
+      line || ""
+    )
+      .toUpperCase();
+
+  return (
+    upper.includes(
+      "WARDROBE CREW CALL"
+    ) ||
+    upper.includes(
+      "CREW CALL"
+    ) ||
+    upper.includes(
+      "HAIR CALL"
+    ) ||
+    upper.includes(
+      "HALF HOUR"
+    ) ||
+    upper.includes(
+      "HOUSE OPEN"
+    )
+  );
+}
+
+
+function reportOSFinalizePerformanceBlock_(
+  lines
+) {
+  const formattedText =
+    reportOSCleanScheduleBlock_(
+      reportOSFormatConductorIntoPerformanceLine_(
+        (
+          lines || []
+        ).join("\n")
+      )
+    );
+
+  const performanceMatch =
+    formattedText.match(
+      /PERFORMANCE\s*#?\s*(\d+)/i
+    );
+
+  return {
+    type:
+      "performance",
+
+    performanceNumber:
+      performanceMatch
+        ? performanceMatch[1]
+        : "",
+
+    text:
+      formattedText,
+
+    lines:
+      formattedText
+        ? formattedText.split("\n")
+        : []
+  };
+}
+
+
+function reportOSGuessScheduleEventType_(
+  text
+) {
+  const upper =
+    String(
+      text || ""
+    )
+      .toUpperCase();
+
+  if (
+    upper.includes(
+      "WORK CALL"
+    )
+  ) {
+    return "workCall";
+  }
+
+  if (
+    upper.includes(
+      "MEETING"
+    )
+  ) {
+    return "meeting";
+  }
+
+  if (
+    /\bPT\b/.test(
+      upper
+    )
+  ) {
+    return "pt";
+  }
+
+  if (
+    upper.includes(
+      "REHEARSAL"
+    ) ||
+    upper.includes(
+      "BRUSH-UP"
+    ) ||
+    upper.includes(
+      "BRUSH UP"
+    ) ||
+    upper.includes(
+      "PUT-IN"
+    ) ||
+    upper.includes(
+      "PUT IN"
+    )
+  ) {
+    return "rehearsal";
+  }
+
+  return "companyActivity";
+}
+
+function reportOSGetWeeklyDayStartRow_(sheet, targetDate) {
+  const data = sheet.getDataRange().getDisplayValues();
+
+  const dayName = reportOSGetDayName_(targetDate).toUpperCase();
+  const monthDay = Utilities.formatDate(
+    targetDate,
+    Session.getScriptTimeZone(),
+    "MMMM d"
+  ).toUpperCase();
+
+  for (let i = 0; i < data.length; i++) {
+    const rowText = reportOSNormalizeScheduleText_(data[i].join(" "));
+
+    if (
+      rowText.includes(dayName) &&
+      rowText.includes(reportOSNormalizeScheduleText_(monthDay))
+    ) {
+      return i + 1;
+    }
+  }
+
+  return -1;
+}
+
+function reportOSFormatWeeklyRow_(row) {
+  const colA = reportOSClean_(row[0]);
+  const colB = reportOSClean_(row[1]);
+
+  if (!colA && !colB) return "";
+
+  if (colA && colB) return colA + " - " + colB;
+  if (colB) return colB;
+  return colA;
+}
+
+function reportOSIsPerformanceSectionStart_(line) {
+  const upper = String(line || "").toUpperCase();
+
+  return (
+    upper.includes("WARDROBE CREW CALL") ||
+    upper.includes("CREW CALL") ||
+    upper.includes("HAIR CALL") ||
+    upper.includes("HALF HOUR") ||
+    upper.includes("HOUSE OPEN") ||
+    upper.includes("PERFORMANCE")
+  );
+}
+
+function reportOSFormatConductorIntoPerformanceLine_(text) {
+  const lines = String(text || "").split("\n");
+  const output = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (/Conductor\s*=/i.test(line)) {
+      const conductorName = line.replace(/^.*?Conductor\s*=\s*/i, "").trim();
+
+      for (let j = output.length - 1; j >= 0; j--) {
+        if (/PERFORMANCE\s*#\s*\d+/i.test(output[j])) {
+          output[j] = output[j] + " - Conductor = " + conductorName;
+          break;
+        }
+      }
+
+      continue;
+    }
+
+    output.push(line);
+  }
+
+  return output.join("\n");
+}
+
+/*************************************************
+ * FORMATTING / DATE HELPERS
+ *************************************************/
+
+function reportOSBoldUpcomingDate_(range, text) {
+  const match = String(text || "").match(
+    /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d{1,2}/m
+  );
+
+  if (!match) return;
+
+  const start = text.indexOf(match[0]);
+  const end = start + match[0].length;
+
+  const style = SpreadsheetApp.newTextStyle()
+    .setBold(true)
+    .build();
+
+  const richText = SpreadsheetApp.newRichTextValue()
+    .setText(text)
+    .setTextStyle(start, end, style)
+    .build();
+
+  range.setRichTextValue(richText);
+}
+
+function reportOSParseDateFromState_(state) {
+  const raw = String(state.date || "").trim();
+  const header = String((state.reportHeader && state.reportHeader.date) || "").trim();
+
+  const yearMatch = (raw + " " + header).match(/\b(20\d{2})\b/);
+  const year = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+
+  const cleanRaw = raw
+    .replace(/\s*-\s*(MAT|EVE)\s*$/i, "")
+    .trim();
+
+  let parsed = new Date(cleanRaw);
+
+  if (isNaN(parsed.getTime()) || !/\b20\d{2}\b/.test(cleanRaw)) {
+    parsed = new Date(cleanRaw + ", " + year);
+  }
+
+  if (isNaN(parsed.getTime())) {
+    throw new Error("ReportOS could not parse report date: " + raw);
+  }
+
+  return parsed;
+}
+
+function reportOSDateKey_(date) {
+  return Number(
+    Utilities.formatDate(
+      date,
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    )
+  );
+}
+
+function reportOSDateKeyFromParts_(month, day, year2) {
+  const yyyy = 2000 + Number(year2);
+  const mm = String(Number(month)).padStart(2, "0");
+  const dd = String(Number(day)).padStart(2, "0");
+
+  return Number("" + yyyy + mm + dd);
+}
+
+function reportOSAddDays_(date, days) {
+  const newDate = new Date(date);
+  newDate.setDate(newDate.getDate() + days);
+  return newDate;
+}
+
+function reportOSGetDayName_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE"
+  );
+}
+
+function reportOSFormatDisplayDate_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE, MMMM d"
+  );
+}
+
+function reportOSParseTimeHour_(timeText) {
+  const match = String(timeText || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const ampm = match[3].toUpperCase();
+
+  if (ampm === "PM" && hour !== 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+
+  return hour;
+}
+
+function reportOSNormalizeScheduleText_(value) {
+  return reportOSClean_(value)
+    .replace(/,/g, "")
+    .replace(/\./g, " ")
+    .replace(/\//g, " ")
+    .replace(/\s+/g, " ")
+    .toUpperCase();
+}

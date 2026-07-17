@@ -1,0 +1,37 @@
+/*************************************************
+ * 30 REPORT WRITER OS
+ * Version: 0.1.0
+ *************************************************/
+
+function ReportWriterOS() {
+  return {
+
+    header: reportOSWriteHeader_,
+
+    staffing: reportOSWriteStaffing_,
+
+    cast: reportOSWriteCastOuts_,
+
+    schedule: reportOSWriteSchedule_,
+
+    notes: function(state){
+
+      const notes = ReportNotesOS().collect(state);
+      const categorized = ReportNotesOS().categorize(notes);
+      const merged = ReportNotesOS().merge(categorized);
+
+      ReportNotesOS().write(merged);
+
+    },
+
+    guest: function(state){
+
+      const guest =
+        ReportGuestOS().build(state);
+
+      ReportGuestOS().write(guest);
+
+    }
+
+  };
+}

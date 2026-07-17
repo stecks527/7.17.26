@@ -1,0 +1,152 @@
+/*************************************************
+ * 30 REPORT INOUT ROUTING
+ *************************************************/
+
+function syncInOutGridToPerformanceReport_SAFE() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!inOut || !report) {
+    throw new Error('Could not find "IN/OUT" or "Performance Report".');
+  }
+
+  const sourceValues = inOut.getRange(6, 1, 18, 7).getDisplayValues();
+  const output = [];
+
+  sourceValues.forEach(row => {
+    const out = cleanReportPatch_(row[0]);
+    const inn = cleanReportPatch_(row[2]);
+    const role = cleanReportPatch_(row[4]);
+    const reason = cleanReportPatch_(row[6]);
+
+    if (!out && !inn && !role && !reason) return;
+
+    output.push([out, "", inn, "", role, "", reason]);
+  });
+
+  const targetStartRow = 11;
+  const targetNumRows = 13;
+
+  report.getRange(targetStartRow, 1, targetNumRows, 7).clearContent();
+
+  if (output.length) {
+    const clipped = output.slice(0, targetNumRows);
+    report.getRange(targetStartRow, 1, clipped.length, 7).setValues(clipped);
+  }
+
+  report.getRange(targetStartRow, 1, targetNumRows, 7)
+    .setFontFamily("Arial")
+    .setFontSize(11)
+    .setVerticalAlignment("middle");
+}
+
+function routeInOutNotesToPerformanceReport_SAFE(showAlert = true) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!inOut || !report) {
+    SpreadsheetApp.getUi().alert('Could not find "IN/OUT" or "Performance Report" tab.');
+    return;
+  }
+
+  const notesText = inOut.getRange("A28").getDisplayValue();
+
+  if (!notesText.trim()) {
+    if (showAlert) SpreadsheetApp.getUi().alert("No IN/OUT notes found in A28.");
+    return;
+  }
+
+  const routed = {
+    scenic: [],
+    props: [],
+    costumes: [],
+    wigs: [],
+    sound: [],
+    lighting: [],
+    script: [],
+    music: [],
+    choreo: [],
+    general: [],
+    production: [],
+    producing: [],
+    facilities: []
+  };
+
+  notesText
+    .split(/\n+/)
+    .map(line => line.replace(/^[-–]\s*/, "").trim())
+    .filter(Boolean)
+    .forEach(note => {
+      if (shouldIgnoreInOutNote_(note)) return;
+
+      const category = getReportNoteCategory_(note);
+      const routedNote = transformInOutNoteForReport_(note);
+
+      if (routed[category]) routed[category].push("– " + routedNote);
+    });
+
+  const rowMap = {
+    scenic: 34,
+    props: 37,
+    costumes: 40,
+    wigs: 43,
+    sound: 46,
+    lighting: 49,
+    script: 52,
+    music: 55,
+    choreo: 58,
+    general: 79,
+    production: 64,
+    producing: 67,
+    facilities: 70
+  };
+
+  Object.keys(rowMap).forEach(category => {
+    const newLines = routed[category];
+    if (!newLines.length) return;
+
+    const cell = report.getRange(rowMap[category], 1);
+
+    const currentLines = cell.getDisplayValue()
+      .split(/\n+/)
+      .map(line => line.trim())
+      .filter(line => line && !isDefaultReportNote_SAFE_(line));
+
+    cell.setValue(mergeUniqueReportLines_SAFE_(currentLines, newLines).join("\n"));
+  });
+
+  if (showAlert) {
+    SpreadsheetApp.getUi().alert("IN/OUT notes routed to the Performance Report.");
+  }
+}
+
+function mergeUniqueReportLines_SAFE_(currentLines, newLines) {
+  const seen = new Set();
+  const output = [];
+
+  currentLines.concat(newLines).forEach(line => {
+    const key = cleanReportPatch_(line).toLowerCase();
+    if (!key || seen.has(key)) return;
+
+    seen.add(key);
+    output.push(line);
+  });
+
+  return output;
+}
+
+function isDefaultReportNote_SAFE_(text) {
+  const value = cleanReportPatch_(text).toLowerCase();
+
+  return (
+    value.includes("no notes today") ||
+    value.includes("no notes tonight") ||
+    value.includes("no notes, thank you")
+  );
+}
+
+function cleanReportPatch_(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}

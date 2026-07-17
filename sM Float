@@ -1,0 +1,195 @@
+const SM_FLOAT_PARENT_FOLDER_ID = "1Dv9qjIjpyOe9R41Va3WHcpOjiPFPVXDX";
+const SM_FLOAT_EMAIL_TO = ""; // add recipients here when ready
+
+function draftSMFloatEmail() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getActiveSheet();
+  const ui = SpreadsheetApp.getUi();
+
+  if (!/sm float/i.test(sheet.getName())) {
+    ui.alert("Please open the current SM Float sheet and try again.");
+    return;
+  }
+
+  const floatNumber = getSMFloatNumber_(sheet);
+  const dateRange = getSMFloatDateRange_(sheet);
+
+  const folderName = `SM Float #${floatNumber}`;
+  const pdfName = `SPELLING BEE - SM Float #${floatNumber}.pdf`;
+
+  const folder = findSMFloatFolder_(folderName);
+  const pdfBlob = exportSheetAsPDF_(ss, sheet, pdfName);
+  folder.createFile(pdfBlob);
+
+  const folderUrl = folder.getUrl();
+  const subject = `SM Float #${floatNumber}`;
+  const signature = getStageOSEmailSignature_();
+
+  const htmlBody = `
+    <p>Hello Team,</p>
+
+    <p>Attached below is the SM Float Spreadsheet and Receipts between ${dateRange.startText} and ${dateRange.endText}.</p>
+
+    <p>If we can get another $250, that would be amazing.</p>
+
+    <p><a href="${folderUrl}">SM Float #${floatNumber} Receipts</a></p>
+
+    <p>Thanks so much!</p>
+
+    ${signatureToHtml_(signature)}
+  `;
+
+  const plainBody =
+`Hello Team,
+
+Attached below is the SM Float Spreadsheet and Receipts between ${dateRange.startText} and ${dateRange.endText}.
+
+If we can get another $250, that would be amazing.
+
+SM Float #${floatNumber} Receipts:
+${folderUrl}
+
+Thanks so much!${signature}`;
+
+  GmailApp.createDraft(
+    SM_FLOAT_EMAIL_TO,
+    subject,
+    plainBody,
+    {
+      htmlBody: htmlBody,
+      attachments: [pdfBlob]
+    }
+  );
+
+  ui.alert(
+    `SM Float #${floatNumber} draft created!\n\n` +
+    `PDF saved as:\n${pdfName}\n\n` +
+    `Folder used:\n${folderName}`
+  );
+}
+
+function getSMFloatNumber_(sheet) {
+  const values = sheet
+    .getRange(1, 1, Math.min(sheet.getLastRow(), 15), sheet.getLastColumn())
+    .getDisplayValues();
+
+  for (const row of values) {
+    for (const cell of row) {
+      const match = String(cell).match(/SM\s*FLOAT\s*#?\s*(\d+)/i);
+      if (match) return match[1];
+    }
+  }
+
+  throw new Error("Could not find SM Float number. Make sure the sheet title says something like SM FLOAT #4.");
+}
+
+function getSMFloatDateRange_(sheet) {
+  const values = sheet.getDataRange().getDisplayValues();
+
+  let dateCol = -1;
+
+  for (let r = 0; r < Math.min(values.length, 15); r++) {
+    for (let c = 0; c < values[r].length; c++) {
+      if (String(values[r][c]).trim().toLowerCase() === "date") {
+        dateCol = c;
+        break;
+      }
+    }
+    if (dateCol !== -1) break;
+  }
+
+  if (dateCol === -1) {
+    throw new Error("Could not find a DATE column.");
+  }
+
+  const dates = [];
+
+  for (let r = 0; r < values.length; r++) {
+    const parsed = parseSMFloatDate_(values[r][dateCol]);
+    if (parsed) dates.push(parsed);
+  }
+
+  if (!dates.length) {
+    throw new Error("Could not find any valid dates in the DATE column.");
+  }
+
+  const earliest = new Date(Math.min(...dates.map(d => d.getTime())));
+  const today = new Date();
+
+  return {
+    startText: formatSMFloatLongDate_(earliest),
+    endText: formatSMFloatLongDate_(today)
+  };
+}
+
+function parseSMFloatDate_(value) {
+  if (!value) return null;
+
+  const text = String(value).trim();
+
+  const match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (!match) return null;
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  let year = Number(match[3]);
+
+  if (year < 100) year += 2000;
+
+  const date = new Date(year, month - 1, day);
+  if (isNaN(date.getTime())) return null;
+
+  return date;
+}
+
+function formatSMFloatLongDate_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "MMMM d, yyyy"
+  );
+}
+
+function findSMFloatFolder_(folderName) {
+  const parent = DriveApp.getFolderById(SM_FLOAT_PARENT_FOLDER_ID);
+  const folders = parent.getFoldersByName(folderName);
+
+  if (!folders.hasNext()) {
+    throw new Error(
+      `Could not find Drive folder: ${folderName}\n\n` +
+      `Please create it inside 5. PERISHABLES - SM Float, then run again.`
+    );
+  }
+
+  return folders.next();
+}
+
+function exportSheetAsPDF_(ss, sheet, pdfName) {
+  const ssId = ss.getId();
+  const sheetId = sheet.getSheetId();
+
+  const url =
+    `https://docs.google.com/spreadsheets/d/${ssId}/export?` +
+    `format=pdf` +
+    `&gid=${sheetId}` +
+    `&portrait=false` +
+    `&size=letter` +
+    `&fitw=true` +
+    `&sheetnames=false` +
+    `&printtitle=false` +
+    `&pagenumbers=false` +
+    `&gridlines=false` +
+    `&fzr=false` +
+    `&top_margin=0.5` +
+    `&bottom_margin=0.5` +
+    `&left_margin=0.5` +
+    `&right_margin=0.5`;
+
+  const token = ScriptApp.getOAuthToken();
+
+  return UrlFetchApp.fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  }).getBlob().setName(pdfName);
+}

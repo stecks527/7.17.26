@@ -1,0 +1,132 @@
+/*************************************************
+ * 08 SNAPSHOTOS - HELPERS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Canonical shared helpers for SnapshotOS v2.
+ *
+ * Important:
+ * These helpers must not be duplicated in Snapshot readers,
+ * writers, or storage files.
+ *************************************************/
+
+function snapshotOSv2EnsureHeaders_(sheet, headers, backgroundColor) {
+  if (!sheet || !Array.isArray(headers) || !headers.length) return;
+
+  const existing = sheet.getLastRow() > 0
+    ? sheet.getRange(1, 1, 1, headers.length).getDisplayValues()[0]
+    : [];
+
+  const needsHeaders =
+    existing.length !== headers.length ||
+    existing.some(function (value, index) {
+      return value !== headers[index];
+    });
+
+  if (!needsHeaders) return;
+
+  sheet
+    .getRange(1, 1, 1, headers.length)
+    .setValues([headers])
+    .setFontWeight("bold")
+    .setBackground(backgroundColor || "#cfe2f3");
+
+  sheet.setFrozenRows(1);
+}
+
+function snapshotOSv2BuildResolvedCastSnapshotId_(payload, capturedAt) {
+  payload = payload || {};
+
+  const raw = [
+    payload.performanceDate || "",
+    payload.performanceLabel || "",
+    Utilities.formatDate(
+      capturedAt || new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMddHHmmss"
+    )
+  ].join(" | ");
+
+  return snapshotOSv2CleanSnapshotId_(raw);
+}
+
+function snapshotOSv2BuildAssignmentSnapshotId_(payload, capturedAt) {
+  payload = payload || {};
+
+  const raw = [
+    snapshotOSv2GetInOutDate_(),
+    payload.performance || "",
+    "ASSIGNMENTS",
+    Utilities.formatDate(
+      capturedAt || new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMddHHmmss"
+    )
+  ].join(" | ");
+
+  return snapshotOSv2CleanSnapshotId_(raw);
+}
+
+function snapshotOSv2CleanSnapshotId_(value) {
+  return String(value || "")
+    .replace(/\s+/g, "_")
+    .replace(/[^\w.-]/g, "");
+}
+
+function snapshotOSv2GetInOutDate_() {
+  const workbook = snapshotOSv2GetShowWorkbook_();
+  const sheet = workbook.getSheetByName("IN/OUT");
+
+  return sheet
+    ? sheet.getRange("A3").getDisplayValue()
+    : "";
+}
+
+function snapshotOSv2ExtractPerformanceNumber_(text) {
+  const match = String(text || "").match(/PERFORMANCE\s*#?\s*(\d+)/i);
+  return match ? match[1] : "";
+}
+
+function snapshotOSv2ExtractPerformanceType_(text) {
+  const upper = String(text || "").toUpperCase();
+
+  if (upper.includes("MAT")) return "MAT";
+  if (upper.includes("EVE")) return "EVE";
+
+  return "";
+}
+
+function testSnapshotOSHelpers() {
+  const now = new Date();
+
+  const result = {
+    inOutDate: snapshotOSv2GetInOutDate_(),
+    performanceNumber: snapshotOSv2ExtractPerformanceNumber_(
+      "PERFORMANCE #268 - 7:00 PM EVE"
+    ),
+    performanceType: snapshotOSv2ExtractPerformanceType_(
+      "PERFORMANCE #268 - 7:00 PM EVE"
+    ),
+    assignmentId: snapshotOSv2BuildAssignmentSnapshotId_(
+      { performance: "PERFORMANCE #268 - 7:00 PM EVE" },
+      now
+    ),
+    resolvedCastId: snapshotOSv2BuildResolvedCastSnapshotId_(
+      {
+        performanceDate: "Wednesday, July 15",
+        performanceLabel: "PERFORMANCE #268 - 7:00 PM EVE"
+      },
+      now
+    )
+  };
+
+  Logger.log("SNAPSHOTOS HELPER TEST");
+  Logger.log(JSON.stringify(result, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "SnapshotOS helper test passed.\n\n" +
+    "Performance: #" + result.performanceNumber + " " + result.performanceType
+  );
+
+  return result;
+}

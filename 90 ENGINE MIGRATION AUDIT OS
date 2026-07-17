@@ -1,0 +1,61 @@
+/*************************************************
+ * 90 ENGINE MIGRATION AUDIT OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *************************************************/
+
+const ENGINE_MIGRATION_AUDIT_TABS = [
+  "Wizard Log",
+  "Snapshot History",
+  "SnapshotOS v2 - Show State",
+  "SnapshotOS v2 - Show State History",
+  "Resolved Cast",
+  "Resolver Validation",
+  "Resolved Cast Snapshots",
+  "Assignment Snapshots",
+  "StageOS Logs",
+  "System Logs",
+  "Decision History",
+  "Performance Timeline",
+  "Analytics"
+];
+
+function runEngineMigrationAudit() {
+  const ss = SpreadsheetApp.getActive();
+  const results = [];
+
+  ENGINE_MIGRATION_AUDIT_TABS.forEach(name => {
+    const sh = ss.getSheetByName(name);
+
+    results.push({
+      tab: name,
+      exists: Boolean(sh),
+      rows: sh ? sh.getLastRow() : 0,
+      cols: sh ? sh.getLastColumn() : 0,
+      recommendation: sh
+        ? "Review / archive / migrate"
+        : "No production tab found"
+    });
+  });
+
+  if (typeof EngineOS === "function") {
+    const api = EngineOS().sheet("Migration Audit");
+    api.writeObjects(results, [
+      "tab",
+      "exists",
+      "rows",
+      "cols",
+      "recommendation"
+    ], true);
+  }
+
+  const existing = results.filter(r => r.exists);
+
+  SpreadsheetApp.getUi().alert(
+    "Engine Migration Audit complete.\n\n" +
+    "Production helper/history tabs found: " + existing.length + "\n\n" +
+    existing.map(r => r.tab + " — " + r.rows + " rows").join("\n")
+  );
+
+  return results;
+}

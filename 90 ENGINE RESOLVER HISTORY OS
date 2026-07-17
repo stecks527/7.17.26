@@ -1,0 +1,195 @@
+/*************************************************
+ * 90 ENGINE RESOLVER HISTORY OS
+ * Version: 2.1.0
+ * Status: ACTIVE
+ * Autonomous resolver history with Engine performance identity
+ *************************************************/
+
+const ENGINE_RESOLVER_HISTORY_HEADERS = [
+  "Timestamp",
+  "Snapshot ID",
+  "Performance Date",
+  "Performance Label",
+  "Performance Number",
+  "Show Type",
+  "Role",
+  "Default Actor",
+  "Resolved Actor",
+  "Status",
+  "Out Actor",
+  "In Actor",
+  "Reason",
+  "Decision",
+  "Payload JSON"
+];
+
+function EngineResolverHistoryOS() {
+  return {
+    record: function (resolved) {
+      return engineResolverHistoryOSRecord_(resolved);
+    }
+  };
+}
+
+function engineResolverHistoryOSRecord_(resolved) {
+  if (!resolved || !resolved.company) return 0;
+
+  const api = EngineOS().sheet("Resolver Decision History");
+  api.ensureHeaders(ENGINE_RESOLVER_HISTORY_HEADERS);
+
+  const identity = engineResolverHistoryOSGetPerformanceIdentity_(resolved);
+  const now = new Date();
+
+  const rows = resolved.company.map(row => {
+    const decision = engineResolverHistoryOSDecision_(row);
+
+    return [
+      now,
+      identity.snapshotId,
+      identity.performanceDate,
+      identity.performanceLabel,
+      identity.performanceNumber,
+      identity.showType,
+      row.role || "",
+      row.defaultActor || "",
+      row.resolvedActor || "",
+      row.status || "",
+      row.outActor || "",
+      row.inActor || "",
+      row.reason || "",
+      decision,
+      JSON.stringify({
+        snapshotId: identity.snapshotId,
+        performanceDate: identity.performanceDate,
+        performanceLabel: identity.performanceLabel,
+        performanceNumber: identity.performanceNumber,
+        showType: identity.showType,
+        row: row
+      })
+    ];
+  });
+
+  if (rows.length) {
+    const sh = api.sheet();
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, ENGINE_RESOLVER_HISTORY_HEADERS.length)
+      .setValues(rows);
+  }
+
+  if (typeof EngineRouterOS === "function") {
+    EngineRouterOS().log(
+      "EngineResolverHistoryOS",
+      "Record Resolver History",
+      "Resolver decision history written.",
+      {
+        snapshotId: identity.snapshotId,
+        performanceDate: identity.performanceDate,
+        performanceLabel: identity.performanceLabel,
+        rows: rows.length
+      }
+    );
+  }
+
+  return rows.length;
+}
+
+/*************************************************
+ * PERFORMANCE IDENTITY
+ *************************************************/
+
+function engineResolverHistoryOSGetPerformanceIdentity_(resolved) {
+  let showState = null;
+
+  if (typeof EngineQueryOS === "function") {
+    showState = EngineQueryOS().latestShowState();
+  }
+
+  const performanceLabel =
+    (showState && showState["Performance Label"]) ||
+    resolved.performanceLabel ||
+    "";
+
+  const performanceDate =
+    (showState && showState["Date"]) ||
+    resolved.performanceDate ||
+    "";
+
+  const performanceNumber =
+    (showState && showState["Performance Number"]) ||
+    engineResolverHistoryOSExtractPerformanceNumber_(performanceLabel);
+
+  const showType =
+    (showState && showState["Show Type"]) ||
+    engineResolverHistoryOSExtractShowType_(performanceLabel);
+
+  const snapshotId =
+    (showState && showState["Snapshot ID"]) ||
+    engineResolverHistoryOSBuildSnapshotId_(performanceNumber, showType);
+
+  return {
+    snapshotId: snapshotId || "",
+    performanceDate: performanceDate || "",
+    performanceLabel: performanceLabel || "",
+    performanceNumber: performanceNumber || "",
+    showType: showType || ""
+  };
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function engineResolverHistoryOSDecision_(row) {
+  if (!row) return "";
+
+  if (row.status === "DEFAULT") {
+    return "Default actor remains on.";
+  }
+
+  if (row.status === "COVERED") {
+    return (row.outActor || "Actor") +
+      " OUT; " +
+      (row.inActor || row.resolvedActor || "Cover") +
+      " IN as " +
+      (row.role || "role") +
+      ".";
+  }
+
+  if (row.status === "OUT_UNCOVERED") {
+    return (row.outActor || row.defaultActor || "Actor") +
+      " OUT; no cover listed for " +
+      (row.role || "role") +
+      ".";
+  }
+
+  return row.status || "";
+}
+
+function engineResolverHistoryOSExtractPerformanceNumber_(performanceLabel) {
+  const match = String(performanceLabel || "").match(/PERFORMANCE\s*#?\s*(\d+)/i);
+  return match ? match[1] : "";
+}
+
+function engineResolverHistoryOSExtractShowType_(performanceLabel) {
+  const upper = String(performanceLabel || "").toUpperCase();
+  if (upper.includes("MAT")) return "MAT";
+  if (upper.includes("EVE")) return "EVE";
+  return "";
+}
+
+function engineResolverHistoryOSBuildSnapshotId_(performanceNumber, showType) {
+  if (!performanceNumber) return "";
+  return "P" + performanceNumber + "-" + String(showType || "SHOW").toUpperCase();
+}
+
+/*************************************************
+ * TEST
+ *************************************************/
+
+function testEngineResolverHistoryOS() {
+  const resolved = CastResolverOS().resolveCurrentPerformance();
+  const count = EngineResolverHistoryOS().record(resolved);
+
+  SpreadsheetApp.getUi().alert(
+    "EngineResolverHistoryOS test complete.\n\nRows written: " + count
+  );
+}

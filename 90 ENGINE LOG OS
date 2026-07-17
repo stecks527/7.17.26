@@ -1,0 +1,107 @@
+/*************************************************
+ * 90 ENGINE LOG OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Central logging API for StageOS Engine Workbook
+ *************************************************/
+
+function EngineLogOS() {
+  return {
+    info: function (system, action, message, data) {
+      return engineLogOSWrite_("INFO", system, action, message, data);
+    },
+
+    warn: function (system, action, message, data) {
+      return engineLogOSWrite_("WARN", system, action, message, data);
+    },
+
+    error: function (system, action, message, data) {
+      return engineLogOSWrite_("ERROR", system, action, message, data);
+    },
+
+    diagnostic: function (system, metric, value, notes) {
+      return engineLogOSDiagnostic_(system, metric, value, notes);
+    }
+  };
+}
+
+/*************************************************
+ * LOG WRITES
+ *************************************************/
+
+function engineLogOSWrite_(level, system, action, message, data) {
+  if (typeof EngineOS !== "function") {
+    Logger.log("[EngineLogOS fallback] " + level + " " + system + " " + action + ": " + message);
+    return false;
+  }
+
+  try {
+    EngineOS().sheet("logs").appendObject({
+      "Timestamp": new Date(),
+      "Level": level || "INFO",
+      "System": system || "",
+      "Action": action || "",
+      "Message": message || "",
+      "Data": data !== undefined ? JSON.stringify(data) : ""
+    });
+
+    return true;
+  } catch (err) {
+    Logger.log(
+      "[EngineLogOS error] " +
+      (err && err.message ? err.message : err)
+    );
+    return false;
+  }
+}
+
+function engineLogOSDiagnostic_(system, metric, value, notes) {
+  if (typeof EngineOS !== "function") {
+    Logger.log("[EngineLogOS diagnostic fallback] " + system + " " + metric + ": " + value);
+    return false;
+  }
+
+  try {
+    EngineOS().sheet("diagnostics").appendObject({
+      "Timestamp": new Date(),
+      "System": system || "",
+      "Metric": metric || "",
+      "Value": value !== undefined ? value : "",
+      "Notes": notes || ""
+    });
+
+    return true;
+  } catch (err) {
+    Logger.log(
+      "[EngineLogOS diagnostic error] " +
+      (err && err.message ? err.message : err)
+    );
+    return false;
+  }
+}
+
+/*************************************************
+ * UI TESTS
+ *************************************************/
+
+function testEngineLogOSInfo() {
+  EngineLogOS().info(
+    "EngineLogOS",
+    "Test Info",
+    "EngineLogOS info log successful.",
+    { test: true, type: "info" }
+  );
+
+  SpreadsheetApp.getUi().alert("EngineLogOS info test complete.");
+}
+
+function testEngineLogOSDiagnostic() {
+  EngineLogOS().diagnostic(
+    "EngineLogOS",
+    "Test Metric",
+    1,
+    "EngineLogOS diagnostic test successful."
+  );
+
+  SpreadsheetApp.getUi().alert("EngineLogOS diagnostic test complete.");
+}

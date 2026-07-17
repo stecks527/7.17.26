@@ -1,0 +1,430 @@
+/*************************************************
+ * 55 JOKES
+ *************************************************/
+
+function refreshAllJokeDropdowns_TEST() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Performance Highlights TEST");
+  const templateSheet = ss.getSheetByName("Joke Template");
+
+  if (!sh) throw new Error('Could not find "Performance Highlights TEST".');
+  if (!templateSheet) throw new Error('Could not find "Joke Template".');
+
+  const templates = {
+    rona: getTemplatesByType_(templateSheet, "RONA"),
+    post: getTemplatesByType_(templateSheet, "POST"),
+    chip: getTemplatesByType_(templateSheet, "CHIP")
+  };
+
+  const round1Blocks = [
+    { guestNumber: "5",  startRow: 32, ronaDropdownRow: 33, postDropdownRow: 37 },
+    { guestNumber: "7",  startRow: 38, ronaDropdownRow: 39, postDropdownRow: 43 },
+    { guestNumber: "13", startRow: 46, ronaDropdownRow: 47, postDropdownRow: 49 },
+    { guestNumber: "23", startRow: 63, ronaDropdownRow: 64, postDropdownRow: 66 }
+  ];
+
+  const round2Blocks = [
+    { startRow: 89,  ronaDropdownRow: 90, wordRow: 92, postDropdownRow: 94 },
+    { startRow: 95,  ronaDropdownRow: 96, wordRow: 98, postDropdownRow: 100 },
+    { startRow: 105, ronaDropdownRow: 106, wordRow: 108, postDropdownRow: 110 },
+    { startRow: 120, ronaDropdownRow: 121, wordRow: 123, postDropdownRow: 125 }
+  ];
+
+  round1Blocks.forEach(block => {
+    const data = getGuestBlockData_(sh, block.startRow, block.guestNumber);
+    applyRonaDropdown_(sh, block.ronaDropdownRow, data, templates.rona);
+    applyPostDropdown_(sh, block.postDropdownRow, data, templates.post);
+  });
+
+  round2Blocks.forEach(block => {
+    const guestNumber = getGuestNumberFromJokeCode_(sh, block.ronaDropdownRow);
+    const data = getGuestBlockData_(sh, block.startRow, guestNumber, block.wordRow);
+    applyRonaDropdown_(sh, block.ronaDropdownRow, data, templates.rona);
+    applyPostDropdown_(sh, block.postDropdownRow, data, templates.post);
+  });
+
+  applyChipDropdown_(sh, 59, templates.chip, getChipData_(sh));
+
+  Logger.log("Round 1 + Round 2 joke dropdowns refreshed.");
+}
+
+function applyRonaDropdown_(sh, dropdownRow, data, ronaTemplates) {
+  const options = ronaTemplates
+    .map(template => fillJokeTemplate_(template, data))
+    .filter(Boolean)
+    .map(text => finishRonaLine_(data.guestNumber, text));
+
+  setDropdown_(sh.getRange(dropdownRow, 2), options); // B
+}
+
+function applyPostDropdown_(sh, dropdownRow, data, postTemplates) {
+  const options = postTemplates
+    .map(template => fillJokeTemplate_(template, data))
+    .filter(Boolean);
+
+  setDropdown_(sh.getRange(dropdownRow, 2), options); // B
+}
+
+function applyChipDropdown_(sh, dropdownRow, chipTemplates, data) {
+  const options = chipTemplates
+    .map(template => fillJokeTemplate_(template, data))
+    .filter(Boolean)
+    .map(text => finishChipLine_(text));
+
+  setDropdown_(sh.getRange(dropdownRow, 2), options); // B
+}
+
+function setDropdown_(cell, options) {
+  const cleanOptions = [...new Set(options)]
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+
+  if (!cleanOptions.length) {
+    cell.clearDataValidations();
+    return;
+  }
+
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(cleanOptions, true)
+    .setAllowInvalid(false)
+    .build();
+
+  cell.setDataValidation(rule);
+}
+
+function getTemplatesByType_(templateSheet, wantedType) {
+  const values = templateSheet.getDataRange().getDisplayValues();
+  const wanted = String(wantedType).trim().toUpperCase();
+
+  return values
+    .slice(1)
+    .filter(row => String(row[0] || "").trim().toUpperCase() === wanted)
+    .map(row => String(row[1] || "").trim())
+    .filter(Boolean);
+}
+
+function getGuestBlockData_(sh, startRow, guestNumber, wordRow) {
+  const guestName = sh.getRange(startRow, 3).getDisplayValue();  // C
+  const pronoun = sh.getRange(startRow, 4).getDisplayValue();    // D
+  const possessive = sh.getRange(startRow, 5).getDisplayValue(); // E
+  const object = sh.getRange(startRow, 6).getDisplayValue();     // F
+  const jokeInput = sh.getRange(startRow + 1, 7).getDisplayValue(); // G pink joke row
+  const wordInput = wordRow ? sh.getRange(wordRow, 7).getDisplayValue() : "";
+
+  return {
+    guestNumber,
+    name: guestName,
+    pronoun,
+    possessive,
+    object,
+    joke: jokeInput,
+    word: wordInput
+  };
+}
+
+function getGuestNumberFromJokeCode_(sh, dropdownRow) {
+  const code = sh.getRange(dropdownRow, 6).getDisplayValue(); // F same row, JOKE5/JOKE7/etc.
+  return extractNumber_(code);
+}
+
+function getChipData_(sh) {
+  return {
+    joke: sh.getRange(59, 7).getDisplayValue() // G59
+  };
+}
+
+function fillJokeTemplate_(template, data) {
+  let output = String(template || "");
+
+  Object.keys(data).forEach(key => {
+    output = output.replaceAll(`{${key}}`, data[key] || "");
+  });
+
+  return output.trim();
+}
+
+function finishRonaLine_(guestNumber, text) {
+  const clean = stripFinalPeriod_(text);
+  return `– Rona's Guest Speller #${guestNumber} "${clean}."`;
+}
+
+function finishChipLine_(text) {
+  const clean = stripFinalPeriod_(text);
+  return `– Chip's "${clean}."`;
+}
+
+function stripFinalPeriod_(text) {
+  return String(text || "").trim().replace(/\.+$/, "");
+}
+
+function extractNumber_(text) {
+  const match = String(text || "").match(/\d+/);
+  return match ? match[0] : "";
+}
+
+function refreshJokesOnEdit_TEST_(e) {
+  if (!e || !e.range) return;
+
+  const sh = e.range.getSheet();
+  if (sh.getName() !== "Performance Highlights TEST") return;
+
+  const row = e.range.getRow();
+  const col = e.range.getColumn();
+
+  if (![2, 7].includes(col)) return;
+
+  const block =
+    getEditedJokeBlock_TEST_(row);
+
+  if (!block) return;
+
+  refreshSingleJokeBlock_TEST_(sh, block);
+}
+
+function getEditedJokeBlock_TEST_(row) {
+  const blocks = [
+    { startRow: 32, ronaDropdownRow: 33, wordRow: 35, postDropdownRow: 37, guestNumber: "5" },
+    { startRow: 38, ronaDropdownRow: 39, wordRow: 41, postDropdownRow: 43, guestNumber: "7" },
+    { startRow: 46, ronaDropdownRow: 47, postDropdownRow: 49, guestNumber: "13" },
+    { chipDropdownRow: 59 },
+    { startRow: 63, ronaDropdownRow: 64, postDropdownRow: 66, guestNumber: "23" },
+
+    { startRow: 89, ronaDropdownRow: 90, wordRow: 92, postDropdownRow: 94 },
+    { startRow: 95, ronaDropdownRow: 96, wordRow: 98, postDropdownRow: 100 },
+    { startRow: 105, ronaDropdownRow: 106, wordRow: 108, postDropdownRow: 110 },
+    { startRow: 120, ronaDropdownRow: 121, wordRow: 123, postDropdownRow: 125 }
+  ];
+
+  return blocks.find(b =>
+    [b.ronaDropdownRow, b.wordRow, b.postDropdownRow, b.chipDropdownRow]
+      .filter(Boolean)
+      .includes(row)
+  );
+}
+
+function refreshSingleJokeBlock_TEST_(sh, block) {
+  const ss = SpreadsheetApp.getActive();
+  const templateSheet = ss.getSheetByName("Joke Template");
+
+  if (!templateSheet) throw new Error('Could not find "Joke Template".');
+
+  const templates = {
+    rona: getTemplatesByType_(templateSheet, "RONA"),
+    post: getTemplatesByType_(templateSheet, "POST"),
+    chip: getTemplatesByType_(templateSheet, "CHIP")
+  };
+
+  if (block.chipDropdownRow) {
+    applyChipDropdown_(sh, block.chipDropdownRow, templates.chip, getChipData_(sh));
+    return;
+  }
+
+  const guestNumber = block.guestNumber || getGuestNumberFromJokeCode_(sh, block.ronaDropdownRow);
+  const data = getGuestBlockData_(sh, block.startRow, guestNumber, block.wordRow);
+
+  applyRonaDropdown_(sh, block.ronaDropdownRow, data, templates.rona);
+  applyPostDropdown_(sh, block.postDropdownRow, data, templates.post);
+}
+
+function addPerformanceHighlightsBaseJoke() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Performance Highlights");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Could not find the "Performance Highlights" tab.');
+    return;
+  }
+
+  const activeRow = sheet.getActiveCell().getRow();
+
+  const FIRST_JOKE_BANK_ROW = 215;
+  const LAST_JOKE_BANK_ROW = 680;
+
+  if (activeRow < FIRST_JOKE_BANK_ROW || activeRow > LAST_JOKE_BANK_ROW) {
+    ui.alert("Click a row inside the bottom joke bank section first, then run this again.");
+    return;
+  }
+
+  const response = ui.prompt(
+    "Add Performance Highlights Base Joke",
+    "Enter the new base joke text:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const newJoke = response.getResponseText().trim();
+
+  if (!newJoke) {
+    ui.alert("No joke entered.");
+    return;
+  }
+
+  const activeCell = sheet.getActiveCell();
+  const activeCol = activeCell.getColumn();
+
+  sheet.insertRowAfter(activeRow);
+
+  const newRow = activeRow + 1;
+  const lastCol = sheet.getLastColumn();
+
+  sheet
+    .getRange(activeRow, 1, 1, lastCol)
+    .copyTo(sheet.getRange(newRow, 1, 1, lastCol), {
+      contentsOnly: false
+    });
+
+  const targetCol = activeCol >= 2 && activeCol <= lastCol ? activeCol : 2;
+
+  sheet.getRange(newRow, targetCol).setValue(newJoke);
+
+  ui.alert("Base joke added to the bottom joke bank.");
+}
+
+function addUniversalGuestSpellerJoke() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Performance Highlights");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Could not find the "Performance Highlights" tab.');
+    return;
+  }
+
+  const response = ui.prompt(
+    "Add Universal Guest Speller Joke",
+    "Enter the simple joke text once:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const baseJoke = response.getResponseText().trim();
+
+  if (!baseJoke) {
+    ui.alert("No joke entered.");
+    return;
+  }
+
+  const sections = [
+    { header: "GUEST SPELLER #5 - ROUND 1", guest: "#5" },
+    { header: "GUEST SPELLER #7 - ROUND 1", guest: "#7" },
+    { header: "GUEST SPELLER #13 - ROUND 1", guest: "#13" },
+    { header: "GUEST SPELLER #23 - ROUND 1", guest: "#23" },
+    { header: "GUEST SPELLER #5 JOKE", guest: "#5" },
+    { header: "GUEST SPELLER #7 JOKE", guest: "#7" },
+    { header: "GUEST SPELLER #13 JOKE", guest: "#13" },
+    { header: "GUEST SPELLER #23 JOKE", guest: "#23" }
+  ];
+
+  let addedCount = 0;
+
+  sections.forEach(section => {
+    const headerRow = findGuestSpellerJokeHeaderAfterRow215_(sheet, section.header);
+    if (!headerRow) return;
+
+    const nextHeaderRow = findNextJokeBankHeaderAfter_(sheet, headerRow + 1);
+    const endRow = nextHeaderRow ? nextHeaderRow - 1 : sheet.getLastRow();
+
+    const targetRow = findFirstBlankInColumnB_(sheet, headerRow + 1, endRow);
+    if (!targetRow) return;
+
+    const fullJoke =
+      '– Rona\'s Guest Speller ' +
+      section.guest +
+      ' "' +
+      baseJoke +
+      '"';
+
+    sheet.getRange(targetRow, 2).setValue(fullJoke);
+    addedCount++;
+  });
+
+  ui.alert(
+    "Universal Guest Speller Joke added to " +
+    addedCount +
+    " joke bank section(s)."
+  );
+}
+
+function findGuestSpellerJokeHeaderAfterRow215_(sheet, headerText) {
+  const START_ROW = 215;
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < START_ROW) return null;
+
+  const values = sheet
+    .getRange(START_ROW, 1, lastRow - START_ROW + 1, sheet.getLastColumn())
+    .getDisplayValues();
+
+  const target = headerText.toString().trim().toUpperCase();
+
+  for (let r = 0; r < values.length; r++) {
+    const rowText = values[r].join(" ").toString().trim().toUpperCase();
+
+    if (rowText.includes(target)) {
+      return START_ROW + r;
+    }
+  }
+
+  return null;
+}
+
+function findNextJokeBankHeaderAfter_(sheet, startRow) {
+  const lastRow = sheet.getLastRow();
+
+  if (startRow > lastRow) return null;
+
+  const values = sheet
+    .getRange(startRow, 1, lastRow - startRow + 1, sheet.getLastColumn())
+    .getDisplayValues();
+
+  const nextHeaders = [
+    "GUEST SPELLER #5 - ROUND 1",
+    "GUEST SPELLER #7 - ROUND 1",
+    "GUEST SPELLER #13 - ROUND 1",
+    "GUEST SPELLER #23 - ROUND 1",
+    "GUEST SPELLER #5 JOKE",
+    "GUEST SPELLER #7 JOKE",
+    "GUEST SPELLER #13 JOKE",
+    "GUEST SPELLER #23 JOKE",
+    "CHIP'S JOKE",
+    "POST WORD JOKES",
+    "PANCH WORDS"
+  ];
+
+  for (let r = 0; r < values.length; r++) {
+    const rowText = values[r].join(" ").toString().trim().toUpperCase();
+
+    if (nextHeaders.some(header => rowText.includes(header))) {
+      return startRow + r;
+    }
+  }
+
+  return null;
+}
+
+function findFirstBlankInColumnB_(sheet, startRow, endRow) {
+  if (endRow < startRow) return null;
+
+  const values = sheet
+    .getRange(startRow, 2, endRow - startRow + 1, 1)
+    .getDisplayValues();
+
+  let blankCount = 0;
+
+  for (let r = 0; r < values.length; r++) {
+    const text = values[r][0].toString().trim();
+
+    if (text === "") {
+      blankCount++;
+
+      if (blankCount === 2) {
+        return startRow + r;
+      }
+    }
+  }
+
+  return null;
+}

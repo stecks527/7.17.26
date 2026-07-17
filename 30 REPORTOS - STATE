@@ -1,0 +1,394 @@
+/*************************************************
+ * 30 REPORTOS - STATE
+ * Version: 0.2.1
+ *************************************************/
+
+function reportOSPreview_(mode) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+
+  if (!inOut) throw new Error('Could not find "IN/OUT" tab.');
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+
+  const showState = reportOSGetShowStateSafe_();
+
+  const performanceText = [
+    reportOSGet_(showState, ["selectedPerformance", "inOutText"]),
+    reportOSGet_(showState, ["performanceLabel"]),
+    inOut.getRange("A4").getDisplayValue(),
+    inOut.getRange("B4").getDisplayValue(),
+    report.getRange("A3").getDisplayValue()
+  ].join(" ");
+
+  const upper = performanceText.toUpperCase();
+
+  const detectedMode =
+    mode && mode !== "AUTO"
+      ? mode
+      : upper.includes("MAT") || upper.includes("2:")
+        ? "MAT"
+        : upper.includes("EVE") || upper.includes("7:")
+          ? "EVE"
+          : "UNKNOWN";
+
+  const dateText =
+    reportOSGet_(showState, ["prettyDate"]) ||
+    reportOSGet_(showState, ["date"]) ||
+    inOut.getRange("A3").getDisplayValue();
+
+  const selectedPerformance =
+    reportOSGet_(showState, ["selectedPerformance", "inOutText"]) ||
+    reportOSGet_(showState, ["performanceLabel"]) ||
+    inOut.getRange("A4").getDisplayValue() ||
+    inOut.getRange("B4").getDisplayValue();
+
+  const staffing = reportOSBuildStaffing_(showState, inOut, report);
+  const castOuts = reportOSBuildCastOuts_(showState, inOut);
+  const guest = reportOSBuildGuest_(showState);
+  const notes =
+    inOut.getRange("A26").getDisplayValue() ||
+    inOut.getRange("A28").getDisplayValue();
+
+  return {
+    system: "ReportOS",
+    version: "0.2.1",
+    mode: detectedMode,
+    date: dateText,
+    performance: selectedPerformance,
+
+    performancesToday: (showState.performances || []).map(function (p) {
+      return p.inOutText || "";
+    }).filter(Boolean),
+
+    guest: guest,
+    staffing: staffing,
+    castOuts: castOuts,
+    notes: notes,
+
+    reportHeader: {
+      number: report.getRange("A2").getDisplayValue(),
+      date: report.getRange("A3").getDisplayValue()
+    },
+
+    sourceDebug: {
+      showStateFound: Boolean(showState && showState.__ok),
+      showStateCastOutCount: reportOSCastOutsFromShowState_(showState).length,
+      inOutCastOutCount: reportOSCastOutsFromInOut_(inOut).length
+    }
+  };
+}
+
+function reportOSGetShowStateSafe_() {
+  try {
+    if (typeof buildShowState === "function") {
+      const state = buildShowState() || {};
+      state.__ok = true;
+      return state;
+    }
+  } catch (err) {
+    Logger.log("ReportOS buildShowState failed/skipped: " + err);
+  }
+
+  return { __ok: false };
+}
+
+function reportOSBuildStaffing_(showState, inOut, report) {
+  const assignments = showState.assignments || {};
+  const values = assignments.values || {};
+
+  return {
+    callingSM:
+      values.calling ||
+      values.callingSM ||
+      inOut.getRange("A22").getDisplayValue() ||
+      report.getRange("C5").getDisplayValue(),
+
+    deckSM:
+      values.deck ||
+      values.deckSM ||
+      inOut.getRange("E22").getDisplayValue() ||
+      report.getRange("C6").getDisplayValue(),
+
+    conductor:
+      values.conductor ||
+      reportOSSelectedPerformanceConductor_(showState) ||
+      inOut.getRange("A24").getDisplayValue() ||
+      report.getRange("C7").getDisplayValue(),
+
+    a1:
+      values.audio ||
+      values.a1 ||
+      report.getRange("C8").getDisplayValue()
+  };
+}
+
+function reportOSBuildCastOuts_(showState, inOut) {
+  const fromShowState = reportOSCastOutsFromShowState_(showState);
+  const fromInOut = reportOSCastOutsFromInOut_(inOut);
+
+  return reportOSDedupeCastOuts_(fromShowState.concat(fromInOut));
+}
+
+function reportOSCastOutsFromShowState_(showState) {
+  if (!showState || !showState.__ok) return [];
+
+  const outs = [];
+
+  const planned =
+    (showState.intelligence && showState.intelligence.plannedOuts) || [];
+
+  planned.forEach(function (out) {
+    outs.push(reportOSNormalizeOut_(out, "showState.planned"));
+  });
+
+  const current = showState.currentCastOuts || showState.castOuts || [];
+
+  current.forEach(function (out) {
+    outs.push(reportOSNormalizeOut_(out, "showState.current"));
+  });
+
+  return outs.filter(function (item) {
+    return item.out || item.in || item.role || item.reason;
+  });
+}
+
+function reportOSCastOutsFromInOut_(inOut) {
+  const rows = inOut.getRange(6, 1, 15, 7).getDisplayValues();
+
+  return rows.map(function (row) {
+    return {
+      source: "inOut",
+      out: row[0],
+      in: row[2],
+      role: row[5] || row[4],
+      reason: row[6]
+    };
+  }).filter(function (item) {
+    return item.out || item.in || item.role || item.reason;
+  });
+}
+
+function reportOSNormalizeOut_(out, source) {
+  out = out || {};
+
+  let actorOut =
+    out.actor ||
+    out.actorOut ||
+    out.out ||
+    out.name ||
+    "";
+
+  let actorIn =
+    out.finalInActor ||
+    out.coverActor ||
+    out.preselectedCover ||
+    out.tempReplacement ||
+    out.temporaryReplacement ||
+    out.weeklyAssigned ||
+    out.inActor ||
+    out.in ||
+    out.cover ||
+    "";
+
+  let role =
+    out.role ||
+    out.character ||
+    "";
+
+  let reason =
+    out.reason ||
+    out.status ||
+    "";
+
+  // Temporary hard-code until TempReplacementOS exists.
+  const text = JSON.stringify(out).toLowerCase();
+
+  if (
+    text.indexOf("justin") !== -1 &&
+    text.indexOf("leaf") !== -1 &&
+    text.indexOf("mloa") !== -1
+  ) {
+    actorIn = "Fernell Hogan";
+    role = role || "Leaf Coneybear";
+    reason = reason || "MLOA";
+  }
+
+  if (actorIn === "No cover needed") actorIn = "";
+
+  return {
+    source: source,
+    out: actorOut,
+    in: actorIn,
+    role: role,
+    reason: reason
+  };
+}
+
+function reportOSDedupeCastOuts_(outs) {
+  const seen = {};
+  const result = [];
+
+  (outs || []).forEach(function (item) {
+    const outKey = reportOSClean_(item.out).toLowerCase();
+    const roleKey = reportOSRoleKey_(item.role);
+
+    if (!outKey && !roleKey) return;
+
+    const key = outKey + "|" + roleKey;
+
+    if (!seen[key]) {
+      seen[key] = item;
+      result.push(item);
+      return;
+    }
+
+    const existing = seen[key];
+
+    if (!existing.in && item.in) existing.in = item.in;
+    // Always keep the best non-empty reason.
+    if (item.reason && String(item.reason).trim()) {
+      existing.reason = item.reason;
+    }
+
+    if (!existing.role || existing.role.length < String(item.role || "").length) {
+      existing.role = item.role;
+    }
+
+    if (!existing.source && item.source) existing.source = item.source;
+  });
+
+  return result;
+}
+
+function reportOSRoleKey_(role) {
+  const text = reportOSClean_(role)
+    .toLowerCase()
+    .replace(/é/g, "e");
+
+  if (text.indexOf("leaf") !== -1) return "leaf";
+  if (text.indexOf("barfee") !== -1) return "barfee";
+  if (text.indexOf("olive") !== -1) return "olive";
+  if (text.indexOf("rona") !== -1) return "rona";
+  if (text.indexOf("panch") !== -1) return "panch";
+  if (text.indexOf("chip") !== -1) return "chip";
+  if (text.indexOf("schwartzy") !== -1) return "schwartzy";
+  if (text.indexOf("marcy") !== -1) return "marcy";
+  if (text.indexOf("mitch") !== -1) return "mitch";
+
+  return text;
+}
+
+function reportOSSelectedPerformanceConductor_(showState) {
+  const performances = showState.performances || [];
+  const index = Number(showState.selectedIndex || 0);
+  const perf = performances[index] || performances[0] || null;
+
+  return perf ? perf.conductor || "" : "";
+}
+
+function reportOSDisplayDate_(state) {
+  const date = reportOSParseDateFromState_(state);
+
+  const dateText = Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "EEEE, MMMM d, yyyy"
+  );
+
+  if ((state.performancesToday || []).length <= 1) {
+    return dateText;
+  }
+
+  return dateText + " - " + state.mode;
+}
+
+function reportOSGet_(obj, path) {
+  let cur = obj;
+
+  for (let i = 0; i < path.length; i++) {
+    if (!cur || typeof cur !== "object") return "";
+    cur = cur[path[i]];
+  }
+
+  return cur || "";
+}
+
+function reportOSClean_(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*************************************************
+ * GUEST
+ *************************************************/
+
+function reportOSBuildGuest_(showState) {
+
+  const guest = {
+
+    exists: false,
+
+    name: "",
+
+    number: ""
+
+  };
+
+  if (!showState) return guest;
+
+  //
+  // New ShowState
+  //
+
+  if (showState.guestSpeller) {
+
+    guest.name =
+      showState.guestSpeller.name ||
+      showState.guestSpeller.guestSpellerName ||
+      "";
+
+    guest.number =
+      showState.guestSpeller.number ||
+      showState.guestSpeller.guestSpellerNumber ||
+      "";
+
+  }
+
+  //
+  // Older builds
+  //
+
+  if (!guest.name && showState.guest) {
+
+    guest.name =
+      showState.guest.name || "";
+
+    guest.number =
+      showState.guest.number || "";
+
+  }
+
+  //
+  // Future compatibility
+  //
+
+  if (!guest.name && showState.selectedPerformance) {
+
+    guest.name =
+      showState.selectedPerformance.guestSpellerName ||
+      "";
+
+    guest.number =
+      showState.selectedPerformance.guestSpellerNumber ||
+      "";
+
+  }
+
+  guest.exists =
+    guest.name.trim() !== "";
+
+  return guest;
+
+}

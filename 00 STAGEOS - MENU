@@ -1,0 +1,634 @@
+/*************************************************
+ * 00 STAGEOS - MENU
+ * Version: 5.1.0
+ * Status: ACTIVE
+ *
+ * Menu construction only.
+ *
+ * Workflow logic belongs in:
+ * 00 STAGEOS - ACTIONS.gs
+ *************************************************/
+
+
+/* =========================================================
+ * OPEN
+ * ========================================================= */
+
+function onOpen() {
+  buildStageOSMenu_();
+  buildStageOSDevelopmentMenu_();
+}
+
+
+/* =========================================================
+ * PRIMARY STAGEOS MENU
+ * ========================================================= */
+
+function buildStageOSMenu_() {
+  const ui =
+    SpreadsheetApp.getUi();
+
+  ui.createMenu("StageOS")
+    .addItem(
+      "Refresh Home",
+      "refreshStageOSDashboard_DEV"
+    )
+    .addSeparator()
+    .addSubMenu(
+      buildStageOSInOutMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSPerformanceReportMenu_(ui)
+    )
+    .addSeparator()
+    .addSubMenu(
+      buildStageOSWeeklyMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSPayrollMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSGuestSpellerMenu_(ui)
+    )
+    .addSeparator()
+    .addSubMenu(
+      buildStageOSCompanyMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSCalendarMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSSMFloatMenu_(ui)
+    )
+    .addToUi();
+}
+
+
+/* =========================================================
+ * DEVELOPMENT MENU
+ * ========================================================= */
+
+function buildStageOSDevelopmentMenu_() {
+  const ui =
+    SpreadsheetApp.getUi();
+
+  ui.createMenu("Development")
+    .addSubMenu(
+      buildStageOSDependencyMenu_(ui)
+    )
+    .addSeparator()
+    .addSubMenu(
+      buildStageOSEngineMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSCacheMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSMigrationMenu_(ui)
+    )
+    .addSeparator()
+    .addSubMenu(
+      buildStageOSProjectMenu_(ui)
+    )
+    .addSubMenu(
+      buildStageOSDeveloperMenu_(ui)
+    )
+    .addToUi();
+}
+
+
+/* =========================================================
+ * PREP PROCESS
+ * ========================================================= */
+
+function buildStageOSInOutMenu_(ui) {
+  return ui
+    .createMenu("Prep Process")
+    .addItem(
+      "Prep IN/OUT",
+      "homeButtonPrepInOut"
+    );
+}
+
+
+/* =========================================================
+ * PERFORMANCE REPORT
+ * ========================================================= */
+
+function buildStageOSPerformanceReportMenu_(ui) {
+  const resetMenu =
+    ui.createMenu("Report Reset")
+      .addItem(
+        "Clear Report (Matinee)",
+        "homeButtonResetReportMatinee"
+      )
+      .addItem(
+        "Clear Report (Evening)",
+        "homeButtonResetReportEvening"
+      )
+      .addSeparator()
+      .addItem(
+        "Reset Schedule",
+        "updateReportSchedulesOnly"
+      )
+      .addItem(
+        "Clear Performance Highlights",
+        "clearPerformanceHighlights"
+      )
+      .addItem(
+        "Input IN/OUT Notes",
+        "writeReportNotesFromCurrentInOut_"
+      );
+
+  return ui
+    .createMenu("Performance Report")
+    .addItem(
+      "📧 Performance Report Email Draft",
+      "homeButtonDraftReport"
+    )
+    .addSeparator()
+    .addSubMenu(
+      resetMenu
+    );
+}
+
+
+/* =========================================================
+ * WEEKLY
+ * ========================================================= */
+
+function buildStageOSWeeklyMenu_(ui) {
+  return ui
+    .createMenu("Weekly")
+    .addItem(
+      "📧 Weekly Email Draft",
+      "homeButtonWeeklyEmailDraft"
+    )
+    .addSeparator()
+    .addItem(
+      "WeeklyOS Builder",
+      "weeklyOSOpenBuilder"
+    )
+    .addItem(
+      "Clear Current Draft",
+      "weeklyOSClearDraftMenu_"
+    );
+}
+
+
+/* =========================================================
+ * PAYROLL
+ * ========================================================= */
+
+function buildStageOSPayrollMenu_(ui) {
+  return ui
+    .createMenu("Payroll")
+    .addItem(
+      "📧 Payroll Email Draft",
+      "homeButtonPayrollEmailDraft"
+    )
+    .addSeparator()
+    .addItem(
+      "Generate Next Week's Payroll",
+      "fillPayrollFromCurrentWeekly"
+    );
+}
+
+
+/* =========================================================
+ * GUEST SPELLER
+ * ========================================================= */
+
+function buildStageOSGuestSpellerMenu_(ui) {
+  return ui
+    .createMenu("Guest Speller")
+    .addItem(
+      "📧 Guest Speller Email Draft",
+      "homeButtonGuestSpellerEmailDraft"
+    )
+    .addSeparator()
+    .addItem(
+      "Create Guest Packet",
+      "homeButtonGuestSpellerPacket"
+    );
+}
+
+
+/* =========================================================
+ * COMPANY
+ * ========================================================= */
+
+function buildStageOSCompanyMenu_(ui) {
+  return ui
+    .createMenu("Company")
+    .addItem(
+      "New Out",
+      "homeButtonAddOut"
+    )
+    .addSeparator()
+    .addItem(
+      "Preview Company Change",
+      "analyzeCompanyChange"
+    )
+    .addItem(
+      "Execute Company Change",
+      "executeCompanyChange"
+    );
+}
+
+
+/* =========================================================
+ * CALENDAR
+ * ========================================================= */
+
+function buildStageOSCalendarMenu_(ui) {
+  return ui
+    .createMenu("Calendar")
+    .addItem(
+      "Export Calendar PDF",
+      "exportCurrentMonthCalendarPdf"
+    )
+    .addItem(
+      "Custom Calendar PDF Export",
+      "showCustomCalendarExportDialog"
+    );
+}
+
+
+/* =========================================================
+ * SM FLOAT
+ * ========================================================= */
+
+function buildStageOSSMFloatMenu_(ui) {
+  return ui
+    .createMenu("SM Float")
+    .addItem(
+      "📧 SM Float Email Draft",
+      "draftSMFloatEmail"
+    )
+    .addItem(
+      "📧 Perishables Email Draft",
+      "homeButtonPerishablesEmailDraft"
+    )
+    .addSeparator()
+    .addItem(
+      "Sync Gmail Receipts",
+      "importGmailReceipts"
+    )
+    .addItem(
+      "Upload Receipt",
+      "showSMFloatReceiptUploader"
+    )
+    .addSeparator()
+    .addItem(
+      "Update Weekly Spending",
+      "refreshWeeklySpendingFromPropFloat"
+    );
+}
+
+
+/* =========================================================
+ * DEPENDENCYOS
+ * ========================================================= */
+
+function buildStageOSDependencyMenu_(ui) {
+  return ui.createMenu("DependencyOS")
+    .addItem(
+      "Start / Resume Core Audit",
+      "dependencyOSAuditWorkbook"
+    )
+    .addItem(
+      "Audit Status",
+      "dependencyOSShowAuditStatus"
+    )
+    .addItem(
+      "Reset Audit Progress",
+      "dependencyOSResetAuditProgress"
+    )
+    .addSeparator()
+    .addItem(
+      "Inspect Selected Cell",
+      "dependencyOSInspectActiveCell"
+    )
+    .addSeparator()
+    .addItem(
+      "Clear Dependency Reports",
+      "dependencyOSClearReports"
+    );
+}
+
+
+/* =========================================================
+ * ENGINEOS
+ * ========================================================= */
+
+function buildStageOSEngineMenu_(ui) {
+  return ui
+    .createMenu("EngineOS")
+    .addItem(
+      "Engine Status",
+      "showEngineOSStatus"
+    )
+    .addItem(
+      "Open Engine Workbook",
+      "openEngineWorkbook"
+    )
+    .addItem(
+      "Setup Engine Core Sheets",
+      "setupEngineOSCoreSheets"
+    )
+    .addSeparator()
+    .addItem(
+      "Write Cache Status to Engine",
+      "writeStageCacheStatusToEngine"
+    )
+    .addItem(
+      "Test EngineQueryOS",
+      "testEngineQueryOS"
+    )
+    .addItem(
+      "Test EngineRouterOS",
+      "testEngineRouterOS"
+    )
+    .addItem(
+      "Test Resolver History",
+      "testEngineResolverHistoryOS"
+    )
+    .addSeparator()
+    .addItem(
+      "Run Migration Audit",
+      "runEngineMigrationAudit"
+    )
+    .addItem(
+      "Archive Migrated Tabs",
+      "archiveMigratedProductionHelperTabs"
+    )
+    .addItem(
+      "Rebuild Engine Analytics",
+      "rebuildEngineAnalyticsOS"
+    )
+    .addItem(
+      "Show Analytics Summary",
+      "showEngineAnalyticsSummary"
+    )
+    .addItem(
+      "Test Analytics Record",
+      "testEngineAnalyticsOSRecord"
+    );
+}
+
+
+/* =========================================================
+ * STAGECACHEOS
+ * ========================================================= */
+
+function buildStageOSCacheMenu_(ui) {
+  return ui
+    .createMenu("StageCacheOS")
+    .addItem(
+      "Refresh Platform",
+      "refreshStageOSPlatformCaches"
+    )
+    .addItem(
+      "Refresh Core Caches",
+      "refreshStageCacheOSCore"
+    )
+    .addSeparator()
+    .addItem(
+      "Force Rebuild Platform",
+      "forceRebuildStageOSPlatformCachesWithAlert"
+    )
+    .addItem(
+      "Cache Status",
+      "showStageCacheOSStatus"
+    )
+    .addItem(
+      "Clear All Caches",
+      "clearStageCacheOS"
+    )
+    .addSeparator()
+    .addItem(
+      "Refresh Settings Cache",
+      "refreshSettingsCacheOS"
+    )
+    .addItem(
+      "Clear Weekly Cache",
+      "refreshWeeklyCacheOS"
+    );
+}
+
+
+/* =========================================================
+ * ENGINE MIGRATION
+ * ========================================================= */
+
+function buildStageOSMigrationMenu_(ui) {
+  return ui
+    .createMenu("Engine Migration")
+    .addItem(
+      "Migration Inventory",
+      "showEngineMigrationInventory"
+    )
+    .addItem(
+      "Migrate Known Helper Tabs",
+      "migrateKnownHelperTabsToEngine"
+    )
+    .addItem(
+      "Hide Migrated Helper Tabs",
+      "hideMigratedHelperTabs"
+    )
+    .addItem(
+      "Dependency Audit",
+      "runEngineDependencyAudit"
+    )
+    .addSeparator()
+    .addItem(
+      "Migrate Snapshot History",
+      "migrateSnapshotHistoryToEngine"
+    )
+    .addItem(
+      "Migrate Resolver Data",
+      "migrateResolverDataToEngine"
+    );
+}
+
+
+/* =========================================================
+ * STAGEOS PROJECT
+ * ========================================================= */
+
+function buildStageOSProjectMenu_(ui) {
+  return ui
+    .createMenu("StageOS Project")
+    .addItem(
+      "Open/Create Builder",
+      "createStageOSProjectTracker"
+    )
+    .addItem(
+      "Refresh Builder",
+      "refreshStageOSBuilder"
+    )
+    .addItem(
+      "Seed Missing Tasks",
+      "seedMissingStageOSTasks"
+    )
+    .addSeparator()
+    .addItem(
+      "Add Task",
+      "addStageOSTaskPrompt"
+    )
+    .addItem(
+      "Complete Task",
+      "completeStageOSTaskBySearchPrompt"
+    )
+    .addItem(
+      "Update Task Status",
+      "setStageOSTaskStatusPrompt"
+    )
+    .addSeparator()
+    .addItem(
+      "Add Parking Lot Idea",
+      "addStageOSParkingLotIdeaPrompt"
+    )
+    .addSeparator()
+    .addItem(
+      "Sync From Registry",
+      "syncStageOSProjectTracker"
+    )
+    .addItem(
+      "Rebuild From Registry",
+      "rebuildStageOSProjectTrackerFromRegistry"
+    )
+    .addItem(
+      "Show Project Status",
+      "showProjectTrackerStatus"
+    );
+}
+
+
+/* =========================================================
+ * DEVELOPER TOOLS
+ * ========================================================= */
+
+function buildStageOSDeveloperMenu_(ui) {
+  return ui
+    .createMenu("Developer Tools")
+
+    /*
+     * SEARCH / EXPLORER
+     */
+    .addItem(
+      "Find Function",
+      "developerOSFindFunctionPrompt"
+    )
+    .addItem(
+      "Where Is Function Used?",
+      "developerOSFindFunctionUsagePrompt"
+    )
+    .addItem(
+      "Find File",
+      "developerOSFindFilePrompt"
+    )
+    .addItem(
+      "Explore System",
+      "developerOSExploreSystemPrompt"
+    )
+
+    /*
+     * INDEX SHEETS
+     */
+    .addSeparator()
+    .addItem(
+      "Open Function Index",
+      "developerOSOpenFunctionIndex"
+    )
+    .addItem(
+      "Open File Index",
+      "developerOSOpenFileIndex"
+    )
+    .addItem(
+      "Open Dependency Index",
+      "developerOSOpenDependencyIndex"
+    )
+
+    /*
+     * REGISTRY MAINTENANCE
+     */
+    .addSeparator()
+    .addItem(
+      "Add Function to Index",
+      "developerOSAddFunctionPrompt"
+    )
+    .addItem(
+      "Add File to Index",
+      "developerOSAddFilePrompt"
+    )
+    .addItem(
+      "Add Function Relationship",
+      "developerOSAddFunctionRelationshipPrompt"
+    )
+    .addSeparator()
+    .addItem(
+      "Seed Core Function Index",
+      "developerOSSeedCoreFunctionIndex"
+    )
+    .addItem(
+      "Seed Project File Index",
+      "developerOSSeedProjectFiles"
+    )
+    .addItem(
+      "Seed Core Dependencies",
+      "developerOSSeedCoreDependencies"
+    )
+
+    /*
+     * EXISTING DEVELOPER TOOLS
+     */
+    .addSeparator()
+    .addItem(
+      "Open Production Settings",
+      "openProductionSettings"
+    )
+    .addSeparator()
+    .addItem(
+      "Debug StageOS Core",
+      "debugStageOSCore"
+    )
+    .addItem(
+      "Test StageOS Actions",
+      "testStageOSActionsRegistry"
+    )
+    .addSeparator()
+    .addItem(
+      "Test DecisionOS Current",
+      "testDecisionOSCurrentPerformance"
+    )
+    .addItem(
+      "Test WorkflowStatusOS",
+      "testWorkflowStatusOS"
+    )
+    .addItem(
+      "Test Assignment History",
+      "testEngineAssignmentHistoryOS"
+    )
+    .addItem(
+      "Test Engine Write",
+      "testEngineOSWrite"
+    )
+    .addItem(
+      "Test EngineLog Info",
+      "testEngineLogOSInfo"
+    )
+    .addItem(
+      "Test EngineLog Diagnostic",
+      "testEngineLogOSDiagnostic"
+    )
+    .addItem(
+      "Test Engine Wizard Log",
+      "testEngineWizardLogOS"
+    )
+    .addItem(
+      "Test Engine Live Write",
+      "testEngineLiveWriteOS"
+    );
+}

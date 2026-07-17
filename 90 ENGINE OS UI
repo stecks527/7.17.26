@@ -1,0 +1,57 @@
+/*************************************************
+ * 90 ENGINE OS UI
+ * Version: 1.0.0
+ *************************************************/
+
+function showEngineOSStatus() {
+  const status = EngineOS().status();
+
+  SpreadsheetApp.getUi().alert(
+    "EngineOS Status\n\n" +
+    "Enabled: " + status.enabled + "\n" +
+    "Connected: " + status.connected + "\n" +
+    "Workbook: " + (status.name || "(none)") + "\n" +
+    "Workbook ID: " + (status.workbookId || "(missing)") + "\n\n" +
+    "Sheets:\n" +
+    (status.sheets.length ? status.sheets.join("\n") : "(none)")
+  );
+}
+
+function setupEngineOSCoreSheets() {
+  const touched = EngineOS().ensureCore();
+
+  SpreadsheetApp.getUi().alert(
+    "EngineOS core sheets checked.\n\n" +
+    touched.join("\n")
+  );
+}
+
+function openEngineWorkbook() {
+  const status = EngineOS().status();
+
+  if (!status.connected || !status.url) {
+    SpreadsheetApp.getUi().alert("Engine workbook is not connected.");
+    return;
+  }
+
+  const html = HtmlService.createHtmlOutput(
+    '<script>window.open("' + status.url + '", "_blank");google.script.host.close();</script>'
+  )
+    .setWidth(120)
+    .setHeight(80);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Opening Engine");
+}
+
+function testEngineOSWrite() {
+  EngineOS().sheet("logs").appendObject({
+    "Timestamp": new Date(),
+    "Level": "INFO",
+    "System": "EngineOS",
+    "Action": "Test Write",
+    "Message": "EngineOS test write successful.",
+    "Data": JSON.stringify({ test: true })
+  });
+
+  SpreadsheetApp.getUi().alert("EngineOS test write complete.");
+}

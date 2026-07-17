@@ -1,0 +1,134 @@
+/*************************************************
+ * 30 REPORT RESET OS
+ * Version: 0.2.0
+ *
+ * Owns full report reset orchestration.
+ *************************************************/
+
+function ReportResetOS() {
+  return {
+    run: reportResetRun_
+  };
+}
+
+function reportResetRun_(mode, options) {
+  options = options || {};
+
+  const state = ReportOS().preview(mode);
+  const resetWord = reportResetWordForMode_(state.mode);
+
+  Logger.log("ReportResetOS starting:");
+  Logger.log(JSON.stringify({
+    mode: state.mode,
+    date: state.date,
+    performance: state.performance
+  }, null, 2));
+
+  const preservedRows = options.preserveSpecificNoteRows || [];
+
+  const preservedNotes = reportResetCaptureRows_(preservedRows);
+
+  reportResetClearHighlights_();
+
+  reportResetClearShell_(resetWord, {
+    preserveExistingNotes: false
+  });
+
+  reportResetRestoreRows_(preservedNotes);
+
+  ReportWriterOS().all(state);
+
+  Logger.log("ReportResetOS complete.");
+
+  return state;
+}
+
+function reportResetAuto_TEST() {
+  return ReportResetOS().run("AUTO");
+}
+
+/*************************************************
+ * CLEARERS
+ *************************************************/
+
+function reportResetClearHighlights_() {
+  if (typeof clearPerformanceHighlights === "function") {
+    clearPerformanceHighlights();
+    Logger.log("ReportResetOS cleared Performance Highlights.");
+    return;
+  }
+
+  Logger.log("ReportResetOS skipped Performance Highlights clear.");
+}
+
+function reportResetClearShell_(resetWord, options) {
+  options = options || {};
+
+  if (typeof clearPerformanceReport_ === "function") {
+    clearPerformanceReport_(resetWord, {
+      preserveExistingNotes: options.preserveExistingNotes === true
+    });
+
+    Logger.log(
+      "ReportResetOS cleared Performance Report shell: " +
+      resetWord +
+      " / preserve notes: " +
+      Boolean(options.preserveExistingNotes)
+    );
+
+    return;
+  }
+
+  Logger.log("ReportResetOS skipped Performance Report shell clear.");
+}
+
+/*************************************************
+ * PRESERVE SELECTED ROWS
+ *************************************************/
+
+function reportResetCaptureRows_(rows) {
+  const report = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("Performance Report");
+
+  if (!report) return [];
+
+  return (rows || []).map(function(row) {
+    return {
+      row: Number(row),
+      value: report.getRange(Number(row), 1).getValue(),
+      display: report.getRange(Number(row), 1).getDisplayValue()
+    };
+  }).filter(function(item) {
+    return item.row && String(item.display || "").trim();
+  });
+}
+
+function reportResetRestoreRows_(items) {
+  const report = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("Performance Report");
+
+  if (!report) return;
+
+  (items || []).forEach(function(item) {
+    report.getRange(item.row, 1).setValue(item.value);
+  });
+
+  if (items && items.length) {
+    Logger.log("ReportResetOS restored preserved note rows: " + items.length);
+  }
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function reportResetWordForMode_(mode) {
+  const upper = String(mode || "").toUpperCase();
+
+  if (upper === "MAT") return "today";
+  if (upper === "EVE") return "tonight";
+
+  return "today";
+}

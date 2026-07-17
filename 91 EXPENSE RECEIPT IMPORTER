@@ -1,0 +1,560 @@
+/***************
+ * 91 EXPENSE RECEIPT IMPORTER
+ ***************/
+
+const EXPENSE_CONFIG = {
+  sheetName: "FULL Expenses",
+  receiptFolderId: "1-C0yUltQmhkkdPy305NQfkosPBdu4GT1",
+
+  importedLabelName: "Expense-Imported",
+  reviewLabelName: "Expense-Needs-Review",
+
+  // Change this if you want a shorter/longer scan window.
+  gmailSearchDays: 30,
+
+  // Your sheet columns
+  columns: {
+    date: 1,        // A
+    vendor: 2,      // B
+    description: 3, // C
+    amount: 4,      // D
+    what: 5         // E
+  },
+
+  // Week header examples:
+  // "Week Ending 6.28.26 - Week 37"
+  weekHeaderRegex: /Week Ending\s+(\d{1,2})\.(\d{1,2})\.(\d{2,4})/i,
+
+  // Generic Gmail search. Amazon works, but this is not Amazon-only.
+  gmailQueryTerms: [
+    'subject:(receipt OR invoice OR order OR purchase OR "order confirmation" OR "your order" OR payment OR transaction)',
+    'OR from:(amazon OR square OR toast OR uber OR lyft OR staples OR homedepot OR "home depot" OR fedex OR target OR walmart OR etsy OR paypal OR stripe)'
+  ],
+
+  negativeSearchTerms: [
+    '-subject:(shipping OR shipped OR delivered OR delivery OR promotion OR sale OR deal OR newsletter)',
+    '-category:promotions'
+  ]
+};
+
+/***************
+ * MENU
+ ***************/
+
+function getExpensesMenu_() {
+  return SpreadsheetApp.getUi()
+    .createMenu("Expenses")
+    .addItem("Import Gmail Receipts", "importGmailReceipts");
+}
+
+/***************
+ * MAIN BUTTON FUNCTION
+ ***************/
+
+function importGmailReceipts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getExpenseSheet_(ss);
+
+  const folder = DriveApp.getFolderById(EXPENSE_CONFIG.receiptFolderId);
+  const importedLabel = getOrCreateGmailLabel_(EXPENSE_CONFIG.importedLabelName);
+  const reviewLabel = getOrCreateGmailLabel_(EXPENSE_CONFIG.reviewLabelName);
+
+  const query = buildReceiptSearchQuery_();
+  const threads = GmailApp.search(query, 0, 100);
+
+  let imported = 0;
+  let needsReview = 0;
+  let skipped = 0;
+
+  threads.forEach(thread => {
+    const messages = thread.getMessages();
+
+    messages.forEach(message => {
+      try {
+        if (messageHasLabel_(message, EXPENSE_CONFIG.importedLabelName)) {
+          skipped++;
+          return;
+        }
+
+        const expense = extractExpenseInfo_(message);
+
+        if (!expense.amount) {
+          message.addLabel(reviewLabel);
+          needsReview++;
+          return;
+        }
+
+        const receiptFile = saveReceiptToDrive_(message, folder, expense);
+        const receiptUrl = receiptFile.getUrl();
+
+        const row = findExpenseInsertRow_(sheet, expense.date);
+
+        writeExpenseToSheet_(sheet, row, expense, receiptUrl);
+
+        message.addLabel(importedLabel);
+        imported++;
+
+      } catch (err) {
+        Logger.log(`Error importing message "${message.getSubject()}": ${err.message}`);
+        message.addLabel(reviewLabel);
+        needsReview++;
+      }
+    });
+  });
+
+  SpreadsheetApp.getUi().alert(
+    "Expense import complete.\n\n" +
+    `Imported: ${imported}\n` +
+    `Needs review: ${needsReview}\n` +
+    `Skipped: ${skipped}`
+  );
+}
+
+/***************
+ * GMAIL SEARCH
+ ***************/
+
+function buildReceiptSearchQuery_() {
+  return [
+    `newer_than:${EXPENSE_CONFIG.gmailSearchDays}d`,
+    `(${EXPENSE_CONFIG.gmailQueryTerms.join(" ")})`,
+    EXPENSE_CONFIG.negativeSearchTerms.join(" "),
+    `-label:${EXPENSE_CONFIG.importedLabelName}`
+  ].join(" ");
+}
+
+function getOrCreateGmailLabel_(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
+}
+
+function messageHasLabel_(message, labelName) {
+  const labels = message.getThread().getLabels().map(label => label.getName());
+  return labels.includes(labelName);
+}
+
+/***************
+ * EXTRACT EXPENSE INFO
+ ***************/
+
+function extractExpenseInfo_(message) {
+  const subject = message.getSubject() || "";
+  const from = message.getFrom() || "";
+  const plainBody = message.getPlainBody() || "";
+  const body = plainBody.replace(/\s+/g, " ").trim();
+
+  const date = message.getDate();
+  const vendor = extractVendor_(from, subject, body);
+  const amount = extractAmount_(subject, body);
+  const description = extractDescription_(subject, vendor);
+  const what = guessCategory_(vendor, subject, body);
+
+  return {
+    date,
+    vendor,
+    description,
+    amount,
+    what,
+    subject
+  };
+}
+
+function extractVendor_(from, subject, body) {
+  const emailMatch = from.match(/<(.+?)>/);
+  const email = emailMatch ? emailMatch[1] : from;
+
+  const lower = `${from} ${subject}`.toLowerCase();
+
+  if (lower.includes("amazon")) return "Amazon";
+  if (lower.includes("uber")) return "Uber";
+  if (lower.includes("lyft")) return "Lyft";
+  if (lower.includes("home depot") || lower.includes("homedepot")) return "Home Depot";
+  if (lower.includes("staples")) return "Staples";
+  if (lower.includes("fedex")) return "FedEx";
+  if (lower.includes("target")) return "Target";
+  if (lower.includes("walmart")) return "Walmart";
+  if (lower.includes("paypal")) return "PayPal";
+  if (lower.includes("square")) return "Square";
+  if (lower.includes("stripe")) return "Stripe";
+
+  let name = from.replace(/<.+?>/g, "").replace(/"/g, "").trim();
+
+  if (!name && email) {
+    name = email.split("@")[1] || email;
+    name = name.replace(/\.(com|org|net|co)$/i, "");
+  }
+
+  return cleanVendorName_(name || "Unknown Vendor");
+}
+
+function cleanVendorName_(name) {
+  return name
+    .replace(/receipts?/i, "")
+    .replace(/orders?/i, "")
+    .replace(/support/i, "")
+    .replace(/no-?reply/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractAmount_(subject, body) {
+  const text = `${subject} ${body}`;
+
+  const preferredPatterns = [
+    /(?:order total|grand total|total charged|total paid|amount paid|payment total|total)\s*[:\-]?\s*\$?\s*([0-9,]+\.\d{2})/i,
+    /(?:charged|paid)\s*\$?\s*([0-9,]+\.\d{2})/i,
+    /\$\s*([0-9,]+\.\d{2})/
+  ];
+
+  for (const pattern of preferredPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      return Number(match[1].replace(/,/g, ""));
+    }
+  }
+
+  return null;
+}
+
+function extractDescription_(subject, vendor) {
+  let description = subject || "Receipt";
+
+  description = description
+    .replace(/^your\s+/i, "")
+    .replace(/receipt/i, "Receipt")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!description.toLowerCase().includes(vendor.toLowerCase())) {
+    description = `${vendor} - ${description}`;
+  }
+
+  return description;
+}
+
+function guessCategory_(vendor, subject, body) {
+  const text = `${vendor} ${subject} ${body}`.toLowerCase();
+
+  if (text.includes("uber") || text.includes("lyft") || text.includes("taxi") || text.includes("train")) {
+    return "Transportation";
+  }
+
+  if (text.includes("staples") || text.includes("office depot") || text.includes("printing") || text.includes("fedex")) {
+    return "Office";
+  }
+
+  if (text.includes("home depot") || text.includes("amazon") || text.includes("target") || text.includes("walmart")) {
+    return "Props";
+  }
+
+  if (text.includes("restaurant") || text.includes("coffee") || text.includes("starbucks") || text.includes("toast") || text.includes("square")) {
+    return "Meals";
+  }
+
+  return "";
+}
+
+/***************
+ * SAVE RECEIPT PDF
+ ***************/
+
+function saveReceiptToDrive_(message, folder, expense) {
+  const attachments = message.getAttachments({
+    includeInlineImages: false,
+    includeAttachments: true
+  });
+
+  const pdfAttachment = attachments.find(att =>
+    att.getContentType() === "application/pdf" ||
+    att.getName().toLowerCase().endsWith(".pdf")
+  );
+
+  const fileName = buildReceiptFileName_(expense);
+
+  if (pdfAttachment) {
+    return folder.createFile(pdfAttachment.copyBlob()).setName(fileName);
+  }
+
+  const html = `
+    <html>
+      <body>
+        <h2>${escapeHtml_(expense.vendor)}</h2>
+        <p><strong>Date:</strong> ${formatDateForFile_(expense.date)}</p>
+        <p><strong>Amount:</strong> $${Number(expense.amount || 0).toFixed(2)}</p>
+        <p><strong>Subject:</strong> ${escapeHtml_(expense.subject)}</p>
+        <hr>
+        ${message.getBody()}
+      </body>
+    </html>
+  `;
+
+  const blob = Utilities
+    .newBlob(html, "text/html", fileName.replace(".pdf", ".html"))
+    .getAs("application/pdf")
+    .setName(fileName);
+
+  return folder.createFile(blob);
+}
+
+function buildReceiptFileName_(expense) {
+  const date = formatDateForFile_(expense.date);
+  const vendor = sanitizeFileName_(expense.vendor || "Vendor");
+  const amount = expense.amount ? `$${Number(expense.amount).toFixed(2)}` : "Amount Unknown";
+
+  return `${date} - ${vendor} - ${amount}.pdf`;
+}
+
+function sanitizeFileName_(name) {
+  return String(name)
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/***************
+ * WRITE TO SHEET
+ ***************/
+
+function getExpenseSheet_(ss) {
+  const configured = ss.getSheetByName(EXPENSE_CONFIG.sheetName);
+  if (configured) return configured;
+
+  return ss.getActiveSheet();
+}
+
+function findExpenseInsertRow_(sheet, expenseDate) {
+  const weekEnding = getFollowingSunday_(expenseDate);
+  const weekHeaderRow = findWeekHeaderRow_(sheet, weekEnding);
+
+  if (!weekHeaderRow) {
+    throw new Error(`Could not find week section for ${formatWeekEndingText_(weekEnding)}.`);
+  }
+
+  const nextHeaderRow = findNextWeekHeaderRow_(sheet, weekHeaderRow + 1);
+  const sectionEnd = nextHeaderRow ? nextHeaderRow - 1 : sheet.getLastRow();
+
+  for (let row = weekHeaderRow + 1; row <= sectionEnd; row++) {
+    const dateVal = sheet.getRange(row, EXPENSE_CONFIG.columns.date).getValue();
+    const vendorVal = sheet.getRange(row, EXPENSE_CONFIG.columns.vendor).getValue();
+    const amountVal = sheet.getRange(row, EXPENSE_CONFIG.columns.amount).getValue();
+
+    if (!dateVal && !vendorVal && !amountVal) {
+      return row;
+    }
+  }
+
+  sheet.insertRowBefore(sectionEnd);
+  copyRowFormatting_(sheet, sectionEnd - 1, sectionEnd);
+  return sectionEnd;
+}
+
+function writeExpenseToSheet_(sheet, row, expense, receiptUrl) {
+  sheet.getRange(row, EXPENSE_CONFIG.columns.date).setValue(expense.date);
+  sheet.getRange(row, EXPENSE_CONFIG.columns.vendor).setValue(expense.vendor);
+  sheet.getRange(row, EXPENSE_CONFIG.columns.amount).setValue(expense.amount);
+  sheet.getRange(row, EXPENSE_CONFIG.columns.what).setValue(expense.what);
+
+  const descriptionCell = sheet.getRange(row, EXPENSE_CONFIG.columns.description);
+
+  const richText = SpreadsheetApp.newRichTextValue()
+    .setText(expense.description)
+    .setLinkUrl(receiptUrl)
+    .build();
+
+  descriptionCell.setRichTextValue(richText);
+
+  sheet.getRange(row, EXPENSE_CONFIG.columns.amount).setNumberFormat("$#,##0.00");
+}
+
+function copyRowFormatting_(sheet, sourceRow, targetRow) {
+  const lastCol = sheet.getLastColumn();
+  sheet.getRange(sourceRow, 1, 1, lastCol)
+    .copyTo(sheet.getRange(targetRow, 1, 1, lastCol), {
+      formatOnly: true
+    });
+}
+
+/***************
+ * WEEK MATCHING
+ ***************/
+
+function findWeekHeaderRow_(sheet, targetSunday) {
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getDisplayValues();
+
+  for (let r = 0; r < values.length; r++) {
+    const rowText = values[r].join(" ");
+    const match = rowText.match(EXPENSE_CONFIG.weekHeaderRegex);
+
+    if (!match) continue;
+
+    const foundDate = parseWeekEndingFromMatch_(match);
+
+    if (sameDay_(foundDate, targetSunday)) {
+      return r + 1;
+    }
+  }
+
+  return null;
+}
+
+function findNextWeekHeaderRow_(sheet, startRow) {
+  const values = sheet.getRange(startRow, 1, sheet.getLastRow() - startRow + 1, sheet.getLastColumn()).getDisplayValues();
+
+  for (let r = 0; r < values.length; r++) {
+    const rowText = values[r].join(" ");
+    if (EXPENSE_CONFIG.weekHeaderRegex.test(rowText)) {
+      return startRow + r;
+    }
+  }
+
+  return null;
+}
+
+function parseWeekEndingFromMatch_(match) {
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  let year = Number(match[3]);
+
+  if (year < 100) year += 2000;
+
+  return new Date(year, month - 1, day);
+}
+
+function getFollowingSunday_(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+
+  const day = d.getDay();
+  const diff = 7 - day;
+
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function sameDay_(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+
+/***************
+ * HELPERS
+ ***************/
+
+function formatDateForFile_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+function formatWeekEndingText_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "M.d.yy");
+}
+
+function escapeHtml_(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/***************
+ * WEEKLY SPENDING REFRESH
+ ***************/
+
+function refreshWeeklySpendingFromPropFloat() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Main workbook source
+  const fullExpenses = ss.getSheetByName("FULL Expenses");
+
+  // Other workbook source + destination
+  const perishablesBook = SpreadsheetApp.openById("1HpvB4Ku9d_CuduOiEe-fbCuMUmSs6QQs-azs_C9-atE");
+  const weeklySheet = perishablesBook.getSheetByName("Perishables");
+  const propFloat = perishablesBook.getSheetByName("Prop Float");
+
+  if (!fullExpenses) throw new Error('Could not find "FULL Expenses" tab in this workbook.');
+  if (!weeklySheet) throw new Error('Could not find "Perishables" tab in the Perishables workbook.');
+  if (!propFloat) throw new Error('Could not find "Prop Float" tab in the Perishables workbook.');
+
+  const today = new Date();
+  const monday = getMonday_(today);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const weekEndingText = formatWeekEndingText_(sunday);
+
+  // Update header
+  weeklySheet
+    .getRange("B47:F47")
+    .setValue(`Weekly Spending - Week Ending ${weekEndingText}`);
+
+  // Clear old weekly spending entries
+  weeklySheet.getRange("B49:F61").clearContent();
+
+  const teamSmPurchases = getPurchasesFromSheet_({
+    sheet: fullExpenses,
+    startRow: 2,
+    startCol: 1,
+    sourceLabel: "Team SM"
+  });
+
+  const propsFloatPurchases = getPurchasesFromSheet_({
+    sheet: propFloat,
+    startRow: 5,
+    startCol: 2,
+    sourceLabel: "Props Float"
+  });
+
+  const purchases = teamSmPurchases
+    .concat(propsFloatPurchases)
+    .filter(item => item.date >= monday && item.date <= sunday)
+    .sort((a, b) => a.date - b.date);
+
+  const output = purchases.map(item => [
+    item.date,
+    item.vendor,
+    item.description,
+    item.source,
+    item.amount
+  ]);
+
+  if (output.length) {
+    weeklySheet.getRange(49, 2, output.length, 5).setValues(output);
+    weeklySheet.getRange(49, 2, output.length, 1).setNumberFormat("M.d.yy");
+    weeklySheet.getRange(49, 6, output.length, 1).setNumberFormat("$#,##0.00");
+  }
+}
+
+function getPurchasesFromSheet_({ sheet, startRow, startCol, sourceLabel }) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return [];
+
+  // Expected columns:
+  // Date, Vendor, Description, Amount
+  const values = sheet
+    .getRange(startRow, startCol, lastRow - startRow + 1, 4)
+    .getValues();
+
+  return values
+    .filter(row => row[0])
+    .map(row => ({
+      date: stripTime_(row[0]),
+      vendor: row[1],
+      description: row[2],
+      amount: row[3],
+      source: sourceLabel
+    }))
+    .filter(item => item.date instanceof Date && !isNaN(item.date));
+}
+
+function getMonday_(date) {
+  const d = stripTime_(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function stripTime_(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}

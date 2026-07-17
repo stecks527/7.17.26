@@ -1,0 +1,189 @@
+/*************************************************
+ * 05 OPERATIONS OS
+ * Version: 1.1.0
+ * Status: ACTIVE
+ *
+ * Central orchestration layer for downstream
+ * operational updates after Prep / Report workflows.
+ *************************************************/
+
+function OperationsOS() {
+  return {
+    commitPrep: operationsCommitPrep_,
+    commitReportReset: operationsCommitReportReset_,
+    refreshOperationalState:
+      operationsRefreshOperationalState_
+  };
+}
+
+
+function operationsCommitPrep_(data) {
+  return operationsRefreshOperationalState_(
+    "PREP_COMMIT",
+    data
+  );
+}
+
+
+function operationsCommitReportReset_(data) {
+  return operationsRefreshOperationalState_(
+    "REPORT_RESET",
+    data
+  );
+}
+
+
+function operationsRefreshOperationalState_(
+  source,
+  data
+) {
+  const workflowSource =
+    String(source || "MANUAL")
+      .toUpperCase();
+
+  const result = {
+    ok: true,
+    source: workflowSource,
+    notes: [],
+    errors: [],
+    timings: {}
+  };
+
+  operationsRunStep_(
+    "Payroll / U/S Tracker",
+    result,
+    function () {
+      const syncResult =
+        updatePayrollAndUSTrackerFromCurrentInOut();
+
+      result.payrollSync =
+        syncResult || null;
+
+      result.notes.push(
+        "Payroll & U/S Tracker updated."
+      );
+    }
+  );
+
+  /*
+   * Prep must continue directly to Report Reset.
+   * Derived notes and Home can run after reset or
+   * through a manual operational refresh.
+   */
+  if (workflowSource === "PREP_COMMIT") {
+    result.notes.push(
+      "Payroll Notes and Home refresh deferred until Report Reset."
+    );
+
+  } else {
+    operationsRunStep_(
+      "Payroll Notes",
+      result,
+      function () {
+        const notesResult =
+          operationsRefreshPayrollNotes_();
+
+        result.payrollNotes =
+          notesResult || null;
+
+        result.notes.push(
+          "Payroll notes refreshed from PayrollScheduleOS" +
+          (
+            notesResult &&
+            notesResult.writtenCells
+              ? " in " +
+                notesResult.writtenCells.join(", ") +
+                "."
+              : "."
+          )
+        );
+      }
+    );
+
+    operationsRunStep_(
+      "Home",
+      result,
+      function () {
+        if (typeof HomeOS === "function") {
+          HomeOS().refresh();
+          result.notes.push(
+            "Home refreshed."
+          );
+        }
+      }
+    );
+  }
+
+  Logger.log("OperationsOS result:");
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+
+function operationsRunStep_(
+  label,
+  result,
+  fn
+) {
+  const startedAt = Date.now();
+
+  try {
+    fn();
+
+  } catch (err) {
+    result.ok = false;
+
+    result.errors.push(
+      label +
+      ": " +
+      String(
+        err && err.message
+          ? err.message
+          : err
+      )
+    );
+  }
+
+  result.timings[label] =
+    Date.now() - startedAt;
+}
+
+function operationsRefreshPayrollNotes_() {
+  if (
+    typeof PayrollNotesWriterOS !==
+    "function"
+  ) {
+    throw new Error(
+      "PayrollNotesWriterOS is unavailable."
+    );
+  }
+
+  return PayrollNotesWriterOS()
+    .write();
+}
+
+function testOperationsOSPayrollNotesOnly() {
+  const result =
+    operationsRefreshPayrollNotes_();
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      [
+        "OperationsOS Payroll Notes test complete.",
+        "",
+        "Written cells: " +
+          (
+            result.writtenCells || []
+          ).join(", "),
+        "Missing coverage: " +
+          result.missingCoveragePerformances,
+        "Duration: " +
+          result.durationMs +
+          " ms"
+      ].join("\n")
+    );
+
+  return result;
+}

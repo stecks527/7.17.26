@@ -1,0 +1,463 @@
+/*************************************************
+ * 00 STAGEOS - UTILITIES
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Shared, dependency-light utility functions.
+ *
+ * Purpose:
+ * - Text cleanup
+ * - Name normalization
+ * - Key normalization
+ * - First-filled selection
+ * - Unique sorted lists
+ * - Company-area checks
+ * - Drive ID compatibility wrappers
+ *
+ * Settings loading and canonical Drive ID parsing
+ * now live in:
+ * 00 STAGEOS - SETTINGS.gs
+ *************************************************/
+
+
+/* =========================================================
+ * LEGACY SHOWOS CONFIGURATION
+ *
+ * Keep temporarily for compatibility.
+ * These constants will move to their owning subsystems
+ * during the PrepOS and Guest Speller cleanup passes.
+ * ========================================================= */
+
+const SHOWOS = {
+  SETTINGS_SHEET: "Production Settings",
+
+  MODES: {
+    PERFORMANCE: "PERFORMANCE",
+    REHEARSAL: "REHEARSAL"
+  },
+
+  PERFORMANCE_SETUP: {
+    PERFORMANCE_CELL: "A4",
+    CONDUCTOR_CELL: "A26",
+    NOTES_CELL: "A28"
+  },
+
+  GUEST_SPELLER: {
+    ROOT_FOLDER_ID:
+      "1Gzr4jq2gM4B2w18KjtGLvPCQdq3xVevJ",
+
+    SLIDE_ID:
+      "1fgFOqf2RhMXvu_Q4z0Hh2T6NLsdbfNENdh361kJ9jzI"
+  }
+};
+
+
+/* =========================================================
+ * BASIC TEXT CLEANUP
+ * ========================================================= */
+
+/**
+ * Trims a value without changing internal whitespace.
+ *
+ * Compatibility name used throughout older StageOS code.
+ */
+function cleanStageOS_(value) {
+  return String(value || "").trim();
+}
+
+/**
+ * Trims and collapses repeated whitespace.
+ *
+ * Example:
+ * "  Vanessa   Magula " → "Vanessa Magula"
+ */
+function clean_(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Creates a normalized comparison key.
+ *
+ * Example:
+ * "Barfée..." → "barfée"
+ *
+ * This intentionally preserves accented letters.
+ * Role-specific normalization should remain in
+ * the subsystem that owns the role mapping.
+ */
+function cleanKey_(value) {
+  return clean_(value)
+    .replace(/\.+/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Returns the first nonblank value from an array.
+ */
+function firstFilled_(values) {
+  const list =
+    Array.isArray(values)
+      ? values
+      : [];
+
+  for (let i = 0; i < list.length; i++) {
+    const cleaned = clean_(list[i]);
+
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * UNIQUE / SORTED LISTS
+ * ========================================================= */
+
+/**
+ * Returns unique, nonblank values sorted alphabetically.
+ *
+ * Comparison is case-insensitive, but the first encountered
+ * display version is preserved.
+ *
+ * Required by:
+ * - CastListCacheOS
+ * - AssignmentCacheOS
+ * - Several dropdown builders
+ */
+function uniqueSorted_(values) {
+  const list =
+    Array.isArray(values)
+      ? values
+      : [];
+
+  const byKey = {};
+
+  list.forEach(function (value) {
+    const display = clean_(value);
+
+    if (!display) return;
+
+    const key = display.toLowerCase();
+
+    if (!byKey[key]) {
+      byKey[key] = display;
+    }
+  });
+
+  return Object.keys(byKey)
+    .map(function (key) {
+      return byKey[key];
+    })
+    .sort(function (a, b) {
+      return a.localeCompare(
+        b,
+        undefined,
+        {
+          sensitivity: "base"
+        }
+      );
+    });
+}
+
+
+/* =========================================================
+ * NAME NORMALIZATION
+ * ========================================================= */
+
+/**
+ * Produces a compact matching key for person names,
+ * filenames, and uploaded image names.
+ *
+ * Example:
+ * "Vanessa Magula.jpg" → "vanessamagula"
+ */
+function normalizeNameStageOS_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(
+      /\.(jpg|jpeg|png|webp|heic)$/i,
+      ""
+    )
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * More explicit alias for future code.
+ */
+function stageOSNormalizePersonKey_(value) {
+  return normalizeNameStageOS_(value);
+}
+
+
+/* =========================================================
+ * COMPANY AREA HELPERS
+ * ========================================================= */
+
+function isCastStageOS_(companyArea) {
+  return cleanStageOS_(companyArea)
+    .toLowerCase() === "cast";
+}
+
+function isStageManagementStageOS_(
+  companyArea
+) {
+  return cleanStageOS_(companyArea)
+    .toLowerCase() ===
+    "stage management";
+}
+
+
+/* =========================================================
+ * DRIVE ID COMPATIBILITY
+ *
+ * Canonical parser:
+ * extractStageOSDriveId_()
+ *
+ * It is defined in:
+ * 00 STAGEOS - SETTINGS.gs
+ * ========================================================= */
+
+/**
+ * Legacy StageOS Drive ID helper.
+ */
+function extractDriveIdStageOS_(text) {
+  if (
+    typeof extractStageOSDriveId_ !==
+    "function"
+  ) {
+    return String(text || "").trim();
+  }
+
+  return extractStageOSDriveId_(text);
+}
+
+/**
+ * Legacy generic Drive ID helper.
+ *
+ * Older code expects this function to throw when it receives
+ * a URL from which no usable ID can be extracted.
+ */
+function extractDriveId_(input) {
+  const text =
+    String(input || "").trim();
+
+  if (!text) return "";
+
+  if (
+    typeof extractStageOSDriveId_ !==
+    "function"
+  ) {
+    return text;
+  }
+
+  const id =
+    extractStageOSDriveId_(text);
+
+  if (
+    text.includes("http") &&
+    (!id || id === text)
+  ) {
+    throw new Error(
+      "Could not extract Drive ID from: " +
+      text
+    );
+  }
+
+  return id;
+}
+
+
+/* =========================================================
+ * BOOLEAN COMPATIBILITY
+ *
+ * Canonical parser:
+ * stageOSParseBoolean_()
+ *
+ * It is defined in:
+ * 00 STAGEOS - SETTINGS.gs
+ * ========================================================= */
+
+function parseDashboardBoolean_(value) {
+  if (
+    typeof stageOSParseBoolean_ ===
+    "function"
+  ) {
+    return stageOSParseBoolean_(
+      value,
+      false
+    );
+  }
+
+  const text =
+    String(value || "")
+      .trim()
+      .toUpperCase();
+
+  return [
+    "TRUE",
+    "YES",
+    "Y",
+    "1",
+    "CHECKED"
+  ].includes(text);
+}
+
+
+/* =========================================================
+ * GENERAL SAFE HELPERS
+ * ========================================================= */
+
+/**
+ * Safely converts a possible value to an array.
+ */
+function stageOSArray_(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return [];
+  }
+
+  return [value];
+}
+
+/**
+ * Returns true when a value contains meaningful text.
+ */
+function stageOSHasText_(value) {
+  return clean_(value) !== "";
+}
+
+/**
+ * Safe JSON parser with fallback.
+ */
+function stageOSParseJson_(
+  value,
+  fallback
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    return fallback;
+  }
+}
+
+/**
+ * Safe JSON stringifier.
+ */
+function stageOSStringifyJson_(
+  value,
+  fallback
+) {
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return fallback !== undefined
+      ? String(fallback)
+      : "";
+  }
+}
+
+
+/* =========================================================
+ * TESTS
+ * ========================================================= */
+
+function testStageOSUtilities() {
+  const results = {
+    clean:
+      clean_("  Vanessa   Magula  "),
+
+    cleanKey:
+      cleanKey_("Barfée..."),
+
+    normalizedName:
+      normalizeNameStageOS_(
+        "Vanessa Magula.jpg"
+      ),
+
+    firstFilled:
+      firstFilled_([
+        "",
+        "  ",
+        "Payroll"
+      ]),
+
+    uniqueSorted:
+      uniqueSorted_([
+        "Vanessa",
+        "vanessa",
+        "Brandon",
+        "",
+        "Emily"
+      ]),
+
+    castCheck:
+      isCastStageOS_("Cast"),
+
+    stageManagementCheck:
+      isStageManagementStageOS_(
+        "Stage Management"
+      ),
+
+    driveId:
+      extractDriveId_(
+        "https://drive.google.com/drive/folders/" +
+        "1Gzr4jq2gM4B2w18KjtGLvPCQdq3xVevJ"
+      ),
+
+    booleanTrue:
+      parseDashboardBoolean_("YES"),
+
+    booleanFalse:
+      parseDashboardBoolean_("NO")
+  };
+
+  Logger.log(
+    "STAGEOS UTILITIES TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "StageOS utilities test passed.\n\n" +
+    "Cleaned name: " +
+    results.clean +
+    "\n" +
+    "Unique values: " +
+    results.uniqueSorted.length +
+    "\n" +
+    "Drive ID found: " +
+    Boolean(results.driveId)
+  );
+
+  return results;
+}

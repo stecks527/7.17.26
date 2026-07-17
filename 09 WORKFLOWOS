@@ -1,0 +1,57 @@
+/*************************************************
+ * 09 WORKFLOWOS
+ * StageOS v0.5
+ *
+ * Responsibilities
+ * ----------------
+ * • Read WorkflowOS tab
+ * • Return recurring workflows for today
+ * • Feed Mission Control focus tasks
+ *************************************************/
+
+function getRecurringWorkflowsForToday_(showState) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("WorkflowOS");
+  if (!sh) return [];
+
+  const targetDate = showState && showState.date
+    ? parseInOutDate_(showState.date)
+    : new Date();
+
+  const todayName = Utilities.formatDate(
+    targetDate || new Date(),
+    Session.getScriptTimeZone(),
+    "EEEE"
+  ).toLowerCase();
+
+  const values = sh.getDataRange().getDisplayValues();
+  const workflows = [];
+
+  for (let r = 1; r < values.length; r++) {
+    const workflow = String(values[r][0] || "").trim();
+    const enabled = parseDashboardBoolean_(values[r][1]);
+    const day = String(values[r][2] || "").trim().toLowerCase();
+    const type = String(values[r][3] || "").trim();
+    const functionName = String(values[r][4] || "").trim();
+
+    if (!workflow || !enabled) continue;
+    if (day !== todayName) continue;
+
+    workflows.push({
+      workflow,
+      type,
+      functionName,
+      sourceRow: r + 1
+    });
+  }
+
+  return workflows;
+}
+
+function getRecurringWorkflowTasksForToday_() {
+  return getRecurringWorkflowsForToday_().map(item => ({
+    check: "☐",
+    title: item.workflow,
+    functionName: item.functionName || ""
+  }));
+}

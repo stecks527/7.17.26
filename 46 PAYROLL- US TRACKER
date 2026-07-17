@@ -1,0 +1,562 @@
+/*************************************************
+ * 46 PAYROLL + U/S TRACKER SYNC
+ * Version: 2.0.0
+ * Status: ACTIVE / CANONICAL
+ *
+ * Current IN/OUT is still written to the U/S Tracker.
+ *
+ * Payroll is NEVER patched directly from IN/OUT.
+ * After the Prep coverage ledger is updated, Payroll is
+ * rebuilt through:
+ *
+ * PayrollScheduleOS
+ * → PayrollWriterOS
+ * → PayrollNotesOS
+ * → PayrollNotesWriterOS
+ *************************************************/
+
+
+/* =========================================================
+ * PUBLIC SYNC
+ * ========================================================= */
+
+function updatePayrollAndUSTrackerFromCurrentInOut() {
+  const startedAt =
+    Date.now();
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const inOut =
+    ss.getSheetByName(
+      "IN/OUT"
+    );
+
+  const usTracker =
+    ss.getSheetByName(
+      "U/S Tracker"
+    );
+
+  if (!inOut) {
+    throw new Error(
+      'Could not find "IN/OUT".'
+    );
+  }
+
+  const payload =
+    payrollSyncReadCurrentInOut_(
+      inOut
+    );
+
+  const result = {
+    ok:
+      true,
+
+    payrollSource:
+      "PayrollScheduleOS",
+
+    payrollWrites:
+      0,
+
+    payrollNotesWritten:
+      false,
+
+    usTrackerWrites:
+      0,
+
+    notes:
+      [],
+
+    durationMs:
+      0
+  };
+
+  /*
+   * U/S Tracker remains a performance-level operational
+   * write from the current IN/OUT.
+   */
+  if (usTracker) {
+    result.usTrackerWrites =
+      payrollSyncWriteUSTracker_(
+        usTracker,
+        payload,
+        result
+      );
+
+  } else {
+    result.notes.push(
+      'Could not find "U/S Tracker"; skipped.'
+    );
+  }
+
+  /*
+   * Payroll is rebuilt only through the canonical weekly
+   * model. This replaces the old direct cell-patching path.
+   */
+  if (
+    typeof refreshPayrollFromCanonicalModel_ ===
+    "function"
+  ) {
+    const payrollResult =
+      refreshPayrollFromCanonicalModel_();
+
+    result.payrollWrites =
+      payrollResult
+        .payrollCellsWritten || 0;
+
+    result.payrollNotesWritten =
+      payrollResult
+        .payrollNotesWritten === true;
+
+    result.payrollResult =
+      payrollResult;
+
+  } else if (
+    typeof PayrollOS ===
+    "function"
+  ) {
+    const payrollResult =
+      PayrollOS()
+        .refresh({
+          forceBuild:
+            true,
+
+          writeGrid:
+            true,
+
+          writeNotes:
+            true,
+
+          showAlert:
+            false
+        });
+
+    result.payrollWrites =
+      payrollResult
+        .payrollCellsWritten || 0;
+
+    result.payrollNotesWritten =
+      payrollResult
+        .payrollNotesWritten === true;
+
+    result.payrollResult =
+      payrollResult;
+
+  } else {
+    result.ok =
+      false;
+
+    result.notes.push(
+      "Canonical PayrollOS refresh is unavailable."
+    );
+  }
+
+  result.durationMs =
+    Date.now() -
+    startedAt;
+
+  Logger.log(
+    "PAYROLL / U/S TRACKER CANONICAL SYNC"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  return result;
+}
+
+function payrollSyncReadCurrentInOut_(inOut) {
+  const dateValue = inOut.getRange("A3").getValue();
+  const dateDisplay = inOut.getRange("A3").getDisplayValue();
+
+  const perfText = [
+    inOut.getRange("A4").getDisplayValue(),
+    inOut.getRange("B4").getDisplayValue()
+  ].join(" ");
+
+  const isMat = /mat/i.test(perfText) || /\b2:/.test(perfText);
+  const isEve = /eve/i.test(perfText) || /\b7:/.test(perfText);
+
+  const rows = inOut.getRange(6, 1, 18, 7).getDisplayValues();
+  const entries = [];
+
+  rows.forEach(function(row) {
+    const outName = String(row[0] || "").trim();
+    const inName = String(row[2] || "").trim();
+    const role = String(row[5] || "").trim();
+    const reason = String(row[6] || "").trim();
+
+    const combined = [outName, inName, role, reason].join(" ").toUpperCase();
+
+    if (
+      combined.includes("CALLING SM") ||
+      combined.includes("CONDUCTOR") ||
+      combined.includes("NOTES:")
+    ) {
+      return;
+    }
+
+    if (!outName && !inName) return;
+
+    entries.push({
+      outName: outName,
+      inName: inName,
+      role: role,
+      reason: reason || "Out",
+      dateValue: dateValue,
+      dateDisplay: dateDisplay,
+      performanceText: perfText,
+      isMat: isMat,
+      isEve: isEve
+    });
+  });
+
+  return {
+    dateValue: dateValue,
+    dateDisplay: dateDisplay,
+    performanceText: perfText,
+    isMat: isMat,
+    isEve: isEve,
+    entries: entries
+  };
+}
+
+/*************************************************
+ * U/S TRACKER WRITE
+ *
+ * Safe first version:
+ * - If a Date/Out/In/Role/Reason header row exists, append below it.
+ * - Otherwise creates/uses a StageOS Auto Sync block at bottom.
+ *************************************************/
+
+function payrollSyncWriteUSTracker_(
+  sh,
+  payload,
+  result
+) {
+  if (
+    !payload.entries ||
+    !payload.entries.length
+  ) {
+    return 0;
+  }
+
+  const header =
+    payrollSyncFindUSTrackerHeader_(
+      sh
+    );
+
+  if (!header) {
+    return payrollSyncWriteUSTrackerAutoBlock_(
+      sh,
+      payload
+    );
+  }
+
+  const startRow =
+    sh.getLastRow() + 1;
+
+  const numRows =
+    payload.entries.length;
+
+  /*
+   * Ensure the destination rows physically exist.
+   */
+  const requiredLastRow =
+    startRow + numRows - 1;
+
+  if (
+    requiredLastRow >
+    sh.getMaxRows()
+  ) {
+    sh.insertRowsAfter(
+      sh.getMaxRows(),
+      requiredLastRow -
+        sh.getMaxRows()
+    );
+  }
+
+  /*
+   * Build one rectangular output from the first
+   * required column through the final required column.
+   */
+  const firstCol =
+    Math.min(
+      header.dateCol,
+      header.outCol,
+      header.inCol,
+      header.roleCol,
+      header.reasonCol
+    );
+
+  const lastCol =
+    Math.max(
+      header.dateCol,
+      header.outCol,
+      header.inCol,
+      header.roleCol,
+      header.reasonCol
+    );
+
+  const width =
+    lastCol - firstCol + 1;
+
+  const output =
+    payload.entries.map(
+      function (entry) {
+        const row =
+          new Array(width)
+            .fill("");
+
+        row[
+          header.dateCol -
+          firstCol
+        ] =
+          payload.dateDisplay;
+
+        row[
+          header.outCol -
+          firstCol
+        ] =
+          entry.outName || "";
+
+        row[
+          header.inCol -
+          firstCol
+        ] =
+          entry.inName || "";
+
+        row[
+          header.roleCol -
+          firstCol
+        ] =
+          entry.role || "";
+
+        row[
+          header.reasonCol -
+          firstCol
+        ] =
+          entry.reason || "";
+
+        return row;
+      }
+    );
+
+  sh
+    .getRange(
+      startRow,
+      firstCol,
+      output.length,
+      width
+    )
+    .setValues(
+      output
+    );
+
+  return output.length;
+}
+
+function payrollSyncFindUSTrackerHeader_(
+  sh
+) {
+  /*
+   * The real tracker header should be near the top.
+   * Do not scan thousands of historic rows.
+   */
+  const rowsToRead =
+    Math.min(
+      sh.getLastRow(),
+      40
+    );
+
+  const colsToRead =
+    Math.min(
+      Math.max(
+        sh.getLastColumn(),
+        5
+      ),
+      20
+    );
+
+  if (
+    rowsToRead < 1 ||
+    colsToRead < 1
+  ) {
+    return null;
+  }
+
+  const values =
+    sh
+      .getRange(
+        1,
+        1,
+        rowsToRead,
+        colsToRead
+      )
+      .getDisplayValues();
+
+  for (
+    let rowIndex = 0;
+    rowIndex < values.length;
+    rowIndex++
+  ) {
+    const row =
+      values[rowIndex].map(
+        function (value) {
+          return String(
+            value || ""
+          )
+            .trim()
+            .toUpperCase();
+        }
+      );
+
+    const dateCol =
+      row.indexOf("DATE") + 1;
+
+    const outCol =
+      row.indexOf("OUT") + 1;
+
+    const inCol =
+      row.indexOf("IN") + 1;
+
+    const roleCol =
+      row.indexOf("ROLE") + 1;
+
+    const reasonCol =
+      row.indexOf("REASON") + 1;
+
+    if (
+      dateCol &&
+      outCol &&
+      inCol &&
+      roleCol &&
+      reasonCol
+    ) {
+      return {
+        row:
+          rowIndex + 1,
+
+        dateCol:
+          dateCol,
+
+        outCol:
+          outCol,
+
+        inCol:
+          inCol,
+
+        roleCol:
+          roleCol,
+
+        reasonCol:
+          reasonCol
+      };
+    }
+  }
+
+  return null;
+}
+
+function payrollSyncWriteUSTrackerAutoBlock_(sh, payload) {
+  let row = sh.getLastRow() + 2;
+
+  sh.getRange(row, 1, 1, 5)
+    .setValues([["StageOS Auto Sync", "", "", "", ""]])
+    .setFontWeight("bold");
+
+  row++;
+
+  sh.getRange(row, 1, 1, 5)
+    .setValues([["Date", "Out", "In", "Role", "Reason"]])
+    .setFontWeight("bold");
+
+  row++;
+
+  const values = payload.entries.map(function(entry) {
+    return [
+      payload.dateDisplay,
+      entry.outName || "",
+      entry.inName || "",
+      entry.role || "",
+      entry.reason || ""
+    ];
+  });
+
+  if (values.length) {
+    sh.getRange(row, 1, values.length, 5).setValues(values);
+  }
+
+  return values.length;
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function payrollSyncNameKey_(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function payrollSyncDateKey_(value) {
+  let date = value;
+
+  if (!(date instanceof Date)) {
+    date = new Date(String(value || ""));
+  }
+
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    return String(value || "").trim().toUpperCase();
+  }
+
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+/* =========================================================
+ * TEST
+ * ========================================================= */
+
+function testPayrollUSTrackerSyncFromCurrentInOut() {
+  const result =
+    updatePayrollAndUSTrackerFromCurrentInOut();
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      [
+        "Payroll / U/S Tracker sync complete.",
+        "",
+        "Payroll source: " +
+          result.payrollSource,
+        "Payroll cells written: " +
+          result.payrollWrites,
+        "Payroll notes written: " +
+          (
+            result.payrollNotesWritten
+              ? "YES"
+              : "NO"
+          ),
+        "U/S Tracker rows written: " +
+          result.usTrackerWrites,
+        "Duration: " +
+          result.durationMs +
+          " ms",
+        "",
+        result.notes.length
+          ? result.notes.join("\n")
+          : "No warnings."
+      ].join("\n")
+    );
+
+  return result;
+}

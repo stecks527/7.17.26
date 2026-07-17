@@ -1,0 +1,305 @@
+/*************************************************
+ * 80 COMPANY WIZARD — ANALYZE
+ *
+ * Reads New Hire row 2 and creates the dashboard.
+ * No workbook changes happen here.
+ *************************************************/
+
+function analyzeCompanyChange() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const settings = getProductionSettings_();
+  const hire = readCompanyWizardHire_();
+  const analysis = buildCompanyChangeAnalysis_(ss, settings, hire);
+
+  writeCompanyChangeAnalysis_(ss, settings, hire, analysis);
+  logStageOS_("Analyze Company Change", `Analyzed ${hire.name}`);
+
+  const newHireSheet = ss.getSheetByName("New Hire");
+  if (newHireSheet) ss.setActiveSheet(newHireSheet);
+
+  SpreadsheetApp.getUi().alert(`Analysis complete for ${hire.name}.`);
+}
+
+function readCompanyWizardHire_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("New Hire");
+  if (!sheet) throw new Error('Could not find tab: "New Hire"');
+
+  const row = sheet.getRange(2, 1, 1, 9).getDisplayValues()[0];
+
+  const hire = {
+    name: cleanStageOS_(row[0]),
+    nameInitial: cleanStageOS_(row[1]),
+    pronouns: cleanStageOS_(row[2]),
+    companyArea: cleanStageOS_(row[3]),
+    positionTrack: cleanStageOS_(row[4]),
+    hireType: cleanStageOS_(row[5]),
+    phone: cleanStageOS_(row[6]),
+    email: cleanStageOS_(row[7]),
+    headshot: cleanStageOS_(row[8])
+  };
+
+  const missing = [];
+  if (!hire.name) missing.push("NAME");
+  if (!hire.nameInitial) missing.push("NAME + INITIAL");
+  if (!hire.companyArea) missing.push("COMPANY AREA");
+  if (!hire.positionTrack) missing.push("POSITION / TRACK");
+  if (!hire.hireType) missing.push("HIRE TYPE");
+
+  if (missing.length) {
+    throw new Error("Missing required field(s): " + missing.join(", "));
+  }
+
+  return hire;
+}
+
+function buildCompanyChangeAnalysis_(ss, settings, hire) {
+  const isCast = isCastStageOS_(hire.companyArea);
+  const isSM = isStageManagementStageOS_(hire.companyArea);
+  const isPrincipal = hire.hireType.toLowerCase() === "principal";
+  const isSwing = hire.hireType.toLowerCase() === "swing";
+
+  const analysis = {
+    warnings: [],
+    errors: [],
+    actions: [],
+    assets: [],
+    printQueue: [],
+    physicalTasks: [],
+    templateActor: "",
+    headshot: null
+  };
+
+  analysis.actions.push(["Contact Sheet", `Add to ${hire.companyArea}`]);
+  analysis.actions.push(["Dollar Friday", "Fill name into all open NAME slots"]);
+
+  if (isCast) {
+    analysis.actions.push(["Cast List", isPrincipal ? "Principal replacement workflow" : "Add cast member"]);
+    analysis.actions.push(["IN/OUT", isPrincipal ? "Copy matching character row" : "Add alphabetically"]);
+    analysis.actions.push(["Payroll", "Add cast payroll block"]);
+    analysis.actions.push(["U/S Tracker", "Update tracker"]);
+    analysis.actions.push(["PD/Vacation Tracker", "Create 3-row block"]);
+    analysis.actions.push(["Sign-In", "Add alphabetically"]);
+
+    if (isSwing) {
+      analysis.actions.push(["Insert Tracker", "Review / update swing coverage columns"]);
+    }
+  } else if (isSM) {
+    analysis.actions.push(["Payroll", "Add Stage Management payroll block"]);
+    analysis.actions.push(["Sign-In", "Skipped"]);
+    analysis.actions.push(["U/S Tracker", "Skipped"]);
+    analysis.actions.push(["PD/Vacation Tracker", "Skipped"]);
+  } else {
+    analysis.actions.push(["Payroll", "Skipped"]);
+    analysis.actions.push(["Sign-In", "Skipped"]);
+    analysis.actions.push(["U/S Tracker", "Skipped"]);
+    analysis.actions.push(["PD/Vacation Tracker", "Skipped"]);
+  }
+
+  if (isCast && isPrincipal) {
+    analysis.templateActor = findTemplateActorByPosition_(ss, hire.positionTrack);
+    if (!analysis.templateActor) {
+      analysis.warnings.push(`Could not find current actor for ${hire.positionTrack}.`);
+    }
+  }
+
+  analysis.headshot = findStageOSHeadshot_(settings, hire);
+  if (!analysis.headshot.found) analysis.warnings.push("No headshot found.");
+  if (!hire.phone) analysis.warnings.push("No phone number entered.");
+  if (!hire.email) analysis.warnings.push("No email entered.");
+
+  analysis.assets.push(["Cover Page", settings.coverPageSlidesId ? "Ready" : "Missing Slides ID"]);
+  analysis.assets.push(["Water Bottle Tag", settings.waterBottleSlidesId ? "Ready" : "Missing Slides ID"]);
+  analysis.assets.push(["Dressing Room Signage", settings.dressingRoomSlidesId ? "Ready" : "Missing Slides ID"]);
+  analysis.assets.push(["Faces Page", isPrincipal ? "Replacement possible" : "Manual add in v1"]);
+
+  analysis.printQueue.push(["Updated Contact Sheet", "2 copies"]);
+  analysis.printQueue.push(["Full Calendar", "2 copies"]);
+  analysis.printQueue.push(["Rehearsal Calendar", ""]);
+  analysis.printQueue.push(["Dressing Room Tag / Full Room", ""]);
+  analysis.printQueue.push(["Face Page", ""]);
+
+  analysis.physicalTasks.push(["Update Stage Door List", ""]);
+  analysis.physicalTasks.push(["Order Slider", ""]);
+
+  return analysis;
+}
+
+function writeCompanyChangeAnalysis_(ss, settings, hire, analysis) {
+  const sheet = ss.getSheetByName("New Hire");
+  const startRow = 5;
+  const startCol = 1;
+  const maxRows = 90;
+  const maxCols = 4;
+
+  sheet.getRange(startRow, startCol, maxRows, maxCols).clearContent().clearFormat();
+
+  let r = startRow;
+
+  r = writeSectionHeader_(sheet, r, "🎭 STAGEOS — COMPANY CHANGE ANALYSIS", settings.accentColor, "#ffffff");
+  sheet.getRange(r, 1, 1, 2).setValues([["Production", settings.productionName || settings.shortName]]); r++;
+  sheet.getRange(r, 1, 1, 2).setValues([["Change", `${hire.hireType} • ${hire.companyArea}`]]); r++;
+  sheet.getRange(r, 1, 1, 2).setValues([["New Company Member", hire.name]]); r++;
+  sheet.getRange(r, 1, 1, 2).setValues([["Position / Track", hire.positionTrack]]); r++;
+
+  if (analysis.templateActor) {
+    sheet.getRange(r, 1, 1, 2).setValues([["Replacing / Template", analysis.templateActor]]);
+    r++;
+  }
+
+  r++;
+
+  r = writeSectionHeader_(sheet, r, "🟢 Spreadsheet Updates", "#d9ead3", "#000000");
+  analysis.actions.forEach(item => {
+    sheet.getRange(r, 1, 1, 2).setValues([[statusIcon_(item[1]), `${item[0]} — ${item[1]}`]]);
+    r++;
+  });
+
+  r++;
+
+  r = writeSectionHeader_(sheet, r, "🔵 Assets", "#cfe2f3", "#000000");
+  analysis.assets.forEach(item => {
+    sheet.getRange(r, 1, 1, 2).setValues([[statusIcon_(item[1]), `${item[0]} — ${item[1]}`]]);
+    r++;
+  });
+
+  sheet.getRange(r, 1, 1, 2).setValues([[
+    analysis.headshot.found ? "✅" : "⚠️",
+    analysis.headshot.found ? `Headshot — ${analysis.headshot.name}` : "Headshot — Not found"
+  ]]);
+  if (!analysis.headshot.found) sheet.getRange(r, 1, 1, 2).setBackground("#fff2cc");
+  r += 2;
+
+  r = writeSectionHeader_(sheet, r, "🟡 Print Queue", "#fff2cc", "#000000");
+  analysis.printQueue.forEach(item => {
+    sheet.getRange(r, 1, 1, 2).setValues([["🖨️", `${item[0]}${item[1] ? " — " + item[1] : ""}`]]);
+    r++;
+  });
+
+  r++;
+
+  r = writeSectionHeader_(sheet, r, "🟣 Physical Tasks", "#d9d2e9", "#000000");
+  analysis.physicalTasks.forEach(item => {
+    sheet.getRange(r, 1, 1, 2).setValues([["☐", item[0]]]);
+    r++;
+  });
+
+  r++;
+
+  const validationColor = analysis.errors.length ? "#f4cccc" : analysis.warnings.length ? "#fff2cc" : "#d9ead3";
+  r = writeSectionHeader_(sheet, r, "🔴 Validation", validationColor, "#000000");
+
+  if (!analysis.errors.length && !analysis.warnings.length) {
+    sheet.getRange(r, 1, 1, 2).setValues([["✅", "Ready to execute. No issues detected."]]);
+    r++;
+  } else {
+    analysis.errors.forEach(msg => {
+      sheet.getRange(r, 1, 1, 2).setValues([["❌", msg]]).setBackground("#f4cccc");
+      r++;
+    });
+    analysis.warnings.forEach(msg => {
+      sheet.getRange(r, 1, 1, 2).setValues([["⚠️", msg]]).setBackground("#fff2cc");
+      r++;
+    });
+  }
+
+  r++;
+
+  const readyText = analysis.errors.length
+    ? "NOT READY TO EXECUTE"
+    : `READY TO EXECUTE — ${analysis.actions.length + analysis.assets.length} planned actions`;
+
+  sheet.getRange(r, 1, 1, 2)
+    .setValues([["Status", readyText]])
+    .setFontWeight("bold")
+    .setBackground(analysis.errors.length ? "#f4cccc" : "#d9ead3");
+
+  sheet.getRange(startRow, startCol, r - startRow + 1, 2)
+    .setFontFamily("Arial")
+    .setFontSize(10)
+    .setVerticalAlignment("middle");
+
+  sheet.autoResizeColumns(1, 2);
+}
+
+function writeSectionHeader_(sheet, row, label, bg, fg) {
+  sheet.getRange(row, 1, 1, 2)
+    .merge()
+    .setValue(label)
+    .setFontWeight("bold")
+    .setBackground(bg)
+    .setFontColor(fg)
+    .setHorizontalAlignment("center");
+  return row + 1;
+}
+
+function statusIcon_(text) {
+  const t = String(text || "").toLowerCase();
+  if (t.includes("missing")) return "⚠️";
+  if (t.includes("skipped")) return "—";
+  if (t.includes("manual")) return "⚠️";
+  return "✅";
+}
+
+function findTemplateActorByPosition_(ss, positionTrack) {
+  const sheet = ss.getSheetByName("Cast List");
+  if (!sheet) return "";
+
+  const values = sheet.getDataRange().getDisplayValues();
+  const target = cleanStageOS_(positionTrack).toLowerCase();
+
+  for (let r = 1; r < values.length; r++) {
+    const role = cleanStageOS_(values[r][0]).toLowerCase();
+    const fullName = cleanStageOS_(values[r][1]);
+    const fullCharacter = cleanStageOS_(values[r][3]).toLowerCase();
+
+    if (role === target || fullCharacter === target) return fullName;
+  }
+
+  return "";
+}
+
+function findStageOSHeadshot_(settings, hire) {
+  if (hire.headshot) {
+    return {
+      found: true,
+      name: "Manual headshot provided",
+      fileId: extractDriveIdStageOS_(hire.headshot)
+    };
+  }
+
+  const folderRaw = isCastStageOS_(hire.companyArea)
+    ? settings.castHeadshotFolder
+    : settings.crewHeadshotFolder;
+
+  const folderId = extractDriveIdStageOS_(folderRaw);
+  if (!folderId) return { found: false, name: "", fileId: "" };
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFiles();
+    const target = normalizeNameStageOS_(hire.name);
+
+    while (files.hasNext()) {
+      const file = files.next();
+      const filename = normalizeNameStageOS_(file.getName());
+
+      if (filename.includes(target) || target.includes(filename)) {
+        return {
+          found: true,
+          name: file.getName(),
+          fileId: file.getId()
+        };
+      }
+    }
+  } catch (err) {
+    return {
+      found: false,
+      name: "",
+      fileId: "",
+      error: err.message
+    };
+  }
+
+  return { found: false, name: "", fileId: "" };
+}

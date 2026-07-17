@@ -1,0 +1,555 @@
+/*************************************************
+ * 15 PREPOS - CACHE
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Single owner for all PrepOS-specific caches.
+ *
+ * Owns:
+ * - Prep dialog state cache
+ * - Guest Speller handoff cache
+ * - Prep cache clearing
+ * - Cache diagnostics
+ *************************************************/
+
+
+const PREPOS_CACHE_KEYS = {
+  state:
+    "PREPOS_V2_STATE_CACHE",
+
+  showState:
+    "SHOW_STATE_OS_FAST_CACHE",
+
+  intelligence:
+    "PREP_INTELLIGENCE_OS_CACHE",
+
+  guestSpeller:
+    "STAGEOS_GUEST_SPELLER_CACHE"
+};
+
+
+const PREPOS_STATE_CACHE_MAX_AGE_MS =
+  5 * 60 * 1000;
+
+
+/* =========================================================
+ * PREP DIALOG STATE CACHE
+ * ========================================================= */
+
+function prepOSGetCachedState_() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  const raw =
+    props.getProperty(
+      PREPOS_CACHE_KEYS.state
+    );
+
+  if (!raw) return null;
+
+  try {
+    const cached =
+      JSON.parse(raw);
+
+    const savedAt =
+      Number(
+        cached.savedAt || 0
+      );
+
+    const age =
+      Date.now() - savedAt;
+
+    if (
+      age >
+      PREPOS_STATE_CACHE_MAX_AGE_MS
+    ) {
+      prepOSClearStateCache_();
+      return null;
+    }
+
+    const currentKey =
+      prepOSCurrentStateCacheKey_();
+
+    if (
+      cached.key !==
+      currentKey
+    ) {
+      return null;
+    }
+
+    return cached.state || null;
+
+  } catch (err) {
+    prepOSClearStateCache_();
+    return null;
+  }
+}
+
+
+function prepOSSetCachedState_(
+  state
+) {
+  if (!state) return false;
+
+  try {
+    PropertiesService
+      .getDocumentProperties()
+      .setProperty(
+        PREPOS_CACHE_KEYS.state,
+        JSON.stringify({
+          savedAt:
+            Date.now(),
+
+          key:
+            prepOSCurrentStateCacheKey_(),
+
+          state:
+            state
+        })
+      );
+
+    return true;
+
+  } catch (err) {
+    Logger.log(
+      "PrepOS state cache write skipped: " +
+      String(err)
+    );
+
+    return false;
+  }
+}
+
+
+function prepOSCurrentStateCacheKey_() {
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const inOut =
+    ss.getSheetByName(
+      "IN/OUT"
+    );
+
+  if (!inOut) {
+    return "NO_INOUT";
+  }
+
+  const ranges =
+    inOut
+      .getRangeList([
+        "A3",
+        "A4",
+        "A24"
+      ])
+      .getRanges();
+
+  const values =
+    ranges.map(function (range) {
+      return range.getDisplayValue();
+    });
+
+  return [
+    values[0] || "",
+    values[1] || "",
+    values[2] || ""
+  ].join("|");
+}
+
+
+function prepOSClearStateCache_() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  props.deleteProperty(
+    PREPOS_CACHE_KEYS.state
+  );
+
+  return true;
+}
+
+
+/* =========================================================
+ * GUEST SPELLER CACHE
+ * ========================================================= */
+
+function saveGuestSpellerCache_(
+  payload
+) {
+  payload = payload || {};
+
+  const guestCache = {
+    guestSpellerName:
+      String(
+        payload.guestSpellerName || ""
+      ).trim(),
+
+    guestDateTimeText:
+      String(
+        payload.guestDateTimeText || ""
+      ).trim(),
+
+    guestSpellerNote:
+      String(
+        payload.guestSpellerNote || ""
+      ).trim(),
+
+    performance:
+      String(
+        payload.performance || ""
+      ).trim(),
+
+    savedAt:
+      new Date().toISOString()
+  };
+
+  PropertiesService
+    .getDocumentProperties()
+    .setProperty(
+      PREPOS_CACHE_KEYS.guestSpeller,
+      JSON.stringify(
+        guestCache
+      )
+    );
+
+  return guestCache;
+}
+
+
+function getGuestSpellerCache_() {
+  const emptyCache = {
+    guestSpellerName:
+      "",
+
+    guestDateTimeText:
+      "",
+
+    guestSpellerNote:
+      "",
+
+    performance:
+      "",
+
+    savedAt:
+      ""
+  };
+
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        PREPOS_CACHE_KEYS.guestSpeller
+      );
+
+  if (!raw) {
+    return emptyCache;
+  }
+
+  try {
+    const cached =
+      JSON.parse(raw);
+
+    return {
+      guestSpellerName:
+        String(
+          cached.guestSpellerName || ""
+        ).trim(),
+
+      guestDateTimeText:
+        String(
+          cached.guestDateTimeText || ""
+        ).trim(),
+
+      guestSpellerNote:
+        String(
+          cached.guestSpellerNote || ""
+        ).trim(),
+
+      performance:
+        String(
+          cached.performance || ""
+        ).trim(),
+
+      savedAt:
+        String(
+          cached.savedAt || ""
+        ).trim()
+    };
+
+  } catch (err) {
+    clearGuestSpellerCache_();
+    return emptyCache;
+  }
+}
+
+
+function clearGuestSpellerCache_() {
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      PREPOS_CACHE_KEYS.guestSpeller
+    );
+
+  return true;
+}
+
+
+/* =========================================================
+ * FULL PREPOS CACHE CONTROL
+ * ========================================================= */
+
+function clearPrepOSCaches() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  Object.keys(
+    PREPOS_CACHE_KEYS
+  ).forEach(function (key) {
+    props.deleteProperty(
+      PREPOS_CACHE_KEYS[key]
+    );
+  });
+
+  /*
+   * Clear any older cache key that may still remain
+   * from previous PrepOS versions.
+   */
+  props.deleteProperty(
+    "PREPOS_V2_STATE_CACHE"
+  );
+
+  return true;
+}
+
+
+function clearPrepOSCachesWithAlert() {
+  clearPrepOSCaches();
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS caches cleared.\n\n" +
+      "They will rebuild on the next Prep open."
+    );
+}
+
+
+/* =========================================================
+ * POST-EXPORT CONTINUATION
+ * ========================================================= */
+
+function continueAfterInOutExport() {
+  const cached =
+    getGuestSpellerCache_();
+
+  if (
+    cached.guestSpellerName &&
+    typeof showGuestSpellerDialog ===
+      "function"
+  ) {
+    showGuestSpellerDialog(
+      cached
+    );
+  }
+}
+
+
+/* =========================================================
+ * CACHE STATUS
+ * ========================================================= */
+
+function prepOSCacheStatus_() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  const all =
+    props.getProperties();
+
+  return Object.keys(
+    PREPOS_CACHE_KEYS
+  ).map(function (label) {
+    const propertyKey =
+      PREPOS_CACHE_KEYS[label];
+
+    const raw =
+      all[propertyKey] || "";
+
+    let cachedAt = "";
+    let entries = 0;
+
+    if (raw) {
+      try {
+        const parsed =
+          JSON.parse(raw);
+
+        cachedAt =
+          parsed.cachedAt ||
+          parsed.savedAt ||
+          "";
+
+        if (
+          parsed.state &&
+          typeof parsed.state ===
+            "object"
+        ) {
+          entries =
+            Object.keys(
+              parsed.state
+            ).length;
+        } else if (
+          parsed.intelligence &&
+          typeof parsed.intelligence ===
+            "object"
+        ) {
+          entries =
+            Object.keys(
+              parsed.intelligence
+            ).length;
+        } else {
+          entries =
+            Object.keys(
+              parsed
+            ).length;
+        }
+
+      } catch (err) {
+        cachedAt = "";
+      }
+    }
+
+    return {
+      label:
+        label,
+
+      propertyKey:
+        propertyKey,
+
+      exists:
+        Boolean(raw),
+
+      cachedAt:
+        cachedAt,
+
+      entries:
+        entries,
+
+      size:
+        raw.length
+    };
+  });
+}
+
+
+/* =========================================================
+ * TEST
+ * ========================================================= */
+
+function testPrepOSCacheSystem() {
+  prepOSClearStateCache_();
+
+  const state =
+    PrepOS().state();
+
+  const saved =
+    prepOSSetCachedState_(
+      state
+    );
+
+  const restored =
+    prepOSGetCachedState_();
+
+  const guestSample =
+    saveGuestSpellerCache_({
+      guestSpellerName:
+        "Cache Test Guest",
+
+      guestDateTimeText:
+        "JULY 12, 2:00PM:",
+
+      guestSpellerNote:
+        "Cache test.",
+
+      performance:
+        "PERFORMANCE #265 - 2:00 PM MAT"
+    });
+
+  const guestRestored =
+    getGuestSpellerCache_();
+
+  clearGuestSpellerCache_();
+
+  const status =
+    prepOSCacheStatus_();
+
+  const result = {
+    stateSaved:
+      saved,
+
+    stateRestored:
+      Boolean(restored),
+
+    restoredPerformances:
+      restored &&
+      restored.performances
+        ? restored.performances.length
+        : 0,
+
+    guestSaved:
+      guestSample
+        .guestSpellerName ===
+        "Cache Test Guest",
+
+    guestRestored:
+      guestRestored
+        .guestSpellerName ===
+        "Cache Test Guest",
+
+    registeredCaches:
+      status.length
+  };
+
+  Logger.log(
+    "PREPOS CACHE SYSTEM TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      {
+        result:
+          result,
+
+        status:
+          status
+      },
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS cache system test passed.\n\n" +
+      "State saved: " +
+      result.stateSaved +
+      "\n" +
+      "State restored: " +
+      result.stateRestored +
+      "\n" +
+      "Performances restored: " +
+      result.restoredPerformances +
+      "\n" +
+      "Guest cache restored: " +
+      result.guestRestored +
+      "\n" +
+      "Registered caches: " +
+      result.registeredCaches
+    );
+    
+  prepOSClearStateCache_();
+  return result;
+}

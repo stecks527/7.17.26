@@ -1,0 +1,79 @@
+/*************************************************
+ * 90 ENGINE MIGRATION ARCHIVE OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *************************************************/
+
+const ENGINE_MIGRATION_ARCHIVE_TABS = [
+  "Wizard Log",
+  "SnapshotOS v2 - Show State",
+  "SnapshotOS v2 - Show State History",
+  "Resolved Cast",
+  "Resolver Validation",
+  "Resolved Cast Snapshots",
+  "Assignment Snapshots"
+];
+
+function archiveMigratedProductionHelperTabs() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActive();
+
+  const response = ui.alert(
+    "Archive migrated helper tabs?",
+    "This will rename matching production tabs with ARCHIVE - and hide them. It will not delete anything.",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) return;
+
+  const archived = [];
+  const skipped = [];
+
+  ENGINE_MIGRATION_ARCHIVE_TABS.forEach(name => {
+    const sh = ss.getSheetByName(name);
+
+    if (!sh) {
+      skipped.push(name + " — not found");
+      return;
+    }
+
+    const archiveName = buildUniqueArchiveSheetName_(ss, "ARCHIVE - " + name);
+
+    sh.setName(archiveName);
+    sh.hideSheet();
+
+    archived.push(name + " → " + archiveName);
+  });
+
+  if (typeof EngineLogOS === "function") {
+    EngineLogOS().info(
+      "EngineMigrationOS",
+      "Archive Production Helper Tabs",
+      "Migrated helper tabs archived/hidden in production workbook.",
+      {
+        archived: archived,
+        skipped: skipped
+      }
+    );
+  }
+
+  ui.alert(
+    "Archive complete.\n\n" +
+    "Archived:\n" +
+    (archived.length ? archived.join("\n") : "None") +
+    "\n\nSkipped:\n" +
+    (skipped.length ? skipped.join("\n") : "None")
+  );
+}
+
+function buildUniqueArchiveSheetName_(ss, baseName) {
+  let name = baseName;
+  let i = 2;
+
+  while (ss.getSheetByName(name)) {
+    name = baseName + " " + i;
+    i++;
+  }
+
+  return name;
+}

@@ -1,0 +1,142 @@
+/*************************************************
+ * 15 PREPOS - ASSIGNMENT BRIDGE
+ *************************************************/
+
+function getShowAssignmentState_() {
+  if (
+    typeof showStateGetCachedAssignments_ ===
+    "function"
+  ) {
+    return showStateGetCachedAssignments_(
+      {},
+      ""
+    );
+  }
+
+  const groups =
+    AssignmentOS().getGroups();
+
+  const tracks =
+    AssignmentOS().getTracks();
+
+  const peopleByTrack =
+    AssignmentOS().getPeopleByTrack();
+
+  const allPeople =
+    Object.keys(
+      peopleByTrack
+    )
+      .flatMap(function (trackId) {
+        return (
+          peopleByTrack[trackId] ||
+          []
+        );
+      });
+
+  const uniqueNames =
+    uniqueSorted_(
+      allPeople.map(function (person) {
+        return (
+          person.name ||
+          person
+        );
+      })
+    );
+
+  return {
+    groups:
+      groups || [],
+
+    tracks:
+      tracks || [],
+
+    values:
+      buildDefaultShowAssignmentValues_(
+        tracks || []
+      ),
+
+    dropdowns: {
+      peopleByTrack:
+        peopleByTrack || {},
+
+      people:
+        uniqueNames,
+
+      tracks:
+        tracks || []
+    },
+
+    officeShow:
+      false,
+
+    training: {
+      stageManagement: {
+        enabled:
+          false,
+
+        trackId:
+          "",
+
+        trainer:
+          "",
+
+        trainee:
+          "",
+
+        note:
+          "",
+
+        mode:
+          "Training"
+      },
+
+      audio: {
+        enabled:
+          false,
+
+        trackId:
+          "",
+
+        trainer:
+          "",
+
+        trainee:
+          "",
+
+        note:
+          "",
+
+        mode:
+          "Training"
+      }
+    }
+  };
+}
+
+function buildDefaultShowAssignmentValues_(tracks) {
+  const values = {};
+
+  tracks.forEach(track => {
+    values[track.id] = "";
+  });
+
+  return values;
+}
+
+function getShowAssignmentDropdowns_() {
+  const state =
+    getShowAssignmentState_();
+
+  return (
+    state.dropdowns || {
+      peopleByTrack:
+        {},
+
+      people:
+        [],
+
+      tracks:
+        []
+    }
+  );
+}

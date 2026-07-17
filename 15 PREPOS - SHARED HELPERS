@@ -1,0 +1,1037 @@
+/*************************************************
+ * 15 PREPOS - SHARED HELPERS
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Prep-specific utility functions only.
+ *
+ * Shared general helpers remain owned by:
+ * 00 STAGEOS - UTILITIES.gs
+ *************************************************/
+
+
+/* =========================================================
+ * SHEET ACCESS
+ * ========================================================= */
+
+function prepOSSheet_(sheetName) {
+  return SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(
+      String(sheetName || "").trim()
+    );
+}
+
+
+function prepOSReadCellDisplay_(
+  sheetName,
+  a1Notation
+) {
+  const sheet =
+    prepOSSheet_(sheetName);
+
+  if (!sheet) return "";
+
+  return sheet
+    .getRange(a1Notation)
+    .getDisplayValue();
+}
+
+
+/* =========================================================
+ * TEXT
+ * ========================================================= */
+
+function prepOSClean_(value) {
+  if (
+    typeof clean_ ===
+    "function"
+  ) {
+    return clean_(value);
+  }
+
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function prepOSCleanMultiline_(
+  value
+) {
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(function (line) {
+      return line.trim();
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+
+function prepOSFirstNonBlank_() {
+  const values =
+    Array.prototype.slice.call(
+      arguments
+    );
+
+  if (
+    typeof firstFilled_ ===
+    "function"
+  ) {
+    return firstFilled_(values);
+  }
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+    const cleaned =
+      prepOSClean_(
+        values[i]
+      );
+
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
+
+function prepOSAsArray_(
+  value
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return [];
+  }
+
+  return Array.isArray(value)
+    ? value
+    : [value];
+}
+
+
+function prepOSNormalizeNameKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+function prepOSNormalizeRoleKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+function prepOSEscapeRegex_(
+  value
+) {
+  return String(value || "")
+    .replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+}
+
+
+/* =========================================================
+ * DATE HELPERS
+ * ========================================================= */
+
+function prepOSNowLabel_() {
+  return Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    "M/d/yy h:mm a"
+  );
+}
+
+
+function prepOSParseDate_(
+  value
+) {
+  if (
+    Object.prototype.toString.call(
+      value
+    ) === "[object Date]" &&
+    !isNaN(value.getTime())
+  ) {
+    return value;
+  }
+
+  const text =
+    prepOSClean_(value);
+
+  if (!text) return null;
+
+  if (
+    typeof parseInOutDate_ ===
+    "function"
+  ) {
+    const parsed =
+      parseInOutDate_(text);
+
+    if (
+      parsed &&
+      !isNaN(parsed.getTime())
+    ) {
+      return parsed;
+    }
+  }
+
+  const direct =
+    new Date(text);
+
+  if (
+    !isNaN(
+      direct.getTime()
+    )
+  ) {
+    return direct;
+  }
+
+  const year =
+    typeof getPrepShowYear_ ===
+      "function"
+      ? getPrepShowYear_()
+      : new Date().getFullYear();
+
+  const withYear =
+    new Date(
+      text + ", " + year
+    );
+
+  return isNaN(
+    withYear.getTime()
+  )
+    ? null
+    : withYear;
+}
+
+
+function prepOSDateOnly_(
+  date
+) {
+  if (!date) return null;
+
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  );
+}
+
+
+function prepOSSameDate_(
+  first,
+  second
+) {
+  const a =
+    prepOSParseDate_(first);
+
+  const b =
+    prepOSParseDate_(second);
+
+  if (!a || !b) return false;
+
+  return (
+    prepOSDateOnly_(a)
+      .getTime() ===
+    prepOSDateOnly_(b)
+      .getTime()
+  );
+}
+
+
+function prepOSDateInRange_(
+  target,
+  start,
+  end
+) {
+  const targetDate =
+    prepOSParseDate_(target);
+
+  const startDate =
+    prepOSParseDate_(start);
+
+  const endDate =
+    prepOSParseDate_(
+      end || start
+    );
+
+  if (
+    !targetDate ||
+    !startDate ||
+    !endDate
+  ) {
+    return false;
+  }
+
+  const targetTime =
+    prepOSDateOnly_(
+      targetDate
+    ).getTime();
+
+  const startTime =
+    prepOSDateOnly_(
+      startDate
+    ).getTime();
+
+  const endTime =
+    prepOSDateOnly_(
+      endDate
+    ).getTime();
+
+  return (
+    targetTime >= startTime &&
+    targetTime <= endTime
+  );
+}
+
+
+/* =========================================================
+ * WEEKLY SCHEDULE HELPERS
+ * ========================================================= */
+
+function prepOSFindWeeklyTabForDateLabel_(
+  dateText
+) {
+  const target =
+    prepOSParseDate_(
+      dateText
+    );
+
+  if (!target) return null;
+
+  const expectedName =
+    typeof buildWeeklyScheduleTabNameForDate_ ===
+      "function"
+      ? buildWeeklyScheduleTabNameForDate_(
+          target
+        )
+      : "";
+
+  if (expectedName) {
+    const exact =
+      prepOSSheet_(
+        expectedName
+      );
+
+    if (exact) return exact;
+  }
+
+  const weeklySheets =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheets()
+      .filter(function (sheet) {
+        return /^Weekly Schedule/i.test(
+          sheet.getName()
+        );
+      });
+
+  for (
+    let i = 0;
+    i < weeklySheets.length;
+    i++
+  ) {
+    const sheet =
+      weeklySheets[i];
+
+    const monday =
+      prepOSParseDate_(
+        sheet
+          .getRange("B3")
+          .getDisplayValue()
+      );
+
+    if (!monday) continue;
+
+    const sunday =
+      new Date(monday);
+
+    sunday.setDate(
+      sunday.getDate() + 6
+    );
+
+    if (
+      prepOSDateInRange_(
+        target,
+        monday,
+        sunday
+      )
+    ) {
+      return sheet;
+    }
+  }
+
+  return null;
+}
+
+
+function prepOSPullWeeklyNotesForDate_(
+  weeklySheet,
+  dateText
+) {
+  const target =
+    prepOSParseDate_(
+      dateText
+    );
+
+  if (
+    !weeklySheet ||
+    !target
+  ) {
+    return [];
+  }
+
+  const targetDay =
+    Utilities.formatDate(
+      target,
+      Session.getScriptTimeZone(),
+      "EEEE"
+    ).toUpperCase();
+
+  const values =
+    weeklySheet
+      .getDataRange()
+      .getDisplayValues();
+
+  let startRow = -1;
+  let endRow =
+    values.length;
+
+  for (
+    let row = 0;
+    row < values.length;
+    row++
+  ) {
+    const rowText =
+      values[row]
+        .join(" ")
+        .toUpperCase();
+
+    if (
+      rowText.indexOf(
+        targetDay
+      ) !== -1
+    ) {
+      startRow = row;
+      break;
+    }
+  }
+
+  if (
+    startRow === -1
+  ) {
+    return [];
+  }
+
+  const dayNames = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY"
+  ];
+
+  for (
+    let row = startRow + 1;
+    row < values.length;
+    row++
+  ) {
+    const rowText =
+      values[row]
+        .join(" ")
+        .toUpperCase();
+
+    const nextDay =
+      dayNames.some(
+        function (dayName) {
+          return (
+            rowText.indexOf(
+              dayName
+            ) !== -1
+          );
+        }
+      );
+
+    if (nextDay) {
+      endRow = row;
+      break;
+    }
+  }
+
+  const notes = [];
+
+  for (
+    let row = startRow;
+    row < endRow;
+    row++
+  ) {
+    const cleanedRow =
+      values[row].map(
+        prepOSClean_
+      );
+
+    const rowText =
+      cleanedRow
+        .join(" ")
+        .trim();
+
+    if (!rowText) continue;
+
+    if (
+      notes.indexOf(
+        rowText
+      ) === -1
+    ) {
+      notes.push(
+        rowText
+      );
+    }
+
+    for (
+      let column = 0;
+      column <
+        cleanedRow.length - 1;
+      column++
+    ) {
+      if (
+        !cleanedRow[column] ||
+        !cleanedRow[column + 1]
+      ) {
+        continue;
+      }
+
+      const pair =
+        cleanedRow[column] +
+        ": " +
+        cleanedRow[column + 1];
+
+      if (
+        notes.indexOf(
+          pair
+        ) === -1
+      ) {
+        notes.push(pair);
+      }
+    }
+  }
+
+  return notes;
+}
+
+
+/* =========================================================
+ * NOTE HELPERS
+ * ========================================================= */
+
+function prepOSFindNoteByKeywords_(
+  notes,
+  keywords
+) {
+  const source =
+    prepOSAsArray_(notes);
+
+  const wanted =
+    prepOSAsArray_(keywords)
+      .map(function (keyword) {
+        return String(
+          keyword || ""
+        ).toLowerCase();
+      })
+      .filter(Boolean);
+
+  for (
+    let i = 0;
+    i < source.length;
+    i++
+  ) {
+    const text =
+      prepOSClean_(
+        source[i]
+      );
+
+    const lower =
+      text.toLowerCase();
+
+    if (
+      wanted.some(
+        function (keyword) {
+          return (
+            lower.indexOf(
+              keyword
+            ) !== -1
+          );
+        }
+      )
+    ) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+
+function prepOSNotesContain_(
+  notes,
+  keywords
+) {
+  return Boolean(
+    prepOSFindNoteByKeywords_(
+      notes,
+      keywords
+    )
+  );
+}
+
+
+function prepOSFindAssignmentFromNotes_(
+  notes,
+  keywords
+) {
+  const line =
+    prepOSFindNoteByKeywords_(
+      notes,
+      keywords
+    );
+
+  if (!line) return "";
+
+  const colonIndex =
+    line.indexOf(":");
+
+  if (
+    colonIndex !== -1
+  ) {
+    return prepOSClean_(
+      line.substring(
+        colonIndex + 1
+      )
+    );
+  }
+
+  const dashIndex =
+    line.indexOf(" - ");
+
+  if (
+    dashIndex !== -1
+  ) {
+    return prepOSClean_(
+      line.substring(
+        dashIndex + 3
+      )
+    );
+  }
+
+  const wanted =
+    prepOSAsArray_(keywords);
+
+  let cleaned =
+    line;
+
+  wanted.forEach(
+    function (keyword) {
+      cleaned =
+        cleaned.replace(
+          new RegExp(
+            prepOSEscapeRegex_(
+              keyword
+            ),
+            "i"
+          ),
+          ""
+        );
+    }
+  );
+
+  return prepOSClean_(
+    cleaned
+  );
+}
+
+
+function prepOSFindCompanyNotes_(
+  notes
+) {
+  const blocked = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "holiday",
+    "dollar friday",
+    "performance",
+    "conductor",
+    "calling sm",
+    "caller",
+    "deck sm",
+    "a1",
+    "audio"
+  ];
+
+  const output = [];
+
+  prepOSAsArray_(notes)
+    .forEach(function (item) {
+      const text =
+        prepOSClean_(item);
+
+      const lower =
+        text.toLowerCase();
+
+      if (!text) return;
+
+      const shouldSkip =
+        blocked.some(
+          function (word) {
+            return (
+              lower.indexOf(
+                word
+              ) !== -1
+            );
+          }
+        );
+
+      if (
+        !shouldSkip &&
+        output.indexOf(
+          text
+        ) === -1
+      ) {
+        output.push(text);
+      }
+    });
+
+  return output.join("\n");
+}
+
+
+/* =========================================================
+ * GUEST SPELLER
+ * ========================================================= */
+
+function prepOSFindGuestSpellerSafe_(
+  dateText
+) {
+  const expanded =
+    prepOSSheet_(
+      "Expanded Calendar"
+    );
+
+  if (!expanded) return "";
+
+  const target =
+    prepOSParseDate_(
+      dateText
+    );
+
+  if (!target) return "";
+
+  const values =
+    expanded
+      .getDataRange()
+      .getDisplayValues();
+
+  for (
+    let row = 0;
+    row < values.length;
+    row++
+  ) {
+    const rowDate =
+      prepOSParseDate_(
+        values[row][0]
+      );
+
+    if (
+      !rowDate ||
+      !prepOSSameDate_(
+        rowDate,
+        target
+      )
+    ) {
+      continue;
+    }
+
+    const guest =
+      prepOSClean_(
+        values[row][3]
+      );
+
+    if (guest) return guest;
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * CAST / ROLE LOOKUPS
+ * ========================================================= */
+
+function prepOSFindPersonByRole_(
+  roleName
+) {
+  const people =
+    prepOSFindPeopleByRoles_(
+      [roleName]
+    );
+
+  return people.length
+    ? people[0]
+    : "";
+}
+
+
+function prepOSFindPeopleByRoles_(
+  roleNames
+) {
+  const castList =
+    prepOSSheet_(
+      "Cast List"
+    );
+
+  if (!castList) return [];
+
+  const wanted =
+    prepOSAsArray_(roleNames)
+      .map(function (role) {
+        return prepOSNormalizeRoleKey_(
+          role
+        );
+      })
+      .filter(Boolean);
+
+  const values =
+    castList
+      .getDataRange()
+      .getDisplayValues();
+
+  const people = [];
+
+  for (
+    let row = 0;
+    row < values.length;
+    row++
+  ) {
+    const cleanedRow =
+      values[row].map(
+        prepOSClean_
+      );
+
+    const roleText =
+      cleanedRow
+        .slice(0, 4)
+        .join(" ");
+
+    const roleKey =
+      prepOSNormalizeRoleKey_(
+        roleText
+      );
+
+    const matches =
+      wanted.some(
+        function (wantedRole) {
+          return (
+            roleKey.indexOf(
+              wantedRole
+            ) !== -1 ||
+            wantedRole.indexOf(
+              roleKey
+            ) !== -1
+          );
+        }
+      );
+
+    if (!matches) continue;
+
+    const actorCandidates = [
+      cleanedRow[1],
+      cleanedRow[0],
+      cleanedRow[2]
+    ];
+
+    const actor =
+      actorCandidates.find(
+        function (candidate) {
+          if (!candidate) return false;
+
+          const candidateKey =
+            prepOSNormalizeRoleKey_(
+              candidate
+            );
+
+          return (
+            wanted.indexOf(
+              candidateKey
+            ) === -1 &&
+            !/^(role|character|actor|name)$/i.test(
+              candidate
+            )
+          );
+        }
+      );
+
+    if (
+      actor &&
+      people.indexOf(
+        actor
+      ) === -1
+    ) {
+      people.push(actor);
+    }
+  }
+
+  return people;
+}
+
+
+/* =========================================================
+ * CLIENT-SAFE COMPATIBILITY
+ *
+ * Some older Prep code may still call this name.
+ * The canonical API currently uses prepOSMakeClientSafe_().
+ * ========================================================= */
+
+function prepOSClientSafe_(
+  value
+) {
+  if (
+    typeof prepOSMakeClientSafe_ ===
+    "function"
+  ) {
+    return prepOSMakeClientSafe_(
+      value
+    );
+  }
+
+  return JSON.parse(
+    JSON.stringify(value)
+  );
+}
+
+
+/* =========================================================
+ * READ-ONLY TEST
+ * ========================================================= */
+
+function testPrepOSHelpers() {
+  const inOut =
+    prepOSSheet_(
+      "IN/OUT"
+    );
+
+  const dateText =
+    inOut
+      ? inOut
+          .getRange("A3")
+          .getDisplayValue()
+      : "";
+
+  const parsedDate =
+    prepOSParseDate_(
+      dateText
+    );
+
+  const weekly =
+    prepOSFindWeeklyTabForDateLabel_(
+      dateText
+    );
+
+  const guest =
+    prepOSFindGuestSpellerSafe_(
+      dateText
+    );
+
+  const result = {
+    inOutFound:
+      Boolean(inOut),
+
+    dateParsed:
+      Boolean(parsedDate),
+
+    weeklyFound:
+      Boolean(weekly),
+
+    weeklyName:
+      weekly
+        ? weekly.getName()
+        : "",
+
+    guestSpeller:
+      guest || "",
+
+    cleanTest:
+      prepOSClean_(
+        "  Vanessa   Magula  "
+      ),
+
+    firstFilledTest:
+      prepOSFirstNonBlank_(
+        "",
+        "Conductor",
+        "Fallback"
+      )
+  };
+
+  Logger.log(
+    "PREPOS HELPERS TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS helpers test passed.\n\n" +
+      "IN/OUT found: " +
+      result.inOutFound +
+      "\n" +
+      "Date parsed: " +
+      result.dateParsed +
+      "\n" +
+      "Weekly found: " +
+      result.weeklyFound +
+      "\n" +
+      "Cleaned name: " +
+      result.cleanTest
+    );
+
+  return result;
+}

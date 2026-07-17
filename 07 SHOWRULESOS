@@ -1,0 +1,77 @@
+/*************************************************
+ * 07 SHOWRULESOS
+ * Version: 0.1.0
+ *
+ * Central business rules for StageOS workflow.
+ *************************************************/
+
+function ShowRulesOS() {
+  return {
+    shouldRefreshInsert: function (payload) {
+      return showRulesShouldRefreshInsert_(payload);
+    },
+
+    shouldCaptureSnapshotsDuringPrep: function () {
+      return false; // Show-mode default: queue snapshots, don't block Prep.
+    },
+
+    getPrepOptions: function (payload) {
+      return {
+        refreshInsert: showRulesShouldRefreshInsert_(payload),
+        captureSnapshotsNow: false,
+        queueSnapshots: true
+      };
+    }
+  };
+}
+
+/*************************************************
+ * INSERT RULE
+ *************************************************/
+
+function showRulesShouldRefreshInsert_(payload) {
+  const castOuts = payload && payload.castOuts ? payload.castOuts : [];
+
+  const mainCastRoles = [
+    "Chip",
+    "Schwartzy",
+    "Marcy",
+    "Rona",
+    "Panch",
+    "Leaf",
+    "Mitch",
+    "Barfée",
+    "Barfee",
+    "Olive"
+  ];
+
+  const mainCastOuts = castOuts.filter(row => {
+    const role = String(row.role || "").toLowerCase();
+
+    return mainCastRoles.some(mainRole =>
+      role.includes(mainRole.toLowerCase())
+    );
+  });
+
+  return mainCastOuts.length >= 3;
+}
+
+/*************************************************
+ * TESTER
+ *************************************************/
+
+function testShowRulesOS_InsertRule() {
+  const payload = {
+    castOuts: [
+      { role: "Barfée" },
+      { role: "Olive" },
+      { role: "Rona" }
+    ]
+  };
+
+  const result = ShowRulesOS().shouldRefreshInsert(payload);
+
+  SpreadsheetApp.getUi().alert(
+    "Refresh The Today At Insert?\n\n" + result
+  );
+}

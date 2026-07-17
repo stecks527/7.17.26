@@ -1,0 +1,706 @@
+/*************************************************
+ * 30 REPORT NOTES OS
+ * Version: 0.2.0
+ * Status: ACTIVE
+ *
+ * Owns:
+ * - Collecting notes for the Performance Report
+ * - Categorizing and transforming notes
+ * - Deduplicating notes
+ * - Writing notes through ReportLayoutIndex
+ *
+ * No Performance Report row numbers live here.
+ *************************************************/
+
+
+function ReportNotesOS() {
+  return {
+    collect:
+      reportNotesCollect_,
+
+    categorize:
+      reportNotesCategorize_,
+
+    merge:
+      reportNotesMerge_,
+
+    write:
+      reportNotesWrite_
+  };
+}
+
+
+/* =========================================================
+ * COLLECT
+ * ========================================================= */
+
+function reportNotesCollect_(
+  state
+) {
+  state =
+    state || {};
+
+  const notes = [];
+
+  notes.push.apply(
+    notes,
+    reportNotesFromPrep_(
+      state
+    )
+  );
+
+  notes.push.apply(
+    notes,
+    reportNotesFromGuest_(
+      state
+    )
+  );
+
+  return notes;
+}
+
+
+function reportNotesFromPrep_(
+  state
+) {
+  const text =
+    String(
+      state.notes || ""
+    );
+
+  if (!text.trim()) {
+    return [];
+  }
+
+  return text
+    .split(/\n+/)
+    .map(function (line) {
+      const cleaned =
+        String(line || "")
+          .replace(
+            /^[-–]\s*/,
+            ""
+          )
+          .trim();
+
+      if (!cleaned) {
+        return null;
+      }
+
+      return {
+        source:
+          "PrepOS",
+
+        category:
+          "",
+
+        priority:
+          100,
+
+        overwrite:
+          false,
+
+        text:
+          cleaned
+      };
+    })
+    .filter(Boolean);
+}
+
+
+function reportNotesFromGuest_(
+  state
+) {
+  /*
+   * Guest Speller report text is currently owned by
+   * ReportGuestOS, so it should not be duplicated here.
+   */
+  return [];
+}
+
+
+/* =========================================================
+ * CATEGORIZE
+ * ========================================================= */
+
+function reportNotesCategorize_(
+  notes
+) {
+  return (
+    notes || []
+  )
+    .map(function (note) {
+      note =
+        note || {};
+
+      const transformedText =
+        reportNotesTransform_(
+          note.text
+        );
+
+      return Object.assign(
+        {},
+        note,
+        {
+          category:
+            note.category ||
+            reportNotesGuessCategory_(
+              transformedText
+            ),
+
+          text:
+            transformedText
+        }
+      );
+    })
+    .filter(function (note) {
+      return (
+        note.text &&
+        !reportNotesIgnore_(
+          note.text
+        )
+      );
+    });
+}
+
+
+function reportNotesGuessCategory_(
+  text
+) {
+  const value =
+    String(
+      text || ""
+    )
+      .toLowerCase();
+
+  if (/\bpt\b/.test(value)) {
+    return "general";
+  }
+
+  if (
+    value.includes("scenic") ||
+    value.includes("set ") ||
+    value.includes("deck automation")
+  ) {
+    return "scenic";
+  }
+
+  if (
+    value.includes("prop") ||
+    value.includes("lanyard") ||
+    value.includes("flick stick") ||
+    value.includes("ribbon") ||
+    value.includes("chair")
+  ) {
+    return "props";
+  }
+
+  if (
+    value.includes("wardrobe") ||
+    value.includes("costume") ||
+    value.includes("fitting") ||
+    value.includes("maeve") ||
+    value.includes("carmen")
+  ) {
+    return "costumes";
+  }
+
+  if (
+    value.includes("wig") ||
+    value.includes("hair")
+  ) {
+    return "wigs";
+  }
+
+  if (
+    value.includes("sound") ||
+    value.includes("audio") ||
+    value.includes("mic") ||
+    value.includes("rf") ||
+    value.includes("a1") ||
+    value.includes("a2") ||
+    value.includes("corbin")
+  ) {
+    return "sound";
+  }
+
+  if (
+    value.includes("lighting") ||
+    value.includes("light board") ||
+    /\blx\b/.test(value)
+  ) {
+    return "lighting";
+  }
+
+  if (
+    value.includes("script") ||
+    value.includes("rant") ||
+    value.includes("schwartzy")
+  ) {
+    return "script";
+  }
+
+  if (
+    value.includes("music") ||
+    value.includes("conductor") ||
+    value.includes("pianist") ||
+    value.includes("vocal") ||
+    value.includes("liz d") ||
+    value.includes("steven c")
+  ) {
+    return "music";
+  }
+
+  if (
+    value.includes("dance") ||
+    value.includes("choreo") ||
+    value.includes("choreography")
+  ) {
+    return "choreo";
+  }
+
+  if (
+    value.includes("production management") ||
+    /\bpm\b/.test(value)
+  ) {
+    return "production";
+  }
+
+  if (
+    value.includes("producer") ||
+    value.includes("producing") ||
+    value.includes("aaron g") ||
+    value.includes("barbara")
+  ) {
+    return "producing";
+  }
+
+  if (
+    value.includes("facility") ||
+    value.includes("facilities") ||
+    value.includes("bathroom") ||
+    value.includes("hand sanitizer") ||
+    value.includes("mouse") ||
+    value.includes("building") ||
+    value.includes("balcony outlet") ||
+    value.includes("outlet")
+  ) {
+    return "facilities";
+  }
+
+  return "general";
+}
+
+
+function reportNotesTransform_(
+  text
+) {
+  const cleaned =
+    String(
+      text || ""
+    )
+      .replace(
+        /^[-–]\s*/,
+        ""
+      )
+      .trim();
+
+  const ptMatch =
+    cleaned.match(
+      /^PT\s+(.+?)\s*\((.+?)\)\.?$/i
+    );
+
+  if (ptMatch) {
+    const time =
+      ptMatch[1].trim();
+
+    const location =
+      ptMatch[2]
+        .trim()
+        .toLowerCase();
+
+    return (
+      "PT occurred for the company today in the " +
+      location +
+      " " +
+      time +
+      "."
+    );
+  }
+
+  return cleaned;
+}
+
+
+function reportNotesIgnore_(
+  text
+) {
+  const value =
+    String(
+      text || ""
+    )
+      .toLowerCase();
+
+  return (
+    value.includes("dollar friday") ||
+    value.includes("cello") ||
+    value.includes("drums") ||
+    value.includes("reeds") ||
+    value.includes("keys 2") ||
+    value.includes("sub keys")
+  );
+}
+
+
+/* =========================================================
+ * MERGE / DEDUPE
+ * ========================================================= */
+
+function reportNotesMerge_(
+  notes
+) {
+  const buckets = {};
+
+  (
+    notes || []
+  ).forEach(function (note) {
+    const category =
+      note.category ||
+      "general";
+
+    if (!buckets[category]) {
+      buckets[category] = [];
+    }
+
+    buckets[category].push(
+      note
+    );
+  });
+
+  Object.keys(
+    buckets
+  ).forEach(function (category) {
+    buckets[category] =
+      reportNotesUnique_(
+        buckets[category]
+      );
+  });
+
+  return buckets;
+}
+
+
+function reportNotesUnique_(
+  notes
+) {
+  const seen = {};
+
+  return (
+    notes || []
+  ).filter(function (note) {
+    const key =
+      String(
+        note.text || ""
+      )
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim()
+        .toLowerCase();
+
+    if (
+      !key ||
+      seen[key]
+    ) {
+      return false;
+    }
+
+    seen[key] = true;
+
+    return true;
+  });
+}
+
+
+/* =========================================================
+ * LAYOUT MAP
+ *
+ * Categories point to section headers rather than rows.
+ * ========================================================= */
+
+function reportNotesHeaderByCategory_() {
+  return {
+    scenic:
+      "SCENIC:",
+
+    props:
+      "PROPS:",
+
+    costumes:
+      "COSTUMES:",
+
+    wigs:
+      "WIGS/HAIR:",
+
+    sound:
+      "SOUND:",
+
+    lighting:
+      "LIGHTING:",
+
+    script:
+      "SCRIPT:",
+
+    music:
+      "MUSIC:",
+
+    choreo:
+      "CHOREO:",
+
+    production:
+      "PRODUCTION MANAGEMENT:",
+
+    producing:
+      "PRODUCING:",
+
+    facilities:
+      "FACILITIES:",
+
+    /*
+     * Prep's uncategorized/general notes belong in
+     * the report's GENERAL NOTES section.
+     */
+    general:
+      "GENERAL NOTES:"
+  };
+}
+
+
+/* =========================================================
+ * WRITE
+ * ========================================================= */
+
+function reportNotesWrite_(
+  merged
+) {
+  merged =
+    merged || {};
+
+  const timer =
+    typeof TimerOS ===
+      "function"
+      ? TimerOS(
+          "Report Notes Write"
+        )
+      : null;
+
+  const report =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "Performance Report"
+      );
+
+  if (!report) {
+    throw new Error(
+      'Could not find "Performance Report" tab.'
+    );
+  }
+
+  const index =
+    reportOSGetLayoutIndex_(
+      report,
+      false
+    );
+
+  const headerByCategory =
+    reportNotesHeaderByCategory_();
+
+  const written = [];
+  const skipped = [];
+
+  Object.keys(
+    headerByCategory
+  ).forEach(function (category) {
+    const notes =
+      merged[category] ||
+      [];
+
+    if (!notes.length) {
+      return;
+    }
+
+    const headerText =
+      headerByCategory[
+        category
+      ];
+
+    const cell =
+      reportOSRequireContentCell_(
+        report,
+        index,
+        headerText,
+        1,
+        1
+      );
+
+    const newLines =
+      notes
+        .map(function (note) {
+          const text =
+            String(
+              note.text || ""
+            ).trim();
+
+          return text
+            ? "– " + text
+            : "";
+        })
+        .filter(Boolean);
+
+    if (!newLines.length) {
+      skipped.push({
+        category:
+          category,
+
+        reason:
+          "no-text"
+      });
+
+      return;
+    }
+
+    /*
+     * Preserve an explicitly retained real note and
+     * merge the new Prep notes beneath it.
+     *
+     * Neutral reset text is removed automatically.
+     */
+    const existingLines =
+      String(
+        cell.getDisplayValue() ||
+        ""
+      )
+        .split(/\n+/)
+        .map(function (line) {
+          return String(
+            line || ""
+          ).trim();
+        })
+        .filter(function (line) {
+          return (
+            line &&
+            !isDefaultReportNote_SAFE_(
+              line
+            ) &&
+            line !== "–" &&
+            line !== "-"
+          );
+        });
+
+    const finalLines =
+      reportNotesMergeUniqueTextLines_(
+        existingLines,
+        newLines
+      );
+
+    cell
+      .setValue(
+        finalLines.join("\n")
+      )
+      .setFontFamily(
+        "Arial"
+      )
+      .setFontSize(
+        11
+      );
+
+    written.push({
+      category:
+        category,
+
+      header:
+        headerText,
+
+      cell:
+        cell.getA1Notation(),
+
+      lines:
+        finalLines.length
+    });
+  });
+
+  Logger.log(
+    "ReportNotesOS wrote " +
+    written.length +
+    " section(s)."
+  );
+
+  if (timer) {
+    timer.finish({
+      success:
+        true,
+
+      written:
+        written,
+
+      skipped:
+        skipped
+    });
+  }
+
+  return {
+    written:
+      written,
+
+    skipped:
+      skipped
+  };
+}
+
+
+function reportNotesMergeUniqueTextLines_(
+  existingLines,
+  newLines
+) {
+  const output = [];
+  const seen = {};
+
+  (
+    existingLines || []
+  )
+    .concat(
+      newLines || []
+    )
+    .forEach(function (line) {
+      const cleaned =
+        String(
+          line || ""
+        ).trim();
+
+      const key =
+        cleaned
+          .replace(
+            /^[-–]\s*/,
+            ""
+          )
+          .replace(
+            /\s+/g,
+            " "
+          )
+          .toLowerCase();
+
+      if (
+        !key ||
+        seen[key]
+      ) {
+        return;
+      }
+
+      seen[key] = true;
+      output.push(cleaned);
+    });
+
+  return output;
+}

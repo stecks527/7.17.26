@@ -1,0 +1,46 @@
+/*************************************************
+ * 86 INSERT HELPERS
+ *************************************************/
+
+function setActorInInsert_(sheet, row, actorName) {
+  const cell = sheet.getRange(row, 2);
+  const rule = cell.getDataValidation();
+  const cleanActor = cleanKey_(actorName);
+
+  if (rule) {
+    const criteria = rule.getCriteriaType();
+    const args = rule.getCriteriaValues();
+
+    let validValues = [];
+
+    if (criteria === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
+      validValues = args[0];
+    } else if (criteria === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) {
+      validValues = args[0].getDisplayValues().flat();
+    }
+
+    for (let i = 0; i < validValues.length; i++) {
+      const option = String(validValues[i] || "");
+
+      if (cleanKey_(option).includes(cleanActor)) {
+        cell.setValue(option);
+        return;
+      }
+    }
+
+    Logger.log(
+      "No dropdown match found for '" +
+        actorName +
+        "' in cell " +
+        cell.getA1Notation()
+    );
+
+    return;
+  }
+
+  cell.setValue(actorName);
+}
+
+function getCharacterBeforeDots_(value) {
+  return clean_(value).split(".")[0].trim();
+}

@@ -1,0 +1,294 @@
+/*************************************************
+ * 95 DEVELOPEROS - TIMER OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Lightweight performance profiler for StageOS.
+ *
+ * Usage:
+ *
+ * const timer = TimerOS("PrepOS Open");
+ *
+ * timer.mark("ShowState");
+ * // work
+ *
+ * timer.mark("Intelligence");
+ * // work
+ *
+ * timer.finish();
+ *************************************************/
+
+
+function TimerOS(
+  operationName
+) {
+  const startedAt =
+    Date.now();
+
+  let lastMarkedAt =
+    startedAt;
+
+  const steps = [];
+
+  const name =
+    String(
+      operationName ||
+      "StageOS Operation"
+    ).trim();
+
+  return {
+    mark:
+      function (
+        label,
+        metadata
+      ) {
+        const now =
+          Date.now();
+
+        const step = {
+          label:
+            String(
+              label ||
+              "Step"
+            ),
+
+          durationMs:
+            now -
+            lastMarkedAt,
+
+          totalMs:
+            now -
+            startedAt,
+
+          metadata:
+            metadata ||
+            {}
+        };
+
+        steps.push(
+          step
+        );
+
+        lastMarkedAt =
+          now;
+
+        Logger.log(
+          "TIMEROS | " +
+          name +
+          " | " +
+          step.label +
+          " | " +
+          step.durationMs +
+          "ms" +
+          " | total " +
+          step.totalMs +
+          "ms"
+        );
+
+        return step;
+      },
+
+    finish:
+      function (
+        metadata
+      ) {
+        const finishedAt =
+          Date.now();
+
+        const result = {
+          system:
+            "TimerOS",
+
+          version:
+            "1.0.0",
+
+          operation:
+            name,
+
+          startedAt:
+            new Date(
+              startedAt
+            ).toISOString(),
+
+          finishedAt:
+            new Date(
+              finishedAt
+            ).toISOString(),
+
+          durationMs:
+            finishedAt -
+            startedAt,
+
+          steps:
+            steps.slice(),
+
+          metadata:
+            metadata ||
+            {}
+        };
+
+        Logger.log(
+          "===================================="
+        );
+
+        Logger.log(
+          "TIMEROS COMPLETE: " +
+          name
+        );
+
+        Logger.log(
+          JSON.stringify(
+            result,
+            null,
+            2
+          )
+        );
+
+        Logger.log(
+          "===================================="
+        );
+
+        if (
+          typeof EngineAnalyticsOS ===
+            "function"
+        ) {
+          try {
+            EngineAnalyticsOS()
+              .record(
+                "TimerOS",
+                name,
+                result.durationMs,
+                {
+                  steps:
+                    result.steps,
+
+                  metadata:
+                    result.metadata
+                }
+              );
+          } catch (err) {
+            Logger.log(
+              "TimerOS analytics skipped: " +
+              String(err)
+            );
+          }
+        }
+
+        return result;
+      },
+
+    elapsed:
+      function () {
+        return (
+          Date.now() -
+          startedAt
+        );
+      },
+
+    steps:
+      function () {
+        return steps.slice();
+      }
+  };
+}
+
+
+/* =========================================================
+ * SAFE WRAPPER
+ *
+ * Profiles an existing callback without changing
+ * the callback's return value.
+ * ========================================================= */
+
+function timerOSRun_(
+  operationName,
+  callback
+) {
+  const timer =
+    TimerOS(
+      operationName
+    );
+
+  try {
+    const result =
+      callback(
+        timer
+      );
+
+    timer.finish({
+      success:
+        true
+    });
+
+    return result;
+
+  } catch (err) {
+    timer.finish({
+      success:
+        false,
+
+      error:
+        String(
+          err &&
+          err.message
+            ? err.message
+            : err
+        )
+    });
+
+    throw err;
+  }
+}
+
+
+/* =========================================================
+ * READ-ONLY TEST
+ * ========================================================= */
+
+function testTimerOS() {
+  const timer =
+    TimerOS(
+      "TimerOS Test"
+    );
+
+  Utilities.sleep(
+    100
+  );
+
+  timer.mark(
+    "First Step"
+  );
+
+  Utilities.sleep(
+    150
+  );
+
+  timer.mark(
+    "Second Step",
+    {
+      sample:
+        true
+    }
+  );
+
+  const result =
+    timer.finish({
+      test:
+        true
+    });
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "TimerOS test complete.\n\n" +
+      "Steps: " +
+      result.steps.length +
+      "\n" +
+      "Duration: " +
+      result.durationMs +
+      " ms\n\n" +
+      "Open the execution log for details."
+    );
+
+  return result;
+}

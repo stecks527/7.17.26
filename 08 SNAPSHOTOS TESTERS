@@ -1,0 +1,56 @@
+/*************************************************
+ * 08 SNAPSHOTOS TESTERS
+ * Version: 0.1.0
+ *************************************************/
+
+function testSnapshotOSv2_CaptureResolvedCast() {
+  const result = SnapshotOSv2().captureResolvedCastSnapshot();
+
+  SpreadsheetApp.getUi().alert(
+    "SnapshotOS v2 capture complete.\n\n" +
+    "Performance: " + result.performanceLabel + "\n" +
+    "Resolved roles stored: " + result.rowsWritten
+  );
+}
+
+function testSnapshotReaders() {
+  const assignments = snapshotOSv2GetLatestAssignmentSnapshot();
+  const cast = snapshotOSv2GetLatestResolvedCastSnapshot();
+
+  Logger.log("Assignment Snapshot");
+  Logger.log(JSON.stringify(assignments, null, 2));
+
+  Logger.log("Resolved Cast Snapshot");
+  Logger.log(JSON.stringify(cast, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Snapshot Readers Online\n\n" +
+    "Assignments: " + assignments.length + "\n" +
+    "Resolved Cast: " + cast.length
+  );
+}
+
+function testPreviousSnapshotReaders() {
+  const assignments = snapshotOSv2GetPreviousAssignmentSnapshot();
+  const cast = snapshotOSv2GetPreviousResolvedCastSnapshot();
+
+  Logger.log("Previous Assignment Snapshot");
+  Logger.log(JSON.stringify(assignments, null, 2));
+
+  Logger.log("Previous Resolved Cast Snapshot");
+  Logger.log(JSON.stringify(cast, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Previous Snapshot Readers Online\n\n" +
+    "Previous Assignments: " + assignments.length + "\n" +
+    "Previous Resolved Cast: " + cast.length
+  );
+}
+
+function testSnapshotReaders_LOG_ONLY() {
+  const assignments = snapshotOSv2GetLatestAssignmentSnapshot();
+  const cast = snapshotOSv2GetLatestResolvedCastSnapshot();
+
+  Logger.log("Assignments: " + assignments.length);
+  Logger.log("Resolved Cast: " + cast.length);
+}

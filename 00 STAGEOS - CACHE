@@ -1,0 +1,2111 @@
+/*************************************************
+ * 00 STAGEOS - CACHE
+ * Version: 2.0.0
+ * Status: ACTIVE
+ *
+ * Central cache registry and coordinator.
+ *
+ * Responsibilities:
+ * - Declare all known StageOS caches in one place.
+ * - Report cache health.
+ * - Clear all caches safely.
+ * - Refresh core caches.
+ * - Clear related in-memory caches.
+ *
+ * Feature-specific cache implementations remain in:
+ * - WeeklyCacheOS
+ * - CastListCacheOS
+ * - AssignmentCacheOS
+ * - Guest Speller Cache
+ *************************************************/
+
+
+/* =========================================================
+ * CACHE REGISTRY
+ * ========================================================= */
+
+const STAGEOS_CACHE_REGISTRY = [
+  {
+    id: "settings",
+    label: "Settings",
+    propertyKeys: [
+      "SETTINGS_CACHE_OS_DATA"
+    ],
+
+    refresh: function () {
+      if (
+        typeof SettingsCacheOS ===
+        "function"
+      ) {
+        return SettingsCacheOS()
+          .refresh();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof SettingsCacheOS ===
+        "function"
+      ) {
+        return SettingsCacheOS()
+          .clear();
+      }
+
+      return false;
+    }
+  },
+
+  {
+    id: "weekly",
+    label: "Weekly",
+    propertyKeys: [
+      "WEEKLY_CACHE_OS_DAY_MAP",
+      "WEEKLY_CACHE_OS_PREP_DAY_MAP"
+    ],
+
+    refresh: null,
+
+    clear: function () {
+      if (
+        typeof WeeklyCacheOS ===
+        "function"
+      ) {
+        WeeklyCacheOS().clear();
+        return true;
+      }
+
+      return false;
+    }
+  },
+
+  {
+    id: "castList",
+    label: "Cast List",
+    propertyKeys: [
+      "CAST_LIST_CACHE_OS_DATA"
+    ],
+
+    refresh: function () {
+      if (
+        typeof CastListCacheOS ===
+        "function"
+      ) {
+        return CastListCacheOS()
+          .refresh();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof CastListCacheOS ===
+        "function"
+      ) {
+        CastListCacheOS().clear();
+        return true;
+      }
+
+      return false;
+    }
+  },
+
+  {
+    id: "assignments",
+    label: "Assignments",
+    propertyKeys: [
+      "ASSIGNMENT_CACHE_OS_DATA"
+    ],
+
+    refresh: function () {
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        return AssignmentCacheOS()
+          .refresh();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        AssignmentCacheOS().clear();
+        return true;
+      }
+
+      return false;
+    }
+  },
+
+  {
+    id: "guestSpeller",
+    label: "Guest Speller",
+    propertyKeys: [
+      "STAGEOS_GUEST_SPELLER_CACHE",
+      "GUEST_SPELLER_CACHE_OS_DATA"
+    ],
+
+    refresh: null,
+
+    clear: function () {
+      if (
+        typeof clearGuestSpellerCache_ ===
+        "function"
+      ) {
+        clearGuestSpellerCache_();
+      }
+
+      const props =
+        PropertiesService
+          .getDocumentProperties();
+
+      props.deleteProperty(
+        "STAGEOS_GUEST_SPELLER_CACHE"
+      );
+
+      props.deleteProperty(
+        "GUEST_SPELLER_CACHE_OS_DATA"
+      );
+
+      return true;
+    }
+  },
+
+  {
+    id: "showState",
+    label: "Show State",
+    propertyKeys: [
+      "SHOW_STATE_OS_FAST_CACHE"
+    ],
+
+    refresh: function () {
+      if (
+        typeof ShowStateOS ===
+        "function"
+      ) {
+        return ShowStateOS().refresh();
+      }
+
+      if (
+        typeof buildShowState ===
+        "function"
+      ) {
+        return buildShowState();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof ShowStateOS ===
+        "function"
+      ) {
+        ShowStateOS().clearCache();
+        return true;
+      }
+
+      if (
+        typeof clearShowStateOSCache ===
+        "function"
+      ) {
+        clearShowStateOSCache();
+        return true;
+      }
+
+      PropertiesService
+        .getDocumentProperties()
+        .deleteProperty(
+          "SHOW_STATE_OS_FAST_CACHE"
+        );
+
+      return true;
+    }
+  },
+
+  {
+    id: "prepState",
+    label: "Prep State",
+    propertyKeys: [
+      "PREPOS_V2_STATE_CACHE"
+    ],
+
+    refresh: function () {
+      if (
+        typeof PrepOS ===
+        "function"
+      ) {
+        return PrepOS().refresh();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof PrepOS ===
+        "function"
+      ) {
+        PrepOS().clearCache();
+        return true;
+      }
+
+      if (
+        typeof prepOSClearStateCache_ ===
+        "function"
+      ) {
+        prepOSClearStateCache_();
+        return true;
+      }
+
+      PropertiesService
+        .getDocumentProperties()
+        .deleteProperty(
+          "PREPOS_V2_STATE_CACHE"
+        );
+
+      return true;
+    }
+  },
+
+  {
+    id: "prepIntelligence",
+    label: "Prep Intelligence",
+    propertyKeys: [
+      "PREP_INTELLIGENCE_OS_CACHE"
+    ],
+
+    refresh: null,
+
+    clear: function () {
+      if (
+        typeof clearPrepIntelligenceCache_ ===
+        "function"
+      ) {
+        clearPrepIntelligenceCache_();
+        return true;
+      }
+
+      PropertiesService
+        .getDocumentProperties()
+        .deleteProperty(
+          "PREP_INTELLIGENCE_OS_CACHE"
+        );
+
+      return true;
+    }
+  },
+
+  {
+    id: "timelineRules",
+    label: "Timeline Rules",
+    propertyKeys: [
+      "TIMELINE_OS_PRODUCTION_RULES",
+      "TIMELINE_OS_WIG_HAIR_RULES"
+    ],
+
+    refresh: null,
+
+    clear: function () {
+      const props =
+        PropertiesService
+          .getDocumentProperties();
+
+      props.deleteProperty(
+        "TIMELINE_OS_PRODUCTION_RULES"
+      );
+
+      props.deleteProperty(
+        "TIMELINE_OS_WIG_HAIR_RULES"
+      );
+
+      return true;
+    }
+  },
+
+  {
+    id: "timelineEvents",
+    label: "Timeline Events",
+    propertyKeys: [
+      "TIMELINE_OS_EVENTS"
+    ],
+
+    refresh: function () {
+      if (
+        typeof TimelineOS ===
+        "function"
+      ) {
+        return TimelineOS().refresh();
+      }
+
+      if (
+        typeof buildTimelineOS ===
+        "function"
+      ) {
+        return buildTimelineOS();
+      }
+
+      return null;
+    },
+
+    clear: function () {
+      if (
+        typeof TimelineOS ===
+        "function"
+      ) {
+        TimelineOS().clearCache();
+        return true;
+      }
+
+      PropertiesService
+        .getDocumentProperties()
+        .deleteProperty(
+          "TIMELINE_OS_EVENTS"
+        );
+
+      return true;
+    }
+  }
+];
+
+/* =========================================================
+ * PUBLIC API
+ * ========================================================= */
+
+function StageCacheOS() {
+  return {
+    registry: function () {
+      return STAGEOS_CACHE_REGISTRY
+        .slice();
+    },
+
+    status: function () {
+      return stageCacheOSStatus_();
+    },
+
+    statusFor: function (cacheId) {
+      return stageCacheOSStatusFor_(
+        cacheId
+      );
+    },
+
+    clear: function (cacheId) {
+      return stageCacheOSClear_(
+        cacheId
+      );
+    },
+
+    clearAll: function () {
+      return stageCacheOSClearAll_();
+    },
+
+    refresh: function (cacheId) {
+      return stageCacheOSRefresh_(
+        cacheId
+      );
+    },
+
+        refreshCore: function () {
+      return stageCacheOSRefreshCore_();
+    },
+
+    platformStatus: function () {
+      return stageCacheOSPlatformStatus_();
+    },
+
+    test: function () {
+      return testStageCacheOSPlatformAPI();
+    }
+  };
+}
+
+
+/* =========================================================
+ * REGISTRY ACCESS
+ * ========================================================= */
+
+function stageCacheOSGetRegistryItem_(
+  cacheId
+) {
+  const target =
+    String(cacheId || "")
+      .trim()
+      .toLowerCase();
+
+  return (
+    STAGEOS_CACHE_REGISTRY.find(
+      function (item) {
+        return (
+          String(item.id || "")
+            .toLowerCase() ===
+          target
+        );
+      }
+    ) || null
+  );
+}
+
+
+/* =========================================================
+ * STATUS
+ * ========================================================= */
+
+function stageCacheOSStatus_() {
+  const output = [];
+
+  STAGEOS_CACHE_REGISTRY.forEach(
+    function (item) {
+      const itemStatus =
+        stageCacheOSBuildItemStatus_(
+          item
+        );
+
+      itemStatus.entries.forEach(
+        function (entry) {
+          output.push(entry);
+        }
+      );
+    }
+  );
+
+  return output;
+}
+
+
+function stageCacheOSStatusFor_(
+  cacheId
+) {
+  const item =
+    stageCacheOSGetRegistryItem_(
+      cacheId
+    );
+
+  if (!item) {
+    return null;
+  }
+
+  return stageCacheOSBuildItemStatus_(
+    item
+  );
+}
+
+
+function stageCacheOSBuildItemStatus_(
+  item
+) {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  const allProperties =
+    props.getProperties();
+
+  const keys =
+    stageCacheOSResolvePropertyKeys_(
+      item,
+      allProperties
+    );
+
+  const entries =
+    keys.map(function (key) {
+      const raw =
+        allProperties[key] || "";
+
+      const metadata =
+        stageCacheOSReadMetadata_(
+          raw
+        );
+
+      return {
+        id:
+          item.id,
+
+        label:
+          item.label,
+
+        key:
+          key,
+
+        exists:
+          Boolean(raw),
+
+        cachedAt:
+          metadata.cachedAt || "",
+
+        entryCount:
+          metadata.entryCount,
+
+        size:
+          raw.length
+      };
+    });
+
+  return {
+    id:
+      item.id,
+
+    label:
+      item.label,
+
+    available:
+      stageCacheOSIsServiceAvailable_(
+        item
+      ),
+
+    entries:
+      entries
+  };
+}
+
+
+function stageCacheOSResolvePropertyKeys_(
+  item,
+  allProperties
+) {
+  const output =
+    (item.propertyKeys || [])
+      .slice();
+
+  (
+    item.propertyPrefixes ||
+    []
+  ).forEach(
+    function (prefix) {
+      Object.keys(
+        allProperties
+      )
+        .filter(
+          function (key) {
+            return (
+              key.indexOf(
+                prefix
+              ) === 0
+            );
+          }
+        )
+        .forEach(
+          function (key) {
+            if (
+              output.indexOf(
+                key
+              ) === -1
+            ) {
+              output.push(
+                key
+              );
+            }
+          }
+        );
+    }
+  );
+
+  return output;
+}
+
+
+function stageCacheOSReadMetadata_(
+  raw
+) {
+  if (!raw) {
+    return {
+      cachedAt:
+        "",
+
+      entryCount:
+        0
+    };
+  }
+
+  const parsed =
+    stageOSParseJson_(
+      raw,
+      {}
+    ) || {};
+
+  const directTimestamp =
+    parsed.cachedAt ||
+    parsed.savedAt ||
+    parsed.createdAt ||
+    "";
+
+  if (directTimestamp) {
+    return {
+      cachedAt:
+        directTimestamp,
+
+      entryCount:
+        stageCacheOSCountEntries_(
+          parsed
+        )
+    };
+  }
+
+  /*
+   * Date-keyed maps such as WeeklyCacheOS store
+   * timestamps inside each date entry.
+   */
+  const keys =
+    Object.keys(
+      parsed
+    );
+
+  let latestCachedAt =
+    "";
+
+  keys.forEach(
+    function (key) {
+      const entry =
+        parsed[key];
+
+      const candidate =
+        entry &&
+        typeof entry ===
+          "object"
+          ? (
+              entry.cachedAt ||
+              entry.savedAt ||
+              ""
+            )
+          : "";
+
+      if (
+        candidate &&
+        (
+          !latestCachedAt ||
+          String(candidate) >
+            String(latestCachedAt)
+        )
+      ) {
+        latestCachedAt =
+          candidate;
+      }
+    }
+  );
+
+  return {
+    cachedAt:
+      latestCachedAt,
+
+    entryCount:
+      keys.length
+  };
+}
+
+function stageCacheOSCountEntries_(
+  parsed
+) {
+  if (
+    !parsed ||
+    typeof parsed !== "object"
+  ) {
+    return 0;
+  }
+
+  if (
+    Array.isArray(parsed)
+  ) {
+    return parsed.length;
+  }
+
+  const preferredCollections = [
+    parsed.values,
+    parsed.stageKeys,
+    parsed.actors,
+    parsed.roles,
+    parsed.people,
+    parsed.peopleByTrack
+  ];
+
+  for (
+    let i = 0;
+    i < preferredCollections.length;
+    i++
+  ) {
+    const collection =
+      preferredCollections[i];
+
+    if (
+      Array.isArray(collection)
+    ) {
+      return collection.length;
+    }
+
+    if (
+      collection &&
+      typeof collection === "object"
+    ) {
+      return Object.keys(
+        collection
+      ).length;
+    }
+  }
+
+  return Object.keys(parsed).length;
+}
+
+function stageCacheOSIsServiceAvailable_(
+  item
+) {
+  if (!item) return false;
+
+  if (
+    typeof item.refresh ===
+      "function" ||
+    typeof item.clear ===
+      "function"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+
+/* =========================================================
+ * CLEAR
+ * ========================================================= */
+
+function stageCacheOSClear_(
+  cacheId
+) {
+  const item =
+    stageCacheOSGetRegistryItem_(
+      cacheId
+    );
+
+  if (!item) {
+    throw new Error(
+      'Unknown StageOS cache "' +
+      cacheId +
+      '".'
+    );
+  }
+
+  const result = {
+    id: item.id,
+    label: item.label,
+    cleared: false,
+    keys: []
+  };
+
+  if (
+    typeof item.clear ===
+    "function"
+  ) {
+    item.clear();
+    result.cleared = true;
+  } else {
+    const props =
+      PropertiesService
+        .getDocumentProperties();
+
+    (item.propertyKeys || [])
+      .forEach(function (key) {
+        props.deleteProperty(key);
+      });
+
+    result.cleared = true;
+  }
+
+  result.keys =
+    (item.propertyKeys || [])
+      .slice();
+
+  stageCacheOSClearMemoryCaches_(
+    item.id
+  );
+
+  return result;
+}
+
+function stageCacheOSClearAll_() {
+  const results = [];
+
+  STAGEOS_CACHE_REGISTRY.forEach(
+    function (item) {
+      try {
+        results.push(
+          stageCacheOSClear_(
+            item.id
+          )
+        );
+      } catch (err) {
+        results.push({
+          id: item.id,
+          label: item.label,
+          cleared: false,
+          error:
+            String(
+              err &&
+              err.message
+                ? err.message
+                : err
+            )
+        });
+      }
+    }
+  );
+
+  stageCacheOSClearAllMemoryCaches_();
+
+  return {
+    ok:
+      results.every(
+        function (item) {
+          return item.cleared;
+        }
+      ),
+
+    results: results
+  };
+}
+
+function stageCacheOSClearMemoryCaches_(
+  cacheId
+) {
+  switch (cacheId) {
+    case "settings":
+      if (
+        typeof STAGEOS_SETTINGS_MEMORY_CACHE_ !==
+        "undefined"
+      ) {
+        STAGEOS_SETTINGS_MEMORY_CACHE_ =
+          null;
+      }
+
+      break;
+
+    case "weekly":
+      /*
+       * Weekly cache currently uses DocumentProperties
+       * only. No module memory cache to clear.
+       */
+      break;
+
+    case "castList":
+      break;
+
+    case "assignments":
+      break;
+
+    case "guestSpeller":
+      break;
+  }
+}
+
+function stageCacheOSClearAllMemoryCaches_() {
+  if (
+    typeof STAGEOS_SETTINGS_MEMORY_CACHE_ !==
+    "undefined"
+  ) {
+    STAGEOS_SETTINGS_MEMORY_CACHE_ =
+      null;
+  }
+
+  if (
+    typeof HOME_CURRENT_CONTEXT_ !==
+    "undefined"
+  ) {
+    HOME_CURRENT_CONTEXT_ =
+      null;
+  }
+
+  if (
+    typeof HOME_TASK_CONTEXT_CACHE_ !==
+    "undefined"
+  ) {
+    HOME_TASK_CONTEXT_CACHE_ =
+      null;
+  }
+
+  if (
+    typeof HOME_WORKFLOW_STATUS_CACHE_ !==
+    "undefined"
+  ) {
+    HOME_WORKFLOW_STATUS_CACHE_ =
+      null;
+  }
+
+  if (
+    typeof clearHomeContext_ ===
+    "function"
+  ) {
+    clearHomeContext_();
+  }
+}
+
+
+/* =========================================================
+ * REFRESH
+ * ========================================================= */
+
+function stageCacheOSRefresh_(
+  cacheId
+) {
+  const item =
+    stageCacheOSGetRegistryItem_(
+      cacheId
+    );
+
+  if (!item) {
+    throw new Error(
+      'Unknown StageOS cache "' +
+      cacheId +
+      '".'
+    );
+  }
+
+  if (
+    typeof item.refresh !==
+    "function"
+  ) {
+    return {
+      id: item.id,
+      label: item.label,
+      refreshed: false,
+      reason:
+        "This cache rebuilds on demand."
+    };
+  }
+
+  stageCacheOSClearMemoryCaches_(
+    item.id
+  );
+
+  const data =
+    item.refresh();
+
+  return {
+    id: item.id,
+    label: item.label,
+    refreshed: true,
+    data: data
+  };
+}
+
+function stageCacheOSRefreshCore_() {
+  const coreIds = [
+    "settings",
+    "castList",
+    "assignments"
+  ];
+
+  const results =
+    coreIds.map(function (id) {
+      try {
+        return stageCacheOSRefresh_(id);
+      } catch (err) {
+        return {
+          id: id,
+          refreshed: false,
+          error:
+            String(
+              err &&
+              err.message
+                ? err.message
+                : err
+            )
+        };
+      }
+    });
+
+  stageCacheOSClearAllMemoryCaches_();
+
+  return results;
+}
+
+
+/* =========================================================
+ * UI
+ * ========================================================= */
+
+function showStageCacheOSStatus() {
+  const status =
+    StageCacheOS().status();
+
+  const lines =
+    status.map(function (item) {
+      return [
+        item.exists
+          ? "✅"
+          : "⚪️",
+
+        item.label +
+          " — " +
+          item.key,
+
+        item.cachedAt
+          ? "Cached: " +
+            item.cachedAt
+          : "No cache timestamp",
+
+        "Entries: " +
+          item.entryCount,
+
+        "Size: " +
+          item.size
+      ].join("\n");
+    });
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageCacheOS Status\n\n" +
+      lines.join("\n\n")
+    );
+
+  return status;
+}
+
+function clearStageCacheOS() {
+  const result =
+    StageCacheOS().clearAll();
+
+  const cleared =
+    result.results.filter(
+      function (item) {
+        return item.cleared;
+      }
+    ).length;
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageCacheOS cleared.\n\n" +
+      "Caches cleared: " +
+      cleared +
+      "\n\n" +
+      "Caches will rebuild as needed."
+    );
+
+  return result;
+}
+
+function refreshStageCacheOSCore() {
+  const results =
+    StageCacheOS().refreshCore();
+
+  const refreshed =
+    results.filter(
+      function (item) {
+        return item.refreshed;
+      }
+    );
+
+  const failed =
+    results.filter(
+      function (item) {
+        return !item.refreshed;
+      }
+    );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageCacheOS core refreshed.\n\n" +
+      "Refreshed:\n" +
+      (
+        refreshed.length
+          ? refreshed
+              .map(function (item) {
+                return "✅ " +
+                  item.label;
+              })
+              .join("\n")
+          : "None"
+      ) +
+      (
+        failed.length
+          ? "\n\nNot refreshed:\n" +
+            failed
+              .map(function (item) {
+                return "⚪️ " +
+                  (
+                    item.label ||
+                    item.id
+                  ) +
+                  (
+                    item.error
+                      ? " — " +
+                        item.error
+                      : ""
+                  );
+              })
+              .join("\n")
+          : ""
+      )
+    );
+
+  return results;
+}
+
+
+/* =========================================================
+ * TESTS
+ * ========================================================= */
+
+function testStageCacheOSRegistry() {
+  const registry =
+    StageCacheOS().registry();
+
+  const status =
+    StageCacheOS().status();
+
+  const results = {
+    registeredCaches:
+      registry.map(
+        function (item) {
+          return item.id;
+        }
+      ),
+
+    statusEntries:
+      status.length,
+
+    existingEntries:
+      status.filter(
+        function (item) {
+          return item.exists;
+        }
+      ).length,
+
+    settings:
+      StageCacheOS()
+        .statusFor("settings"),
+
+    weekly:
+      StageCacheOS()
+        .statusFor("weekly")
+  };
+
+  Logger.log(
+    "STAGECACHEOS REGISTRY TEST"
+  );
+
+Logger.log(
+  JSON.stringify(
+    {
+      success:
+        result.success,
+
+      totalMs:
+        result.totalMs,
+
+      successful:
+        result.successful,
+
+      failed:
+        result.failed,
+
+      steps:
+        result.steps
+    },
+    null,
+    2
+  )
+);
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageCacheOS registry test passed.\n\n" +
+      "Registered caches: " +
+      results.registeredCaches.length +
+      "\n" +
+      "Property entries: " +
+      results.statusEntries +
+      "\n" +
+      "Existing entries: " +
+      results.existingEntries
+    );
+
+  return results;
+}
+
+/*************************************************
+ * PLATFORM STATUS
+ *************************************************/
+
+function stageCacheOSPlatformStatus_() {
+  const registry =
+    StageCacheOS().registry();
+
+  const status =
+    StageCacheOS().status();
+
+  return {
+    system:
+      "StageCacheOS",
+
+    version:
+      "3.0.0",
+
+    healthy:
+      registry.length === 10,
+
+    registeredCaches:
+      registry.length,
+
+    propertyEntries:
+      status.length,
+
+    existingEntries:
+      status.filter(function (item) {
+        return item.exists;
+      }).length,
+
+    cacheIds:
+      registry.map(function (item) {
+        return item.id;
+      })
+  };
+}
+
+
+/*************************************************
+ * PLATFORM API TEST
+ *************************************************/
+
+function testStageCacheOSPlatformAPI() {
+  const os =
+    StageCacheOS();
+
+  const requiredMethods = [
+    "registry",
+    "status",
+    "statusFor",
+    "clear",
+    "clearAll",
+    "refresh",
+    "refreshCore",
+    "platformStatus",
+    "test"
+  ];
+
+  const missingMethods =
+    requiredMethods.filter(
+      function (methodName) {
+        return (
+          typeof os[methodName] !==
+          "function"
+        );
+      }
+    );
+
+  const status =
+    os.platformStatus();
+
+  const requiredCacheIds = [
+    "settings",
+    "weekly",
+    "castList",
+    "assignments",
+    "guestSpeller",
+    "showState",
+    "prepState",
+    "prepIntelligence",
+    "timelineRules",
+    "timelineEvents"
+  ];
+
+  const missingCaches =
+    requiredCacheIds.filter(
+      function (cacheId) {
+        return (
+          status.cacheIds.indexOf(
+            cacheId
+          ) === -1
+        );
+      }
+    );
+
+  const result = {
+    healthy:
+      status.healthy &&
+      missingMethods.length === 0 &&
+      missingCaches.length === 0,
+
+    methodsChecked:
+      requiredMethods.length,
+
+    missingMethods:
+      missingMethods,
+
+    registeredCaches:
+      status.registeredCaches,
+
+    propertyEntries:
+      status.propertyEntries,
+
+    existingEntries:
+      status.existingEntries,
+
+    missingCaches:
+      missingCaches
+  };
+
+  Logger.log(
+    "STAGECACHEOS PLATFORM API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageCacheOS platform API test " +
+      (
+        result.healthy
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Methods checked: " +
+      result.methodsChecked +
+      "\n" +
+      "Missing methods: " +
+      result.missingMethods.length +
+      "\n" +
+      "Registered caches: " +
+      result.registeredCaches +
+      "\n" +
+      "Property entries: " +
+      result.propertyEntries +
+      "\n" +
+      "Existing entries: " +
+      result.existingEntries +
+      "\n" +
+      "Missing caches: " +
+      result.missingCaches.length
+    );
+
+  return result;
+}
+
+/*************************************************
+ * STAGEOS PLATFORM CACHE REFRESH
+ * Version: 1.0.0
+ *
+ * Rebuilds the active StageOS dependency chain
+ * in a controlled order and reports timing.
+ *************************************************/
+
+function forceRebuildStageOSPlatformCaches() {
+  const startedAt =
+    Date.now();
+
+  const results = [];
+
+  /*
+   * Order matters.
+   *
+   * 1. Source caches
+   * 2. Assignment model
+   * 3. Show State
+   * 4. Timeline
+   * 5. Decision
+   * 6. Home context
+   */
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Settings",
+    function () {
+      if (
+        typeof SettingsCacheOS !==
+        "function"
+      ) {
+        throw new Error(
+          "SettingsCacheOS is unavailable."
+        );
+      }
+
+      return SettingsCacheOS()
+        .refresh();
+    }
+  );
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Cast List",
+    function () {
+      if (
+        typeof CastListCacheOS !==
+        "function"
+      ) {
+        throw new Error(
+          "CastListCacheOS is unavailable."
+        );
+      }
+
+      return CastListCacheOS()
+        .refresh();
+    }
+  );
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Assignments",
+    function () {
+      if (
+        typeof AssignmentOS ===
+        "function"
+      ) {
+        return AssignmentOS()
+          .refresh();
+      }
+
+      if (
+        typeof AssignmentCacheOS ===
+        "function"
+      ) {
+        return AssignmentCacheOS()
+          .refresh();
+      }
+
+      throw new Error(
+        "AssignmentOS is unavailable."
+      );
+    }
+  );
+
+  /*
+   * Clear dependent caches before rebuilding
+   * the shared state.
+   */
+  if (
+    typeof clearPrepIntelligenceCache_ ===
+    "function"
+  ) {
+    clearPrepIntelligenceCache_();
+  }
+
+  if (
+    typeof clearExpandedCalendarConductorCache_ ===
+    "function"
+  ) {
+    clearExpandedCalendarConductorCache_();
+  }
+
+  if (
+    typeof TimelineOS ===
+    "function"
+  ) {
+    TimelineOS().clearAllCaches();
+  }
+
+  if (
+    typeof PrepOS ===
+    "function"
+  ) {
+    PrepOS().clearCache();
+  }
+
+  if (
+    typeof HomeOS ===
+    "function"
+  ) {
+    HomeOS().clearCache();
+  }
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Show State",
+    function () {
+      if (
+        typeof ShowStateOS !==
+        "function"
+      ) {
+        throw new Error(
+          "ShowStateOS is unavailable."
+        );
+      }
+
+      return ShowStateOS()
+        .refresh();
+    }
+  );
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Timeline",
+    function () {
+      if (
+        typeof TimelineOS !==
+        "function"
+      ) {
+        throw new Error(
+          "TimelineOS is unavailable."
+        );
+      }
+
+      const showState =
+        ShowStateOS()
+          .current();
+
+      return TimelineOS()
+        .refresh(
+          showState
+        );
+    }
+  );
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Decision",
+    function () {
+      if (
+        typeof DecisionOS !==
+        "function"
+      ) {
+        throw new Error(
+          "DecisionOS is unavailable."
+        );
+      }
+
+      return DecisionOS()
+        .refresh();
+    }
+  );
+
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Home Context",
+    function () {
+      if (
+        typeof HomeOS !==
+        "function"
+      ) {
+        throw new Error(
+          "HomeOS is unavailable."
+        );
+      }
+
+      return HomeOS()
+        .current();
+    }
+  );
+
+  const totalMs =
+    Date.now() -
+    startedAt;
+
+  const failed =
+    results.filter(
+      function (item) {
+        return !item.success;
+      }
+    );
+
+  const successful =
+    results.filter(
+      function (item) {
+        return item.success;
+      }
+    );
+
+  const result = {
+    success:
+      failed.length === 0,
+
+    totalMs:
+      totalMs,
+
+    successful:
+      successful.length,
+
+    failed:
+      failed.length,
+
+    steps:
+      results
+  };
+
+  Logger.log(
+    "STAGEOS PLATFORM CACHE REFRESH"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageOS Platform Refresh " +
+      (
+        result.success
+          ? "Complete"
+          : "Completed With Issues"
+      ) +
+      "\n\n" +
+      results
+        .map(
+          function (item) {
+            return (
+              (
+                item.success
+                  ? "✅ "
+                  : "❌ "
+              ) +
+              item.label +
+              " — " +
+              item.durationMs +
+              " ms" +
+              (
+                item.error
+                  ? "\n   " +
+                    item.error
+                  : ""
+              )
+            );
+          }
+        )
+        .join("\n") +
+      "\n\n" +
+      "Successful: " +
+      result.successful +
+      "\n" +
+      "Failed: " +
+      result.failed +
+      "\n" +
+      "Total: " +
+      result.totalMs +
+      " ms"
+    );
+
+  return result;
+}
+
+/*************************************************
+ * FAST PLATFORM REFRESH
+ * Version: 1.0.1
+ *
+ * Normal-use refresh.
+ *
+ * Preserves expensive source caches:
+ * - Settings
+ * - Cast List
+ * - Assignments
+ * - Weekly
+ * - Conductors
+ * - Prep Intelligence
+ * - Timeline Rules
+ *
+ * Rebuilds only derived state:
+ * - Show State
+ * - Timeline Events
+ * - Prep State
+ * - Home Context
+ *************************************************/
+
+function refreshStageOSPlatformCaches() {
+  const startedAt =
+    Date.now();
+
+  const results = [];
+
+  /*
+   * Clear only derived caches.
+   */
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Clear Derived State",
+    function () {
+      if (
+        typeof clearShowStateOSCache ===
+        "function"
+      ) {
+        clearShowStateOSCache();
+      }
+
+      if (
+        typeof timelineOSClearEventCache_ ===
+        "function"
+      ) {
+        timelineOSClearEventCache_();
+      } else if (
+        typeof TimelineOS ===
+        "function"
+      ) {
+        TimelineOS().clearCache();
+      }
+
+      if (
+        typeof prepOSClearStateCache_ ===
+        "function"
+      ) {
+        prepOSClearStateCache_();
+      }
+
+      if (
+        typeof HomeOS ===
+        "function"
+      ) {
+        HomeOS().clearCache();
+      }
+
+      return {
+        cleared:
+          true
+      };
+    }
+  );
+
+  let showState = null;
+
+  /*
+   * Show State
+   */
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Show State",
+    function () {
+      if (
+        typeof ShowStateOS !==
+        "function"
+      ) {
+        throw new Error(
+          "ShowStateOS is unavailable."
+        );
+      }
+
+      showState =
+        ShowStateOS().current();
+
+      return {
+        date:
+          showState.date || "",
+
+        performances:
+          Array.isArray(
+            showState.performances
+          )
+            ? showState.performances.length
+            : 0,
+
+        plannedOuts:
+          showState.intelligence &&
+          Array.isArray(
+            showState.intelligence
+              .plannedOuts
+          )
+            ? showState.intelligence
+                .plannedOuts.length
+            : 0
+      };
+    }
+  );
+
+  /*
+   * Timeline
+   */
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Timeline",
+    function () {
+      if (
+        typeof TimelineOS !==
+        "function"
+      ) {
+        throw new Error(
+          "TimelineOS is unavailable."
+        );
+      }
+
+      const timeline =
+        TimelineOS().current(
+          showState
+        );
+
+      return {
+        events:
+          Array.isArray(
+            timeline.events
+          )
+            ? timeline.events.length
+            : 0,
+
+        displayEvents:
+          Array.isArray(
+            timeline.displayEvents
+          )
+            ? timeline.displayEvents.length
+            : 0
+      };
+    }
+  );
+
+  /*
+   * Prep State
+   */
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Prep State",
+    function () {
+      if (
+        typeof PrepOS !==
+        "function"
+      ) {
+        throw new Error(
+          "PrepOS is unavailable."
+        );
+      }
+
+      const prep =
+        PrepOS().current();
+
+      return {
+        performances:
+          prep &&
+          Array.isArray(
+            prep.performances
+          )
+            ? prep.performances.length
+            : 0,
+
+        plannedOuts:
+          prep &&
+          prep.intelligence &&
+          Array.isArray(
+            prep.intelligence
+              .plannedOuts
+          )
+            ? prep.intelligence
+                .plannedOuts.length
+            : 0
+      };
+    }
+  );
+
+  /*
+   * Home Context
+   */
+  stageOSRunPlatformRefreshStep_(
+    results,
+    "Home Context",
+    function () {
+      if (
+        typeof HomeOS !==
+        "function"
+      ) {
+        throw new Error(
+          "HomeOS is unavailable."
+        );
+      }
+
+      const home =
+        HomeOS().current();
+
+      return {
+        date:
+          home.date ||
+          home.prettyDate ||
+          "",
+
+        timelineEvents:
+          home.timeline &&
+          Array.isArray(
+            home.timeline
+              .displayEvents
+          )
+            ? home.timeline
+                .displayEvents.length
+            : 0
+      };
+    }
+  );
+
+  const totalMs =
+    Date.now() -
+    startedAt;
+
+  const failed =
+    results.filter(
+      function (item) {
+        return !item.success;
+      }
+    );
+
+  const result = {
+    success:
+      failed.length === 0,
+
+    totalMs:
+      totalMs,
+
+    successful:
+      results.length -
+      failed.length,
+
+    failed:
+      failed.length,
+
+    steps:
+      results
+  };
+
+  Logger.log(
+    "STAGEOS FAST PLATFORM REFRESH"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "StageOS Platform Refresh " +
+      (
+        result.success
+          ? "Complete"
+          : "Completed With Issues"
+      ) +
+      "\n\n" +
+      results
+        .map(
+          function (item) {
+            return (
+              (
+                item.success
+                  ? "✅ "
+                  : "❌ "
+              ) +
+              item.label +
+              " — " +
+              item.durationMs +
+              " ms" +
+              (
+                item.error
+                  ? "\n   " +
+                    item.error
+                  : ""
+              )
+            );
+          }
+        )
+        .join("\n") +
+      "\n\n" +
+      "Successful: " +
+      result.successful +
+      "\n" +
+      "Failed: " +
+      result.failed +
+      "\n" +
+      "Total: " +
+      result.totalMs +
+      " ms"
+    );
+
+  return result;
+}
+
+
+/*************************************************
+ * PLATFORM REFRESH STEP
+ *************************************************/
+
+function stageOSRunPlatformRefreshStep_(
+  results,
+  label,
+  callback
+) {
+  const startedAt =
+    Date.now();
+
+  try {
+    callback();
+
+    results.push({
+      label:
+        label,
+
+      success:
+        true,
+
+      durationMs:
+        Date.now() -
+        startedAt
+    });
+
+  } catch (err) {
+    results.push({
+      label:
+        label,
+
+      success:
+        false,
+
+      durationMs:
+        Date.now() -
+        startedAt,
+
+      error:
+        String(
+          err &&
+          err.message
+            ? err.message
+            : err
+        )
+    });
+  }
+}
+/*************************************************
+ * PLATFORM REFRESH TEST
+ *************************************************/
+
+function testStageOSPlatformCacheRefresh() {
+  const result =
+    forceRebuildStageOSPlatformCaches();
+
+  if (!result.success) {
+    throw new Error(
+      "StageOS platform cache refresh had " +
+      result.failed +
+      " failed step(s)."
+    );
+  }
+
+  return {
+    success:
+      result.success,
+
+    totalMs:
+      result.totalMs,
+
+    successful:
+      result.successful,
+
+    failed:
+      result.failed,
+
+    steps:
+      result.steps
+  };
+}
+
+function forceRebuildStageOSPlatformCachesWithAlert() {
+  return forceRebuildStageOSPlatformCaches();
+}

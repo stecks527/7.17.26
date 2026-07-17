@@ -1,0 +1,217 @@
+/*************************************************
+ * 82 EXPORT MONTH CALENDAR
+ *************************************************/
+
+function exportCurrentMonthCalendarPdf() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSheet = ss.getSheetByName("Production Cal w/Conflicts");
+
+  if (!sourceSheet) {
+    throw new Error('Sheet "Production Cal w/Conflicts" not found.');
+  }
+
+  const tempName = "TEMP Calendar PDF Export";
+  const oldTemp = ss.getSheetByName(tempName);
+  if (oldTemp) ss.deleteSheet(oldTemp);
+
+  const tempSheet = sourceSheet.copyTo(ss).setName(tempName);
+  ss.setActiveSheet(tempSheet);
+
+  const monthHeaders = [
+    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"
+  ];
+
+  const monthText = Utilities
+    .formatDate(new Date(), Session.getScriptTimeZone(), "MMMM yyyy")
+    .toUpperCase();
+
+  let gValues = tempSheet
+    .getRange(1, 7, tempSheet.getLastRow(), 1)
+    .getDisplayValues();
+
+  let monthRow = -1;
+
+  for (let i = 0; i < gValues.length; i++) {
+    const cellText = cleanCalendarText_(gValues[i][0]);
+
+    if (cellText.includes(monthText)) {
+      monthRow = i + 1;
+      break;
+    }
+  }
+
+  if (monthRow === -1) {
+    ss.deleteSheet(tempSheet);
+    throw new Error(`Could not find "${monthText}" in column G.`);
+  }
+
+  // Delete everything above the current month
+  if (monthRow > 1) {
+    tempSheet.deleteRows(1, monthRow - 1);
+  }
+
+  // Refresh column G values after deleting rows above
+  gValues = tempSheet
+    .getRange(1, 7, tempSheet.getLastRow(), 1)
+    .getDisplayValues();
+
+  let nextMonthRow = -1;
+
+  // Start at row 2 so we don't match the current month header again
+  for (let i = 1; i < gValues.length; i++) {
+    const cellText = cleanCalendarText_(gValues[i][0]);
+
+    const isMonthHeader = monthHeaders.some(month =>
+      cellText.includes(month)
+    );
+
+    if (isMonthHeader) {
+      nextMonthRow = i + 1;
+      break;
+    }
+  }
+
+  // Delete everything from the next month onward
+  if (nextMonthRow > 0) {
+    const rowsToDelete = tempSheet.getLastRow() - nextMonthRow + 1;
+
+    if (rowsToDelete > 0) {
+      tempSheet.deleteRows(nextMonthRow, rowsToDelete);
+    }
+  }
+
+  cleanCalendarTempSheetForPdf_(tempSheet);
+
+  const fileName = `SPELLING BEE - ${monthText} Production Calendar`;
+
+  const pdfBlob = exportCalendarSheetAsPdf_(ss, tempSheet, fileName);
+  const pdfFile = DriveApp.createFile(pdfBlob);
+
+  ss.deleteSheet(tempSheet);
+
+  showDriveDownloadDialog_(pdfFile.getId(), fileName);
+}
+
+
+/****************************************************
+ * LIGHT CLEAN TEMP CALENDAR FOR PDF
+ ****************************************************/
+
+function cleanCalendarTempSheetForPdf_(sh) {
+  sh.setFrozenRows(0);
+  sh.setFrozenColumns(0);
+
+  // Keep only columns A:G
+  const maxCols = sh.getMaxColumns();
+  if (maxCols > 7) {
+    sh.deleteColumns(8, maxCols - 7);
+  }
+
+  // Remove only completely blank rows from the bottom
+  const lastRow = sh.getLastRow();
+  const values = sh.getRange(1, 1, lastRow, 7).getDisplayValues();
+
+  let lastRealRow = lastRow;
+
+  for (let r = values.length - 1; r >= 0; r--) {
+    if (values[r].some(cell => String(cell).trim() !== "")) {
+      lastRealRow = r + 1;
+      break;
+    }
+  }
+
+  if (sh.getMaxRows() > lastRealRow) {
+    sh.deleteRows(lastRealRow + 1, sh.getMaxRows() - lastRealRow);
+  }
+
+  // Restore the medium outside border
+  sh.getRange(1, 1, lastRealRow, 7).setBorder(
+    true,   // top
+    true,   // left
+    true,   // bottom
+    true,   // right
+    false,  // vertical
+    false,  // horizontal
+    "black",
+    SpreadsheetApp.BorderStyle.SOLID_MEDIUM
+  );
+}
+
+
+/****************************************************
+ * TEXT CLEANER
+ ****************************************************/
+
+function cleanCalendarText_(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+/****************************************************
+ * CALENDAR PDF EXPORT HELPER
+ ****************************************************/
+
+function exportCalendarSheetAsPdf_(ss, sheet, fileName) {
+  const ssId = ss.getId();
+  const sheetId = sheet.getSheetId();
+
+  const url =
+    `https://docs.google.com/spreadsheets/d/${ssId}/export?` +
+    `format=pdf` +
+    `&gid=${sheetId}` +
+    `&portrait=false` +
+    `&size=letter` +
+    `&fitw=true` +
+    `&top_margin=0.25` +
+    `&bottom_margin=0.25` +
+    `&left_margin=0.25` +
+    `&right_margin=0.25` +
+    `&sheetnames=false` +
+    `&printtitle=false` +
+    `&pagenumbers=false` +
+    `&gridlines=false` +
+    `&fzr=false`;
+
+  const response = UrlFetchApp.fetch(url, {
+    headers: {
+      Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
+    }
+  });
+
+  return response.getBlob().setName(`${fileName}.pdf`);
+}
+
+
+/****************************************************
+ * DOWNLOAD POPUP
+ ****************************************************/
+
+function showDriveDownloadDialog_(fileId, fileName) {
+  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+  const html = HtmlService.createHtmlOutput(`
+    <html>
+      <body style="font-family: Arial; padding: 16px;">
+        <p>Your PDF is ready:</p>
+
+        <p>
+          <a href="${downloadUrl}" target="_blank" style="font-size: 16px;">
+            Download ${fileName}.pdf
+          </a>
+        </p>
+
+        <p style="font-size: 12px; color: #666;">
+          A temporary copy was also saved to Google Drive.
+        </p>
+      </body>
+    </html>
+  `)
+    .setWidth(460)
+    .setHeight(200);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Download Calendar PDF");
+}

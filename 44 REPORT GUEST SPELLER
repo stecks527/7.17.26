@@ -1,0 +1,88 @@
+/*************************************************
+ * 44 REPORT GUEST SPELLER
+ *************************************************/
+
+function addGuestSpellerToPerformanceReport_SAFE() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const inOut = ss.getSheetByName("IN/OUT");
+  const report = ss.getSheetByName("Performance Report");
+  const expanded = ss.getSheetByName("Expanded Calendar");
+
+  if (!inOut || !report || !expanded) return;
+
+  const guest = findGuestSpellerForReport_SAFE_(expanded, inOut);
+
+  if (!guest || !guest.name) return;
+
+  const label = guest.number
+    ? ` (Guest Speller #${guest.number})`
+    : "";
+
+  report.getRange("A63")
+    .setValue(`– Group Photo with ${guest.name}${label} attached to this report.`)
+    .setFontFamily("Arial")
+    .setFontSize(11);
+
+  report.getRange("A93")
+    .setValue(`SPOTTED: ${guest.name}${label}`)
+    .setFontFamily("Arial")
+    .setFontSize(11);
+}
+
+function findGuestSpellerForReport_SAFE_(expanded, inOut) {
+  const targetDate = normalizeDateTextForMatch_(
+    inOut.getRange("A3").getDisplayValue()
+  );
+
+  const showText = (
+    cleanReportPatch_(inOut.getRange("B4").getDisplayValue()) ||
+    cleanReportPatch_(inOut.getRange("A4").getDisplayValue())
+  ).toUpperCase();
+
+  const wantsMat = showText.includes("MAT") || showText.includes("2:");
+  const wantsEve = showText.includes("EVE") || showText.includes("7:");
+
+  const values = expanded.getDataRange().getDisplayValues();
+
+  for (let r = 0; r < values.length; r++) {
+    const rowDate = normalizeDateTextForMatch_(values[r][0]);
+    const whatText = cleanReportPatch_(values[r][1]).toUpperCase();
+    const timeText = cleanReportPatch_(values[r][2]).toUpperCase();
+    const guestCell = cleanReportPatch_(values[r][3]);
+
+    if (rowDate !== targetDate) continue;
+    if (!guestCell) continue;
+
+    const rowText = `${whatText} ${timeText}`;
+
+    if (wantsMat && rowText.includes("7:")) continue;
+    if (wantsEve && rowText.includes("2:")) continue;
+
+    return parseGuestSpellerForReport_SAFE_(guestCell, rowText);
+  }
+
+  return null;
+}
+
+function parseGuestSpellerForReport_SAFE_(guestCell, rowText) {
+  const text = cleanReportPatch_(guestCell);
+
+  const numberFromCell = text.match(/GUEST\s*SPELLER\s*#?\s*(\d+)/i);
+  const numberFromRow = String(rowText || "").match(/GUEST\s*SPELLER\s*#?\s*(\d+)/i);
+
+  const number = numberFromCell
+    ? numberFromCell[1]
+    : numberFromRow
+      ? numberFromRow[1]
+      : "";
+
+  const name = text
+    .replace(/GUEST\s*SPELLER\s*#?\s*\d+/ig, "")
+    .replace(/GUEST\s*SPELLER/ig, "")
+    .replace(/[-–—:|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { name, number };
+}

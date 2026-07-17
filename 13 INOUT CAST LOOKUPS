@@ -1,0 +1,142 @@
+/*************************************************
+ * 13 INOUT CAST LOOKUPS
+ * Version: 1.2.0
+ *
+ * Header-based Cast List lookup.
+ *************************************************/
+
+function getRoleForActorFromCastList_(actorName) {
+  const data = getCastListData_();
+  if (!data) return "";
+
+  const target = normalizeInOutIntelText_(actorName);
+
+  for (const row of data.rows) {
+    const actor = normalizeInOutIntelText_(row.fullName);
+    if (actor === target) {
+      return row.character || row.role || "";
+    }
+  }
+
+  return "";
+}
+
+function getCoverOptionsForRoleFromCastList_(roleName) {
+  const data = getCastListData_();
+  if (!data) return [];
+
+  const targetRole = normalizeCoverRole_(roleName);
+  if (!targetRole) return [];
+
+  const covers = [];
+
+  data.rows.forEach(row => {
+    if (!row.fullName || !row.covers) return;
+
+    const roles = String(row.covers || "")
+      .split(/[\n,]/)
+      .map(normalizeCoverRole_)
+      .filter(Boolean);
+
+    if (roles.includes(targetRole)) {
+      covers.push(row.fullName);
+    }
+  });
+
+  return [...new Set(covers)].sort();
+}
+
+function getRolesForActorFromCastList_(actorName) {
+  const data = getCastListData_();
+  if (!data) return [];
+
+  const target = normalizeInOutIntelText_(actorName);
+
+  for (const row of data.rows) {
+    if (normalizeInOutIntelText_(row.fullName) !== target) continue;
+
+    const roles = [];
+
+    if (row.character) roles.push(row.character);
+
+    String(row.covers || "")
+      .split(/[\n,]/)
+      .map(v => String(v || "").trim())
+      .filter(Boolean)
+      .forEach(role => roles.push(role));
+
+    return [...new Set(roles)];
+  }
+
+  return [];
+}
+
+/*************************************************
+ * CAST LIST DATA
+ *************************************************/
+
+function getCastListData_() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Cast List");
+  if (!sh) return null;
+
+  const values = sh.getDataRange().getDisplayValues();
+  if (!values.length) return null;
+
+  const headerRowIndex = findCastListHeaderRow_(values);
+  if (headerRowIndex === -1) return null;
+
+  const headers = values[headerRowIndex].map(h =>
+    String(h || "").toLowerCase().replace(/\s+/g, " ").trim()
+  );
+
+  const col = {
+    fullName: findCastListColumn_(headers, ["full name", "name"]),
+    firstInitial: findCastListColumn_(headers, ["first name and initial", "first + initial", "first initial"]),
+    character: findCastListColumn_(headers, ["full character", "character"]),
+    role: findCastListColumn_(headers, ["role", "role type"]),
+    covers: findCastListColumn_(headers, ["covers", "characters covering", "covering"])
+  };
+
+  const rows = [];
+
+  for (let r = headerRowIndex + 1; r < values.length; r++) {
+    const row = values[r];
+
+    const fullName = col.fullName >= 0 ? String(row[col.fullName] || "").trim() : "";
+    if (!fullName) continue;
+
+    rows.push({
+      fullName,
+      firstInitial: col.firstInitial >= 0 ? String(row[col.firstInitial] || "").trim() : "",
+      character: col.character >= 0 ? String(row[col.character] || "").trim() : "",
+      role: col.role >= 0 ? String(row[col.role] || "").trim() : "",
+      covers: col.covers >= 0 ? String(row[col.covers] || "").trim() : ""
+    });
+  }
+
+  return { headers, col, rows };
+}
+
+function findCastListHeaderRow_(values) {
+  for (let r = 0; r < Math.min(values.length, 10); r++) {
+    const rowText = values[r].join(" ").toLowerCase();
+    if (
+      rowText.includes("full name") &&
+      (rowText.includes("covers") || rowText.includes("characters covering"))
+    ) {
+      return r;
+    }
+  }
+
+  return -1;
+}
+
+function findCastListColumn_(headers, possibleNames) {
+  for (const name of possibleNames) {
+    const idx = headers.indexOf(name);
+    if (idx !== -1) return idx;
+  }
+
+  return -1;
+}

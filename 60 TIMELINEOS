@@ -1,0 +1,1584 @@
+/*************************************************
+ * 60 TIMELINEOS
+ * Version: 4.0.0
+ * Status: ACTIVE
+ *
+ * Canonical public API and cached production-day
+ * timeline builder.
+ *************************************************/
+
+const TIMELINE_OS = {
+  VERSION: "4.0.0",
+
+  CACHE_KEYS: {
+    productionRules: "TIMELINE_OS_PRODUCTION_RULES",
+    wigHairRules: "TIMELINE_OS_WIG_HAIR_RULES",
+    events: "TIMELINE_OS_EVENTS"
+  },
+
+  RULE_CACHE_MAX_AGE_MS: 30 * 60 * 1000,
+  EVENT_CACHE_MAX_AGE_MS: 90 * 1000
+};
+
+
+/*************************************************
+ * PUBLIC API
+ *************************************************/
+
+function TimelineOS() {
+  return {
+    current: function (showState) {
+      return buildTimelineOS(showState);
+    },
+
+    get: function (showState) {
+      return buildTimelineOS(showState);
+    },
+
+    refresh: function (showState) {
+      timelineOSClearEventCache_();
+      return buildTimelineOS(showState);
+    },
+
+    clearCache: function () {
+      return timelineOSClearEventCache_();
+    },
+
+    clearAllCaches: function () {
+      return timelineOSClearAllCaches_();
+    },
+
+    status: function () {
+      return timelineOSStatus_();
+    },
+
+    test: function () {
+      return testTimelineOSPlatformAPI();
+    }
+  };
+}
+
+
+/*************************************************
+ * CANONICAL BUILDER
+ *************************************************/
+
+function buildTimelineOS(showState) {
+  const startedAt = Date.now();
+
+  showState =
+    showState ||
+    timelineOSGetDefaultShowState_();
+
+  if (!showState) {
+    throw new Error(
+      "TimelineOS could not resolve Show State."
+    );
+  }
+
+  const performances =
+    Array.isArray(showState.performances)
+      ? showState.performances
+      : [];
+
+  const cacheKey =
+    timelineOSBuildEventCacheKey_(
+      showState
+    );
+
+  const cachedEvents =
+    timelineOSGetCachedEvents_(
+      cacheKey
+    );
+
+  let events = [];
+
+  if (cachedEvents) {
+    events =
+      timelineOSHydrateEvents_(
+        cachedEvents
+      );
+
+    Logger.log(
+      "TimelineOS source: event cache"
+    );
+  } else {
+    const productionRules =
+      getProductionTimelineRules_();
+
+    const wigHairRules =
+      getWigHairTimingRules_();
+
+    performances.forEach(
+      function (perf) {
+        const curtain =
+          getTimelinePerformanceDate_(
+            showState.date,
+            perf.inOutText
+          );
+
+        if (!curtain) return;
+
+        events.push.apply(
+          events,
+          buildProductionTimelineEventsForPerformance_(
+            showState,
+            perf,
+            curtain,
+            productionRules
+          )
+        );
+
+        events.push.apply(
+          events,
+          buildWigHairTimelineEventsForPerformance_(
+            showState,
+            perf,
+            curtain,
+            wigHairRules
+          )
+        );
+
+        events.push(
+          buildPerformanceTimelineEvent_(
+            showState,
+            perf,
+            curtain
+          )
+        );
+      }
+    );
+
+    events.sort(
+      function (a, b) {
+        return (
+          a.time.getTime() -
+          b.time.getTime()
+        );
+      }
+    );
+
+    timelineOSSetCachedEvents_(
+      cacheKey,
+      events
+    );
+
+    Logger.log(
+      "TimelineOS source: rebuilt"
+    );
+  }
+
+  const displayEvents =
+    events.filter(
+      function (event) {
+        return (
+          event.displayOnDashboard !==
+          false
+        );
+      }
+    );
+
+  const reminderEvents =
+    events.filter(
+      function (event) {
+        return Boolean(
+          event.reminder
+        );
+      }
+    );
+
+  const result = {
+    source: "ShowStateOS",
+    version: TIMELINE_OS.VERSION,
+    date: showState.date || "",
+    events: events,
+    displayEvents: displayEvents,
+    reminderEvents: reminderEvents,
+    currentEvent:
+      getCurrentTimelineEvent_(
+        events
+      ),
+    currentBlock:
+      getCurrentTimelineBlock_(
+        events
+      ),
+    nextEvent:
+      getNextTimelineEvent_(
+        events
+      ),
+    buildDurationMs:
+      Date.now() - startedAt
+  };
+
+  Logger.log(
+    "TimelineOS total: " +
+    result.buildDurationMs +
+    "ms"
+  );
+
+  return result;
+}
+
+
+function timelineOSGetDefaultShowState_() {
+  if (
+    typeof ShowStateOS ===
+    "function"
+  ) {
+    return ShowStateOS().current();
+  }
+
+  if (
+    typeof buildShowState ===
+    "function"
+  ) {
+    return buildShowState();
+  }
+
+  if (
+    typeof buildHomeShowStateFromDecisionOS_ ===
+      "function" &&
+    typeof DecisionOS ===
+      "function"
+  ) {
+    return buildHomeShowStateFromDecisionOS_(
+      DecisionOS().today()
+    );
+  }
+
+  return null;
+}
+
+
+/*************************************************
+ * PRODUCTION TIMELINE EVENTS
+ *************************************************/
+
+function buildProductionTimelineEventsForPerformance_(
+  showState,
+  perf,
+  curtain,
+  rules
+) {
+  rules =
+    Array.isArray(rules)
+      ? rules
+      : getProductionTimelineRules_();
+
+  return rules.map(
+    function (rule) {
+      const eventTime =
+        new Date(
+          curtain.getTime() -
+          Number(
+            rule.minutesBefore || 0
+          ) *
+          60 *
+          1000
+        );
+
+      return {
+        source:
+          "Production Timeline",
+
+        category:
+          rule.category || "",
+
+        title:
+          rule.event || "",
+
+        appliesTo:
+          rule.appliesTo || "",
+
+        time:
+          eventTime,
+
+        timeText:
+          formatTimelineTime_(
+            eventTime
+          ),
+
+        minutesBefore:
+          rule.minutesBefore,
+
+        displayOnDashboard:
+          rule.displayOnDashboard,
+
+        reminder:
+          rule.reminder,
+
+        performanceNumber:
+          perf.number || "",
+
+        performanceText:
+          perf.inOutText || "",
+
+        conductor:
+          perf.conductor || "",
+
+        guestSpeller:
+          perf.guestSpeller || "",
+
+        castOuts:
+          showState.currentCastOuts || []
+      };
+    }
+  );
+}
+
+
+function buildPerformanceTimelineEvent_(
+  showState,
+  perf,
+  curtain
+) {
+  return {
+    source: "DecisionOS",
+    category: "Performance",
+    title:
+      perf.inOutText ||
+      "Performance",
+    appliesTo: "",
+    time: curtain,
+    timeText:
+      formatTimelineTime_(
+        curtain
+      ),
+    minutesBefore: 0,
+    displayOnDashboard: true,
+    reminder: false,
+    performanceNumber:
+      perf.number || "",
+    performanceText:
+      perf.inOutText || "",
+    conductor:
+      perf.conductor || "",
+    guestSpeller:
+      perf.guestSpeller || "",
+    castOuts:
+      showState.currentCastOuts || []
+  };
+}
+
+
+/*************************************************
+ * PRODUCTION RULES
+ *************************************************/
+
+function getProductionTimelineRules_() {
+  const cached =
+    timelineOSGetCachedRuleSet_(
+      TIMELINE_OS.CACHE_KEYS
+        .productionRules
+    );
+
+  if (cached) {
+    Logger.log(
+      "Production Timeline rules: cache"
+    );
+
+    return cached;
+  }
+
+  const startedAt =
+    Date.now();
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const sh =
+    ss.getSheetByName(
+      "Production Timeline"
+    );
+
+  if (!sh) return [];
+
+  const lastRow =
+    sh.getLastRow();
+
+  if (lastRow < 2) return [];
+
+  const values =
+    sh
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        Math.min(
+          sh.getLastColumn(),
+          6
+        )
+      )
+      .getDisplayValues();
+
+  const rules = [];
+
+  for (
+    let row = 0;
+    row < values.length;
+    row++
+  ) {
+    const minutes =
+      parseTimelineMinutes_(
+        values[row][0]
+      );
+
+    const event =
+      cleanTimeline_(
+        values[row][1]
+      );
+
+    if (
+      minutes === null ||
+      !event
+    ) {
+      continue;
+    }
+
+    rules.push({
+      minutesBefore:
+        minutes,
+
+      event:
+        event,
+
+      appliesTo:
+        cleanTimeline_(
+          values[row][2]
+        ),
+
+      displayOnDashboard:
+        parseTimelineBoolean_(
+          values[row][3]
+        ),
+
+      reminder:
+        parseTimelineBoolean_(
+          values[row][4]
+        ),
+
+      category:
+        cleanTimeline_(
+          values[row][5]
+        )
+    });
+  }
+
+  timelineOSSetCachedRuleSet_(
+    TIMELINE_OS.CACHE_KEYS
+      .productionRules,
+    rules
+  );
+
+  Logger.log(
+    "Production Timeline rules rebuilt: " +
+    (Date.now() - startedAt) +
+    "ms"
+  );
+
+  return rules;
+}
+
+
+/*************************************************
+ * WIG / HAIR EVENTS
+ *************************************************/
+
+function buildWigHairTimelineEventsForPerformance_(
+  showState,
+  perf,
+  curtain,
+  rules
+) {
+  rules =
+    Array.isArray(rules)
+      ? rules
+      : getWigHairTimingRules_();
+
+  return rules.map(
+    function (rule) {
+      const eventTime =
+        new Date(
+          curtain.getTime() -
+          Number(
+            rule.minutesBefore || 0
+          ) *
+          60 *
+          1000
+        );
+
+      return {
+        source:
+          "Wig / Hair Timing",
+
+        category:
+          "Hair",
+
+        title:
+          "Hair Call",
+
+        appliesTo:
+          rule.actor || "",
+
+        actor:
+          rule.actor || "",
+
+        room:
+          rule.room || "",
+
+        notes:
+          rule.notes || "",
+
+        time:
+          eventTime,
+
+        timeText:
+          formatTimelineTime_(
+            eventTime
+          ),
+
+        minutesBefore:
+          rule.minutesBefore,
+
+        displayOnDashboard:
+          true,
+
+        reminder:
+          false,
+
+        performanceNumber:
+          perf.number || "",
+
+        performanceText:
+          perf.inOutText || "",
+
+        conductor:
+          perf.conductor || "",
+
+        guestSpeller:
+          perf.guestSpeller || "",
+
+        castOuts:
+          showState.currentCastOuts || []
+      };
+    }
+  );
+}
+
+
+function getWigHairTimingRules_() {
+  const cached =
+    timelineOSGetCachedRuleSet_(
+      TIMELINE_OS.CACHE_KEYS
+        .wigHairRules
+    );
+
+  if (cached) {
+    Logger.log(
+      "Wig / Hair rules: cache"
+    );
+
+    return cached;
+  }
+
+  const startedAt =
+    Date.now();
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const sh =
+    ss.getSheetByName(
+      "Wig / Hair Timing"
+    );
+
+  if (!sh) return [];
+
+  const lastRow =
+    Math.min(
+      sh.getLastRow(),
+      80
+    );
+
+  if (lastRow < 2) return [];
+
+  const values =
+    sh
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        5
+      )
+      .getDisplayValues();
+
+  const rules = [];
+  let started = false;
+
+  for (
+    let row = 0;
+    row < values.length;
+    row++
+  ) {
+    const minutes =
+      parseTimelineMinutes_(
+        values[row][0]
+      );
+
+    const actor =
+      cleanTimeline_(
+        values[row][1]
+      );
+
+    const room =
+      cleanTimeline_(
+        values[row][3] ||
+        values[row][2]
+      );
+
+    const notes =
+      cleanTimeline_(
+        values[row][4]
+      );
+
+    if (
+      minutes !== null &&
+      actor
+    ) {
+      started = true;
+
+      rules.push({
+        minutesBefore:
+          minutes,
+
+        actor:
+          actor,
+
+        room:
+          room,
+
+        notes:
+          notes
+      });
+
+      continue;
+    }
+
+    if (started) break;
+  }
+
+  timelineOSSetCachedRuleSet_(
+    TIMELINE_OS.CACHE_KEYS
+      .wigHairRules,
+    rules
+  );
+
+  Logger.log(
+    "Wig / Hair rules rebuilt: " +
+    (Date.now() - startedAt) +
+    "ms"
+  );
+
+  return rules;
+}
+
+
+/*************************************************
+ * CURRENT / NEXT
+ *************************************************/
+
+function getCurrentTimelineEvent_(
+  events
+) {
+  if (!events.length) return null;
+
+  const now =
+    new Date();
+
+  const sorted =
+    events
+      .slice()
+      .sort(
+        function (a, b) {
+          return (
+            a.time.getTime() -
+            b.time.getTime()
+          );
+        }
+      );
+
+  const next =
+    sorted.find(
+      function (event) {
+        return event.time > now;
+      }
+    );
+
+  if (next) {
+    const nextPerf =
+      next.performanceNumber || "";
+
+    const currentBlock =
+      sorted.filter(
+        function (event) {
+          return (
+            String(
+              event.performanceNumber ||
+              ""
+            ) ===
+            String(
+              nextPerf || ""
+            )
+          );
+        }
+      );
+
+    const currentInBlock =
+      currentBlock
+        .filter(
+          function (event) {
+            return (
+              event.time <= now
+            );
+          }
+        )
+        .pop();
+
+    return (
+      currentInBlock ||
+      currentBlock[0] ||
+      next
+    );
+  }
+
+  return sorted[
+    sorted.length - 1
+  ];
+}
+
+
+function getNextTimelineEvent_(
+  events
+) {
+  const now =
+    new Date();
+
+  return (
+    events.find(
+      function (event) {
+        return event.time > now;
+      }
+    ) ||
+    null
+  );
+}
+
+
+function getCurrentTimelineBlock_(
+  events
+) {
+  const current =
+    getCurrentTimelineEvent_(
+      events
+    );
+
+  if (!current) return [];
+
+  const performanceNumber =
+    current.performanceNumber;
+
+  return events.filter(
+    function (event) {
+      return (
+        event.displayOnDashboard &&
+        String(
+          event.performanceNumber ||
+          ""
+        ) ===
+        String(
+          performanceNumber || ""
+        )
+      );
+    }
+  );
+}
+
+
+/*************************************************
+ * PERFORMANCE DATE / TIME
+ *************************************************/
+
+function getTimelinePerformanceDate_(
+  dateText,
+  performanceText
+) {
+  const date =
+    parseTimelineDate_(
+      dateText
+    );
+
+  if (!date) return null;
+
+  const timeText =
+    extractTimelineTime_(
+      performanceText
+    );
+
+  if (!timeText) return null;
+
+  const match =
+    timeText.match(
+      /(\d{1,2}):(\d{2})\s*(AM|PM)/i
+    );
+
+  if (!match) return null;
+
+  let hour =
+    Number(match[1]);
+
+  const minute =
+    Number(match[2]);
+
+  const ampm =
+    match[3].toUpperCase();
+
+  if (
+    ampm === "PM" &&
+    hour !== 12
+  ) {
+    hour += 12;
+  }
+
+  if (
+    ampm === "AM" &&
+    hour === 12
+  ) {
+    hour = 0;
+  }
+
+  const output =
+    new Date(date);
+
+  output.setHours(
+    hour,
+    minute,
+    0,
+    0
+  );
+
+  return output;
+}
+
+
+function parseTimelineDate_(
+  dateText
+) {
+  if (!dateText) return null;
+
+  if (
+    typeof parseInOutDate_ ===
+    "function"
+  ) {
+    const parsed =
+      parseInOutDate_(
+        dateText
+      );
+
+    if (parsed) return parsed;
+  }
+
+  const text =
+    String(dateText || "")
+      .trim();
+
+  const direct =
+    new Date(text);
+
+  if (
+    !isNaN(
+      direct.getTime()
+    )
+  ) {
+    return direct;
+  }
+
+  const year =
+    new Date()
+      .getFullYear();
+
+  const withYear =
+    new Date(
+      text + ", " + year
+    );
+
+  return isNaN(
+    withYear.getTime()
+  )
+    ? null
+    : withYear;
+}
+
+
+function extractTimelineTime_(
+  text
+) {
+  const match =
+    String(text || "")
+      .match(
+        /(\d{1,2}:\d{2}\s*(AM|PM))/i
+      );
+
+  return match
+    ? match[1]
+    : "";
+}
+
+
+/*************************************************
+ * RULE CACHE
+ *************************************************/
+
+function timelineOSGetCachedRuleSet_(
+  propertyKey
+) {
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        propertyKey
+      );
+
+  if (!raw) return null;
+
+  try {
+    const cached =
+      JSON.parse(raw);
+
+    const age =
+      Date.now() -
+      Number(
+        cached.savedAt || 0
+      );
+
+    if (
+      age >
+      TIMELINE_OS
+        .RULE_CACHE_MAX_AGE_MS
+    ) {
+      PropertiesService
+        .getDocumentProperties()
+        .deleteProperty(
+          propertyKey
+        );
+
+      return null;
+    }
+
+    return Array.isArray(
+      cached.rules
+    )
+      ? cached.rules
+      : null;
+
+  } catch (err) {
+    PropertiesService
+      .getDocumentProperties()
+      .deleteProperty(
+        propertyKey
+      );
+
+    return null;
+  }
+}
+
+
+function timelineOSSetCachedRuleSet_(
+  propertyKey,
+  rules
+) {
+  PropertiesService
+    .getDocumentProperties()
+    .setProperty(
+      propertyKey,
+      JSON.stringify({
+        savedAt:
+          Date.now(),
+
+        rules:
+          rules || []
+      })
+    );
+
+  return true;
+}
+
+
+/*************************************************
+ * EVENT CACHE
+ *************************************************/
+
+function timelineOSBuildEventCacheKey_(
+  showState
+) {
+  const performances =
+    Array.isArray(
+      showState.performances
+    )
+      ? showState.performances
+      : [];
+
+  const performanceKey =
+    performances
+      .map(
+        function (perf) {
+          return [
+            perf.number || "",
+            perf.inOutText || "",
+            perf.conductor || "",
+            perf.guestSpeller || ""
+          ].join("~");
+        }
+      )
+      .join("|");
+
+  const outsKey =
+    (showState.currentCastOuts || [])
+      .map(
+        function (item) {
+          return [
+            item.out || "",
+            item.in || "",
+            item.role || ""
+          ].join("~");
+        }
+      )
+      .join("|");
+
+  return [
+    showState.date || "",
+    performanceKey,
+    outsKey
+  ].join("||");
+}
+
+
+function timelineOSGetCachedEvents_(
+  expectedKey
+) {
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        TIMELINE_OS
+          .CACHE_KEYS
+          .events
+      );
+
+  if (!raw) return null;
+
+  try {
+    const cached =
+      JSON.parse(raw);
+
+    const age =
+      Date.now() -
+      Number(
+        cached.savedAt || 0
+      );
+
+    if (
+      age >
+      TIMELINE_OS
+        .EVENT_CACHE_MAX_AGE_MS ||
+      cached.key !== expectedKey
+    ) {
+      timelineOSClearEventCache_();
+      return null;
+    }
+
+    return Array.isArray(
+      cached.events
+    )
+      ? cached.events
+      : null;
+
+  } catch (err) {
+    timelineOSClearEventCache_();
+    return null;
+  }
+}
+
+
+function timelineOSSetCachedEvents_(
+  key,
+  events
+) {
+  const serializable =
+    (events || []).map(
+      function (event) {
+        const copy =
+          Object.assign(
+            {},
+            event
+          );
+
+        copy.time =
+          event.time instanceof Date
+            ? event.time.toISOString()
+            : event.time;
+
+        return copy;
+      }
+    );
+
+  PropertiesService
+    .getDocumentProperties()
+    .setProperty(
+      TIMELINE_OS
+        .CACHE_KEYS
+        .events,
+      JSON.stringify({
+        savedAt:
+          Date.now(),
+
+        key:
+          key,
+
+        events:
+          serializable
+      })
+    );
+
+  return true;
+}
+
+
+function timelineOSHydrateEvents_(
+  events
+) {
+  return (events || [])
+    .map(
+      function (event) {
+        const copy =
+          Object.assign(
+            {},
+            event
+          );
+
+        copy.time =
+          new Date(
+            event.time
+          );
+
+        return copy;
+      }
+    )
+    .filter(
+      function (event) {
+        return !isNaN(
+          event.time.getTime()
+        );
+      }
+    )
+    .sort(
+      function (a, b) {
+        return (
+          a.time.getTime() -
+          b.time.getTime()
+        );
+      }
+    );
+}
+
+
+/*************************************************
+ * CACHE CONTROL
+ *************************************************/
+
+function timelineOSClearEventCache_() {
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      TIMELINE_OS
+        .CACHE_KEYS
+        .events
+    );
+
+  return true;
+}
+
+
+function timelineOSClearAllCaches_() {
+  const props =
+    PropertiesService
+      .getDocumentProperties();
+
+  Object.keys(
+    TIMELINE_OS.CACHE_KEYS
+  ).forEach(
+    function (key) {
+      props.deleteProperty(
+        TIMELINE_OS
+          .CACHE_KEYS[key]
+      );
+    }
+  );
+
+  return true;
+}
+
+
+function clearTimelineOSCaches() {
+  return TimelineOS()
+    .clearAllCaches();
+}
+
+
+/*************************************************
+ * STATUS
+ *************************************************/
+
+function timelineOSStatus_() {
+  const startedAt =
+    Date.now();
+
+  let timeline = null;
+  let error = "";
+
+  try {
+    timeline =
+      buildTimelineOS();
+  } catch (err) {
+    error =
+      String(
+        err && err.message
+          ? err.message
+          : err
+      );
+  }
+
+  return {
+    system:
+      "TimelineOS",
+
+    version:
+      TIMELINE_OS.VERSION,
+
+    available:
+      Boolean(timeline),
+
+    healthy:
+      Boolean(
+        timeline &&
+        Array.isArray(
+          timeline.events
+        )
+      ),
+
+    error:
+      error,
+
+    date:
+      timeline
+        ? timeline.date || ""
+        : "",
+
+    events:
+      timeline &&
+      Array.isArray(
+        timeline.events
+      )
+        ? timeline.events.length
+        : 0,
+
+    displayEvents:
+      timeline &&
+      Array.isArray(
+        timeline.displayEvents
+      )
+        ? timeline.displayEvents.length
+        : 0,
+
+    reminderEvents:
+      timeline &&
+      Array.isArray(
+        timeline.reminderEvents
+      )
+        ? timeline.reminderEvents.length
+        : 0,
+
+    currentEvent:
+      timeline &&
+      timeline.currentEvent
+        ? timeline.currentEvent.title ||
+          ""
+        : "",
+
+    nextEvent:
+      timeline &&
+      timeline.nextEvent
+        ? timeline.nextEvent.title ||
+          ""
+        : "",
+
+    buildDurationMs:
+      Date.now() -
+      startedAt,
+
+    productionRulesCacheAvailable:
+      typeof timelineOSGetCachedRuleSet_ ===
+      "function",
+
+    eventCacheAvailable:
+      typeof timelineOSGetCachedEvents_ ===
+      "function"
+  };
+}
+
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function parseTimelineMinutes_(
+  value
+) {
+  const text =
+    String(value || "")
+      .trim();
+
+  if (
+    !text &&
+    text !== "0"
+  ) {
+    return null;
+  }
+
+  const match =
+    text.match(
+      /-?\d+/
+    );
+
+  if (!match) return null;
+
+  return Number(
+    match[0]
+  );
+}
+
+
+function parseTimelineBoolean_(
+  value
+) {
+  const text =
+    String(value || "")
+      .trim()
+      .toUpperCase();
+
+  return (
+    text === "TRUE" ||
+    text === "YES" ||
+    text === "Y" ||
+    text === "1" ||
+    text === "CHECKED"
+  );
+}
+
+
+function formatTimelineTime_(
+  date
+) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "h:mm a"
+  );
+}
+
+
+function cleanTimeline_(
+  value
+) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+/*************************************************
+ * PLATFORM API TEST
+ *************************************************/
+
+function testTimelineOSPlatformAPI() {
+  const os =
+    TimelineOS();
+
+  const requiredMethods = [
+    "current",
+    "get",
+    "refresh",
+    "clearCache",
+    "clearAllCaches",
+    "status",
+    "test"
+  ];
+
+  const missingMethods =
+    requiredMethods.filter(
+      function (methodName) {
+        return (
+          typeof os[methodName] !==
+          "function"
+        );
+      }
+    );
+
+  /*
+   * Resolve Show State before timing TimelineOS.
+   * This prevents ShowState/Prep Intelligence rebuild time
+   * from being counted as TimelineOS work.
+   */
+  const showState =
+    typeof ShowStateOS === "function"
+      ? ShowStateOS().current()
+      : buildShowState();
+
+  os.clearAllCaches();
+
+  const coldStartedAt =
+    Date.now();
+
+  const cold =
+    os.current(
+      showState
+    );
+
+  const coldMs =
+    Date.now() -
+    coldStartedAt;
+
+  const warmStartedAt =
+    Date.now();
+
+  const warm =
+    os.current(
+      showState
+    );
+
+  const warmMs =
+    Date.now() -
+    warmStartedAt;
+
+  const homeDisplayEvents =
+    cold.displayEvents.filter(
+      function (event) {
+        return (
+          event.source !==
+          "DecisionOS"
+        );
+      }
+    );
+
+  const result = {
+    healthy:
+      Boolean(
+        cold &&
+        warm &&
+        missingMethods.length === 0
+      ),
+
+    methodsChecked:
+      requiredMethods.length,
+
+    missingMethods:
+      missingMethods,
+
+    coldMs:
+      coldMs,
+
+    warmMs:
+      warmMs,
+
+    events:
+      cold.events.length,
+
+    displayEvents:
+      cold.displayEvents.length,
+
+    homeDisplayEvents:
+      homeDisplayEvents.length,
+
+    reminderEvents:
+      cold.reminderEvents.length,
+
+    currentEvent:
+      cold.currentEvent
+        ? cold.currentEvent.title
+        : "",
+
+    nextEvent:
+      cold.nextEvent
+        ? cold.nextEvent.title
+        : ""
+  };
+
+  Logger.log(
+    "TIMELINEOS PLATFORM API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "TimelineOS platform API test " +
+      (
+        result.healthy
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Methods checked: " +
+      result.methodsChecked +
+      "\n" +
+      "Missing methods: " +
+      result.missingMethods.length +
+      "\n" +
+      "All events: " +
+      result.events +
+      "\n" +
+      "Timeline display events: " +
+      result.displayEvents +
+      "\n" +
+      "Home display events: " +
+      result.homeDisplayEvents +
+      "\n" +
+      "Reminder events: " +
+      result.reminderEvents +
+      "\n\n" +
+      "Cold Timeline build: " +
+      result.coldMs +
+      " ms\n" +
+      "Warm Timeline build: " +
+      result.warmMs +
+      " ms"
+    );
+
+  return result;
+}
+
+/*************************************************
+ * LEGACY TEST ALIAS
+ *************************************************/
+
+function TEST_buildTimelineOS() {
+  return testTimelineOSPlatformAPI();
+}

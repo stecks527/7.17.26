@@ -1,0 +1,849 @@
+/*************************************************
+ * ZZ - PREPOS V2
+ * Version: 4.0.0
+ * Status: ACTIVE
+ *
+ * Canonical public API for performance preparation.
+ *************************************************/
+
+function PrepOS() {
+  return {
+    /*************************************************
+     * UI
+     *************************************************/
+
+    open: function () {
+      return prepOSOpenDialog_();
+    },
+
+    /*************************************************
+     * STATE
+     *************************************************/
+
+        current: function () {
+      return prepOSGetState_();
+    },
+
+    get: function () {
+      return prepOSGetState_();
+    },
+
+    /*
+     * Legacy compatibility alias.
+     * Older Prep dialog endpoints still call PrepOS().state().
+     */
+    state: function () {
+      return prepOSGetState_();
+    },
+
+    refresh: function () {
+      prepOSClearStateCache_();
+
+      if (
+        typeof clearShowStateOSCache ===
+        "function"
+      ) {
+        clearShowStateOSCache();
+      }
+
+      return prepOSGetState_();
+    },
+
+    /*************************************************
+     * APPLY
+     *************************************************/
+
+    apply: function (payload) {
+      return prepOSApplyPayload_(
+        payload || {}
+      );
+    },
+
+    /*************************************************
+     * CACHE
+     *************************************************/
+
+    clearCache: function () {
+      return prepOSClearStateCache_();
+    },
+
+    clearAllCaches: function () {
+      if (
+        typeof clearPrepOSCaches ===
+        "function"
+      ) {
+        return clearPrepOSCaches();
+      }
+
+      return prepOSClearStateCache_();
+    },
+
+    /*************************************************
+     * HEALTH
+     *************************************************/
+
+    status: function () {
+      return prepOSStatus_();
+    },
+
+    test: function () {
+      return testPrepOSPlatformAPI();
+    }
+  };
+}
+
+/* =========================================================
+ * PUBLIC LAUNCHERS
+ * ========================================================= */
+
+function launchPrepOSV2() {
+  return PrepOS().open();
+}
+
+/**
+ * Compatibility launcher used by older menu and button code.
+ */
+function prepInOutButton() {
+  return PrepOS().open();
+}
+
+
+/* =========================================================
+ * DIALOG
+ *
+ * Continue using the currently proven HTML files:
+ *
+ * PrepDialog.html
+ * PrepScripts.html
+ * PrepStyles.html
+ *
+ * We are not migrating the HTML yet.
+ * ========================================================= */
+
+function prepOSOpenDialog_() {
+  const html = HtmlService
+    .createTemplateFromFile("PrepDialog")
+    .evaluate()
+    .setWidth(1200)
+    .setHeight(820);
+
+  SpreadsheetApp
+    .getUi()
+    .showModalDialog(
+      html,
+      "In/Out & Performance Prep"
+    );
+}
+
+function prepOSInclude_(filename) {
+  return HtmlService
+    .createHtmlOutputFromFile(filename)
+    .getContent();
+}
+
+
+/* =========================================================
+ * BROWSER STATE ENDPOINT
+ *
+ * The existing buildShowState() remains the live state
+ * builder during this migration step.
+ * ========================================================= */
+
+function prepOS_getState() {
+  const startTime = Date.now();
+
+  try {
+    const cached =
+      typeof prepOSGetCachedState_ === "function"
+        ? prepOSGetCachedState_()
+        : null;
+
+    if (cached) {
+      cached.ok = true;
+      cached.fromCache = true;
+
+      Logger.log(
+        "PrepOS state cache hit: " +
+        (Date.now() - startTime) +
+        "ms"
+      );
+
+      return prepOSMakeClientSafe_(cached);
+    }
+
+    Logger.log("PrepOS state cache miss.");
+
+    const state = PrepOS().state();
+
+    Logger.log(
+      "PrepOS state built: " +
+      (Date.now() - startTime) +
+      "ms"
+    );
+
+    if (!state) {
+      return prepOSMakeClientSafe_({
+        ok: false,
+        error:
+          "No PrepState returned from buildShowState()."
+      });
+    }
+
+    state.ok = true;
+    state.fromCache = false;
+
+    if (
+      typeof prepOSSetCachedState_ ===
+      "function"
+    ) {
+      prepOSSetCachedState_(state);
+    }
+
+    return prepOSMakeClientSafe_(state);
+
+  } catch (err) {
+    return prepOSMakeClientSafe_({
+      ok: false,
+
+      error:
+        String(
+          err && err.message
+            ? err.message
+            : err
+        ),
+
+      stack:
+        String(
+          err && err.stack
+            ? err.stack
+            : ""
+        )
+    });
+  }
+}
+
+/*************************************************
+ * PREPOS STATUS
+ *************************************************/
+
+function prepOSStatus_() {
+  const startedAt =
+    Date.now();
+
+  let state = null;
+  let error = "";
+
+  try {
+    state =
+      prepOSGetState_();
+  } catch (err) {
+    error =
+      String(
+        err && err.message
+          ? err.message
+          : err
+      );
+  }
+
+  const performances =
+    state &&
+    Array.isArray(
+      state.performances
+    )
+      ? state.performances
+      : [];
+
+  const assignments =
+    state &&
+    state.assignments
+      ? state.assignments
+      : {};
+
+  const intelligence =
+    state &&
+    state.intelligence
+      ? state.intelligence
+      : {};
+
+  const tracks =
+    Array.isArray(
+      assignments.tracks
+    )
+      ? assignments.tracks
+      : [];
+
+  const plannedOuts =
+    Array.isArray(
+      intelligence.plannedOuts
+    )
+      ? intelligence.plannedOuts
+      : [];
+
+  const actorOptions =
+    Array.isArray(
+      intelligence.actorOptions
+    )
+      ? intelligence.actorOptions
+      : [];
+
+  return {
+    system:
+      "PrepOS",
+
+    version:
+      "4.0.0",
+
+    available:
+      Boolean(state),
+
+    healthy:
+      Boolean(
+        state &&
+        state.date &&
+        performances.length &&
+        tracks.length
+      ),
+
+    error:
+      error,
+
+    date:
+      state
+        ? (
+            state.prettyDate ||
+            state.date ||
+            ""
+          )
+        : "",
+
+    performances:
+      performances.length,
+
+    selectedIndex:
+      state &&
+      state.selectedIndex !== undefined
+        ? state.selectedIndex
+        : null,
+
+    assignmentTracks:
+      tracks.length,
+
+    plannedOuts:
+      plannedOuts.length,
+
+    actorOptions:
+      actorOptions.length,
+
+    buildDurationMs:
+      Date.now() -
+      startedAt,
+
+    dialogAvailable:
+      typeof prepOSOpenDialog_ ===
+      "function",
+
+    applyAvailable:
+      typeof prepOSApplyPayload_ ===
+      "function",
+
+    cacheAvailable:
+      typeof prepOSGetCachedState_ ===
+      "function",
+
+    showStateAvailable:
+      typeof ShowStateOS ===
+        "function" ||
+      typeof buildShowState ===
+        "function"
+  };
+}
+
+
+/*************************************************
+ * PREPOS PLATFORM API TEST
+ *************************************************/
+
+function testPrepOSPlatformAPI() {
+  const os =
+    PrepOS();
+
+  const requiredMethods = [
+    "open",
+    "current",
+    "get",
+    "refresh",
+    "apply",
+    "clearCache",
+    "clearAllCaches",
+    "status",
+    "test"
+  ];
+
+  const missingMethods =
+    requiredMethods.filter(
+      function (methodName) {
+        return (
+          typeof os[methodName] !==
+          "function"
+        );
+      }
+    );
+
+  /*
+   * Read current state without opening the dialog
+   * or applying anything.
+   */
+  const state =
+    os.current();
+
+  const status =
+    os.status();
+
+  const result = {
+    healthy:
+      status.healthy &&
+      missingMethods.length === 0,
+
+    methodsChecked:
+      requiredMethods.length,
+
+    missingMethods:
+      missingMethods,
+
+    date:
+      status.date,
+
+    performances:
+      status.performances,
+
+    assignmentTracks:
+      status.assignmentTracks,
+
+    plannedOuts:
+      status.plannedOuts,
+
+    actorOptions:
+      status.actorOptions,
+
+    selectedIndex:
+      status.selectedIndex,
+
+    buildDurationMs:
+      status.buildDurationMs,
+
+    stateAvailable:
+      Boolean(state),
+
+    dialogAvailable:
+      status.dialogAvailable,
+
+    applyAvailable:
+      status.applyAvailable,
+
+    cacheAvailable:
+      status.cacheAvailable,
+
+    showStateAvailable:
+      status.showStateAvailable
+  };
+
+  Logger.log(
+    "PREPOS PLATFORM API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS platform API test " +
+      (
+        result.healthy
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Methods checked: " +
+      result.methodsChecked +
+      "\n" +
+      "Missing methods: " +
+      result.missingMethods.length +
+      "\n" +
+      "Date: " +
+      result.date +
+      "\n" +
+      "Performances: " +
+      result.performances +
+      "\n" +
+      "Assignment tracks: " +
+      result.assignmentTracks +
+      "\n" +
+      "Planned outs: " +
+      result.plannedOuts +
+      "\n" +
+      "Actor options: " +
+      result.actorOptions +
+      "\n\n" +
+      "Build duration: " +
+      result.buildDurationMs +
+      " ms"
+    );
+
+  return result;
+}
+
+/* =========================================================
+ * BROWSER APPLY ENDPOINT
+ *
+ * The existing applyInOutPrepFromDialog() remains the live
+ * apply pipeline during this migration step.
+ * ========================================================= */
+
+function prepOS_applyPayload(
+  payload
+) {
+  try {
+    Logger.log(
+      "===================================="
+    );
+
+    Logger.log(
+      "PREPOS APPLY BROWSER ENDPOINT"
+    );
+
+    Logger.log(
+      "===================================="
+    );
+
+    Logger.log(
+      "Payload received: " +
+      JSON.stringify(
+        payload || {},
+        null,
+        2
+      )
+    );
+
+    const cleanPayload =
+      payload || {};
+
+    /*
+     * Clear the cached Prep state before applying
+     * the newly submitted payload.
+     */
+    PrepOS().clearCache();
+
+    Logger.log(
+      "PrepOS cache cleared."
+    );
+
+    /*
+     * Run the existing, proven Prep apply pipeline first.
+     */
+    const result =
+  PrepOS().apply(
+    cleanPayload
+  );
+
+Logger.log(
+  "PrepOS apply returned: " +
+  JSON.stringify(
+    result || {},
+    null,
+    2
+  )
+);
+
+let staffingSave = null;
+
+if (
+  typeof PerformanceStaffingOS === "function" &&
+  cleanPayload.assignments
+) {
+  const staffingPayload = Object.assign({}, cleanPayload);
+
+  // Fill in the performance date if the browser didn't send it.
+  staffingPayload.date =
+    staffingPayload.date ||
+    (result &&
+      result.nextData &&
+      result.nextData.date) ||
+    SpreadsheetApp
+      .getActive()
+      .getSheetByName("IN/OUT")
+      .getRange("A3")
+      .getDisplayValue()
+      .trim();
+
+  staffingSave =
+    PerformanceStaffingOS()
+      .saveFromPrepPayload(
+        staffingPayload
+      );
+
+  Logger.log(
+    "Performance staffing saved: " +
+    JSON.stringify(
+      staffingSave,
+      null,
+      2
+    )
+  );
+}
+
+    /*
+     * Store the complete Prep payload only after
+     * the Apply pipeline succeeds.
+     *
+     * This includes the selected cover in:
+     * castOuts[].in
+     */
+    const applySucceeded =
+      !result ||
+      (
+        result.success !== false &&
+        result.ok !== false
+      );
+
+    if (
+      applySucceeded &&
+      typeof prepStorePostResetPayload ===
+        "function"
+    ) {
+      prepStorePostResetPayload(
+  cleanPayload
+);
+
+if (
+  typeof prepRecordCoverageLedger_ ===
+    "function"
+) {
+  prepRecordCoverageLedger_(
+    cleanPayload
+  );
+}
+
+Logger.log(
+  "Complete Prep payload stored for post-reset operations."
+);
+    }
+
+    return prepOSMakeClientSafe_(
+      result
+    );
+
+  } catch (err) {
+    const message =
+      String(
+        err &&
+        err.message
+          ? err.message
+          : err
+      );
+
+    const stack =
+      String(
+        err &&
+        err.stack
+          ? err.stack
+          : ""
+      );
+
+    Logger.log(
+      "PREPOS APPLY ENDPOINT ERROR: " +
+      message
+    );
+
+    Logger.log(
+      "PREPOS APPLY ENDPOINT STACK: " +
+      stack
+    );
+
+    return prepOSMakeClientSafe_({
+      success:
+        false,
+
+      message:
+        "PrepOS apply failed: " +
+        message,
+
+      error:
+        message,
+
+      stack:
+        stack
+    });
+  }
+}
+
+/* =========================================================
+ * INTERNAL BRIDGES
+ *
+ * These deliberately call the existing working systems.
+ * We will migrate each implementation one file at a time.
+ * ========================================================= */
+
+function prepOSGetState_() {
+  if (
+    typeof buildShowState !==
+    "function"
+  ) {
+    throw new Error(
+      "PrepOS could not find buildShowState()."
+    );
+  }
+
+  return buildShowState();
+}
+
+function prepOSApplyPayload_(payload) {
+  if (
+    typeof applyInOutPrepFromDialog !==
+    "function"
+  ) {
+    throw new Error(
+      "PrepOS could not find applyInOutPrepFromDialog()."
+    );
+  }
+
+  return applyInOutPrepFromDialog(
+    payload || {}
+  );
+}
+
+
+/* =========================================================
+ * CLIENT-SAFE SERIALIZATION
+ *
+ * This uses a new private name so it does not conflict with
+ * the existing prepOSClientSafe_() in the helper file.
+ * ========================================================= */
+
+function prepOSMakeClientSafe_(value) {
+  return JSON.parse(
+    JSON.stringify(
+      value,
+      function (key, item) {
+        if (
+          Object.prototype.toString.call(item) ===
+          "[object Date]"
+        ) {
+          return Utilities.formatDate(
+            item,
+            Session.getScriptTimeZone(),
+            "yyyy-MM-dd'T'HH:mm:ss"
+          );
+        }
+
+        if (
+          item === undefined ||
+          typeof item === "function"
+        ) {
+          return null;
+        }
+
+        return item;
+      }
+    )
+  );
+}
+
+
+/* =========================================================
+ * NON-DESTRUCTIVE TEST
+ * ========================================================= */
+
+function testPrepOSAPIOnly() {
+  const checks = [
+    {
+      name: "PrepOS",
+      available:
+        typeof PrepOS ===
+        "function"
+    },
+
+    {
+      name: "launchPrepOSV2",
+      available:
+        typeof launchPrepOSV2 ===
+        "function"
+    },
+
+    {
+      name: "prepOS_getState",
+      available:
+        typeof prepOS_getState ===
+        "function"
+    },
+
+    {
+      name: "prepOS_applyPayload",
+      available:
+        typeof prepOS_applyPayload ===
+        "function"
+    },
+
+    {
+      name: "buildShowState",
+      available:
+        typeof buildShowState ===
+        "function"
+    },
+
+    {
+      name: "applyInOutPrepFromDialog",
+      available:
+        typeof applyInOutPrepFromDialog ===
+        "function"
+    }
+  ];
+
+  const missing =
+    checks.filter(function (check) {
+      return !check.available;
+    });
+
+  Logger.log(
+    "PREPOS API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      checks,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS API test.\n\n" +
+      "Functions checked: " +
+      checks.length +
+      "\n" +
+      "Missing: " +
+      missing.length +
+      (
+        missing.length
+          ? "\n\n" +
+            missing
+              .map(function (item) {
+                return item.name;
+              })
+              .join("\n")
+          : ""
+      )
+    );
+
+  return {
+    checks: checks,
+    missing: missing
+  };
+}

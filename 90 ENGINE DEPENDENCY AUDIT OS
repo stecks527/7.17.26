@@ -1,0 +1,112 @@
+/*************************************************
+ * 90 ENGINE DEPENDENCY AUDIT OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ *
+ * Verifies Engine migration readiness.
+ *************************************************/
+
+const ENGINE_DEPENDENCY_SYSTEMS = [
+
+  {
+    system: "EngineOS",
+    test: () => typeof EngineOS === "function"
+  },
+
+  {
+    system: "EngineRouterOS",
+    test: () => typeof EngineRouterOS === "function"
+  },
+
+  {
+    system: "EngineLogOS",
+    test: () => typeof EngineLogOS === "function"
+  },
+
+  {
+    system: "EngineSnapshotOS",
+    test: () => typeof EngineSnapshotOS === "function"
+  },
+
+  {
+    system: "EngineResolverHistoryOS",
+    test: () => typeof EngineResolverHistoryOS === "function"
+  },
+
+  {
+    system: "EngineAssignmentHistoryOS",
+    test: () => typeof EngineAssignmentHistoryOS === "function"
+  },
+
+  {
+    system: "EngineWizardLogOS",
+    test: () => typeof EngineWizardLogOS === "function"
+  },
+
+  {
+    system: "EngineAnalyticsOS",
+    test: () => typeof EngineAnalyticsOS === "function"
+  },
+
+  {
+    system: "SnapshotOSv2",
+    test: () => typeof SnapshotOSv2 === "function"
+  },
+
+  {
+    system: "CastResolverOS",
+    test: () => typeof CastResolverOS === "function"
+  },
+
+  {
+    system: "StageCacheOS",
+    test: () => typeof StageCacheOS === "function"
+  }
+
+];
+
+function runEngineDependencyAudit() {
+
+  const rows = [];
+
+  ENGINE_DEPENDENCY_SYSTEMS.forEach(item => {
+
+    let ok = false;
+
+    try {
+      ok = item.test();
+    }
+    catch(err){
+      ok = false;
+    }
+
+    rows.push({
+      System: item.system,
+      Status: ok ? "READY" : "MISSING",
+      Checked: new Date()
+    });
+
+  });
+
+  EngineOS()
+    .sheet("Dependency Audit")
+    .writeObjects(
+      rows,
+      ["System","Status","Checked"],
+      true
+    );
+
+  const ready = rows.filter(r=>r.Status==="READY").length;
+
+  SpreadsheetApp.getUi().alert(
+
+      "Dependency Audit Complete\n\n" +
+
+      ready +
+      " / " +
+      rows.length +
+      " systems ready."
+
+  );
+
+}

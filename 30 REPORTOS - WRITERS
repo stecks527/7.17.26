@@ -1,0 +1,100 @@
+/*************************************************
+ * 30 REPORTOS - WRITERS
+ * Version: 0.2.1
+ *************************************************/
+
+function reportOSWriteHeader_(state) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = ss.getSheetByName("Performance Report");
+  const layout = ReportLayout();
+
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+
+  report.getRange(layout.header.number)
+    .setFontFamily("Arial")
+    .setFontSize(21)
+    .setHorizontalAlignment("center");
+
+  report.getRange(layout.header.date)
+    .setValue(reportOSDisplayDate_(state))
+    .setFontFamily("Arial")
+    .setFontSize(21)
+    .setHorizontalAlignment("center");
+
+  Logger.log("ReportOS header written.");
+}
+
+function reportOSWriteStaffing_(state) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = ss.getSheetByName("Performance Report");
+  const layout = ReportLayout();
+
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+
+  const staffing = state.staffing || {};
+
+  report.getRange(layout.staffing.callingSM).setValue(staffing.callingSM || "");
+  report.getRange(layout.staffing.deckSM).setValue(staffing.deckSM || "");
+  report.getRange(layout.staffing.conductor).setValue(staffing.conductor || "");
+  report.getRange(layout.staffing.a1).setValue(staffing.a1 || "");
+
+  Logger.log("ReportOS staffing written.");
+}
+
+function reportOSWriteCastOuts_(state) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = ss.getSheetByName("Performance Report");
+  const layout = ReportLayout();
+
+  if (!report) throw new Error('Could not find "Performance Report" tab.');
+
+  const grid = layout.castGrid;
+  const START_ROW = grid.startRow;
+  const END_ROW = grid.endRow;
+  const NUM_ROWS = END_ROW - START_ROW + 1;
+
+  const castOuts = state.castOuts || [];
+
+  report.showRows(START_ROW, NUM_ROWS);
+
+  report.getRange(START_ROW, grid.outCol, NUM_ROWS, 1).clearContent();
+  report.getRange(START_ROW, grid.inCol, NUM_ROWS, 1).clearContent();
+  report.getRange(START_ROW, grid.roleCol, NUM_ROWS, 1).clearContent();
+  report.getRange(START_ROW, grid.reasonCol, NUM_ROWS, 1).clearContent();
+
+  if (!castOuts.length) {
+    report.hideRows(START_ROW, NUM_ROWS);
+    Logger.log("ReportOS cast outs cleared; no outs found.");
+    return;
+  }
+
+  const writable = castOuts.slice(0, NUM_ROWS);
+
+  report.getRange(START_ROW, grid.outCol, writable.length, 1)
+    .setValues(writable.map(function (item) {
+      return [item.out || ""];
+    }));
+
+  report.getRange(START_ROW, grid.inCol, writable.length, 1)
+    .setValues(writable.map(function (item) {
+      return [item.in || ""];
+    }));
+
+  report.getRange(START_ROW, grid.roleCol, writable.length, 1)
+    .setValues(writable.map(function (item) {
+      return [item.role || ""];
+    }));
+
+  report.getRange(START_ROW, grid.reasonCol, writable.length, 1)
+    .setValues(writable.map(function (item) {
+      return [item.reason || ""];
+    }));
+
+  const lastUsedRow = START_ROW + writable.length - 1;
+
+  if (lastUsedRow < END_ROW) {
+    report.hideRows(lastUsedRow + 1, END_ROW - lastUsedRow);
+  }
+
+  Logger.log("ReportOS cast outs written: " + writable.length);
+}

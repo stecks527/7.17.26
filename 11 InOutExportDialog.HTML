@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 18px; color: #222; }
+    h2 { margin-top: 0; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .primary { background:#2457c5; color:white; }
+    .secondary { background:#e5e5e5; color:#222; }
+    .status { margin-top: 14px; font-weight: 700; color:#2457c5; }
+  </style>
+</head>
+
+<body>
+  <h2>✅ IN/OUT Updated</h2>
+  <p>Ready to export today’s IN/OUT PDF.</p>
+
+  <button class="primary" onclick="exportPdf()">Export PDF</button>
+  <button class="secondary" onclick="goNext()">Skip</button>
+
+  <div class="status" id="status"></div>
+
+  <script>
+    const data = <?!= dataJson ?>;
+
+    function exportPdf() {
+      document.getElementById("status").textContent = "Exporting PDF...";
+
+      google.script.run
+        .withSuccessHandler(result => {
+          document.getElementById("status").innerHTML =
+            'PDF saved.<br><br>' +
+            '<a href="' + result.fileUrl + '" target="_blank">Open PDF</a><br>' +
+            '<a href="' + result.downloadUrl + '" target="_blank">Download PDF</a><br><br>' +
+            '<button class="primary" onclick="goNext()">Continue</button>';
+        })
+        .withFailureHandler(error => {
+          document.getElementById("status").textContent = "Error: " + error.message;
+        })
+        .exportInOutPdfFromPrep(data);
+    }
+
+    function goNext() {
+  document.getElementById(
+    "status"
+  ).textContent =
+    "Opening Report Reset Preview...";
+
+  openReportResetPreview_();
+}
+
+
+function openReportResetPreview_() {
+  document.getElementById("status").textContent =
+    "Opening Report Reset Preview...";
+
+  google.script.run
+    .withSuccessHandler(function() {
+      google.script.host.close();
+    })
+    .withFailureHandler(function(error) {
+      document.getElementById("status").textContent =
+        "Error opening Report Reset Preview: " +
+        error.message;
+    })
+    .reportDecisionOpenResetPreviewFromPrep();
+}
+  </script>
+</body>
+</html>

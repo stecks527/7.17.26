@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f7f7f7; color: #222; }
+    .header { background: #2457c5; color: #ffd84d; padding: 18px 22px; font-weight: 800; font-size: 22px; letter-spacing: .5px; }
+    .container { padding: 20px 22px; }
+    .card { background: white; border-radius: 14px; padding: 16px; margin-bottom: 14px; border: 1px solid #ddd; }
+    .guest-card { background: #fff8d8; border: 2px solid #ffd84d; }
+    .label { font-weight: 700; font-size: 12px; color: #666; text-transform: uppercase; margin-bottom: 6px; }
+    .value { font-size: 16px; font-weight: 700; }
+    .performance-button { width: 100%; text-align: left; background: white; border: 2px solid #ddd; border-radius: 12px; padding: 14px; margin-top: 10px; cursor: pointer; font-size: 15px; }
+    .performance-button.selected { border-color: #2457c5; background: #eef3ff; }
+    input, textarea, select { width: 100%; box-sizing: border-box; font-family: Arial, sans-serif; font-size: 15px; padding: 10px; border: 1px solid #bbb; border-radius: 8px; background: white; }
+    textarea { min-height: 180px; resize: vertical; line-height: 1.35; }
+    .change-row { display: grid; grid-template-columns: 1.1fr 1.1fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .mini-button { background: #e5e5e5; color: #222; padding: 8px 10px; border-radius: 8px; }
+    .danger { background: #f2dede; color: #8a1f1f; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 8px; }
+    button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 700; cursor: pointer; }
+    .primary { background: #2457c5; color: white; }
+    .secondary { background: #e5e5e5; color: #222; }
+    .small { color: #666; font-size: 13px; margin-top: 4px; }
+    .status { font-size: 13px; color: #2457c5; font-weight: 700; margin-right: auto; align-self: center; }
+
+    label.check-label { display: flex; gap: 8px; align-items: center; font-size: 14px; margin-top: 10px; }
+    label.check-label input { width: auto; }
+
+    .assignment-row {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 12px;
+    }
+
+    .assignment-track {
+      font-weight: 700;
+      font-size: 13px;
+      color: #444;
+      padding-top: 11px;
+    }
+
+    .smart-out-card {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+
+    .smart-out-card.complete {
+      border-color: #79b879;
+      background: #f7fff7;
+    }
+
+    .smart-out-name {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .smart-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .smart-badge {
+      font-size: 11px;
+      font-weight: 800;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #e9eefb;
+      color: #2457c5;
+    }
+
+    .smart-badge.loa {
+      background: #fff1c9;
+      color: #8a6400;
+    }
+
+    .smart-badge.auto {
+      background: #e4f6e4;
+      color: #226b22;
+    }
+
+    .smart-meta {
+      font-size: 13px;
+      line-height: 1.45;
+      color: #333;
+      margin-bottom: 10px;
+    }
+
+    .smart-cover-box {
+      font-size: 15px;
+      font-weight: 800;
+      padding: 10px;
+      background: #eef9ee;
+      border-radius: 8px;
+    } 
+
+    .assignment-title {
+      font-size: 12px;
+      color: #777;
+      font-style: italic;
+      text-align: left;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="header">Prep IN/OUT</div>
+
+  <div class="container">
+    <div class="card">
+      <div class="label">Date</div>
+      <div class="value" id="prettyDate"></div>
+      <div class="small" id="weeklyName"></div>
+    </div>
+
+    <div class="card" id="performanceChoiceCard">
+      <div class="label">Choose Performance</div>
+      <div id="performanceButtons"></div>
+    </div>
+
+    <div class="card guest-card" id="guestSpellerCard" style="display:none;">
+      <div class="label">Guest Speller</div>
+      <div class="value" id="guestSpellerName"></div>
+      <div class="small" id="guestSpellerDateTime"></div>
+
+      <label class="check-label">
+        <input type="checkbox" id="addGuestSpellerNote" checked onchange="refreshGuestSpellerNote()">
+        Add guest speller note to IN/OUT
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="label">Performance</div>
+      <input id="performanceInput">
+    </div>
+
+    <div class="card">
+      <div class="label">Stage Management</div>
+      <div id="stageManagementAssignments"></div>
+
+      <label class="check-label">
+        <input type="checkbox" id="officeShowEnabled" onchange="assignments.officeShow = this.checked">
+        Office Show
+      </label>
+
+      <label class="check-label">
+        <input type="checkbox" id="stageManagementTrainingEnabled" onchange="renderDepartmentTraining('stageManagement')">
+        Training occurring
+      </label>
+
+      <div id="stageManagementTrainingContainer" style="display:none; margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Music Team</div>
+
+      <div class="assignment-row">
+        <div class="assignment-track">Conductor</div>
+        <div>
+          <input id="conductorInput">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Audio</div>
+      <div id="audioAssignments"></div>
+
+      <label class="check-label">
+        <input type="checkbox" id="audioTrainingEnabled" onchange="renderDepartmentTraining('audio')">
+        Training occurring
+      </label>
+
+      <div id="audioTrainingContainer" style="display:none; margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Notes / Holiday</div>
+      <textarea id="notesInput"></textarea>
+    </div>
+
+    <div class="card">
+      <div class="label">Today’s Planned Outs</div>
+      <div class="small" id="plannedOutsStatus"></div>
+      <div id="plannedOutsContainer"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Today’s Call-ins</div>
+      <div class="small">Add same-day changes that are not already listed above.</div>
+      <div id="callInsContainer" style="margin-top:12px;"></div>
+      <button class="mini-button" onclick="addCallInRow()">+ Add Call-in</button>
+    </div>
+
+    <div class="actions">
+      <div class="status" id="status"></div>
+      <button class="secondary" onclick="google.script.host.close()">Cancel</button>
+      <button class="primary" onclick="applyPrep()">Apply to IN/OUT</button>
+    </div>
+  </div>
+
+  <script>
+    const data = <?!= dataJson ?>;
+    let selectedIndex = data.selectedIndex;
+
+    const intelligence = data.intelligence || {};
+    const plannedOuts = intelligence.plannedOuts || [];
+    const callIns = [];
+    const castOuts = [];
+    const dropdowns = data.dropdowns || {};
+    const assignments = data.assignments || {
+      tracks: [],
+      values: {},
+      dropdowns: { peopleByTrack: {}, people: [] },
+      officeShow: false,
+      training: {
+        stageManagement: { enabled: false, trackId: "", trainer: "", trainee: "", note: "" },
+        audio: { enabled: false, trackId: "", trainer: "", trainee: "", note: "" }
+      }
+    };
+
+    if (!assignments.training) {
+      assignments.training = {
+        stageManagement: { enabled: false, trackId: "", trainer: "", trainee: "", note: "" },
+        audio: { enabled: false, trackId: "", trainer: "", trainee: "", note: "" }
+      };
+    }
+
+    let baseNotes = data.notes || "";
+    let selectedGuestInfo = { name: "", dateTimeText: "", note: "" };
+
+    document.getElementById("prettyDate").textContent = data.prettyDate;
+    document.getElementById("weeklyName").textContent = "Weekly tab: " + data.weeklyName;
+
+    const performanceInput = document.getElementById("performanceInput");
+    const conductorInput = document.getElementById("conductorInput");
+    const notesInput = document.getElementById("notesInput");
+    const performanceButtons = document.getElementById("performanceButtons");
+
+    function renderPerformanceButtons() {
+      performanceButtons.innerHTML = "";
+
+      data.performances.forEach((perf, index) => {
+        const button = document.createElement("button");
+        button.className = "performance-button" + (index === selectedIndex ? " selected" : "");
+
+        const label = perf.inOutText.toUpperCase().includes("MAT")
+          ? "MAT"
+          : perf.inOutText.toUpperCase().includes("EVE")
+            ? "EVE"
+            : "PERFORMANCE";
+
+        button.innerHTML =
+          "<strong>" + label + "</strong><br>" +
+          escapeHtml(perf.inOutText) +
+          "<div class='small'>Conductor: " + escapeHtml(perf.conductor || "not found") + "</div>";
+
+        button.onclick = () => selectPerformance(index);
+        performanceButtons.appendChild(button);
+      });
+
+      if (data.performances.length === 1) {
+        document.getElementById("performanceChoiceCard").style.display = "none";
+      }
+    }
+
+    function selectPerformance(index) {
+      selectedIndex = index;
+      const perf = data.performances[index];
+
+      performanceInput.value = perf.inOutText || "";
+      conductorInput.value = perf.conductor || "";
+
+      renderPerformanceButtons();
+      refreshGuestSpellerCard();
+    }
+
+    function refreshGuestSpellerCard() {
+      const perf = data.performances[selectedIndex];
+      const card = document.getElementById("guestSpellerCard");
+
+      selectedGuestInfo = {
+        name: perf.guestSpeller || "",
+        dateTimeText: perf.guestDateTimeText || "",
+        note: perf.guestNote || ""
+      };
+
+      if (!selectedGuestInfo.name) {
+        card.style.display = "none";
+        notesInput.value = baseNotes;
+        return;
+      }
+
+      card.style.display = "block";
+      document.getElementById("guestSpellerName").textContent = selectedGuestInfo.name;
+      document.getElementById("guestSpellerDateTime").textContent = selectedGuestInfo.dateTimeText;
+
+      refreshGuestSpellerNote();
+    }
+
+    function refreshGuestSpellerNote() {
+      const addNote = document.getElementById("addGuestSpellerNote");
+      const note = selectedGuestInfo.note;
+
+      notesInput.value =
+        selectedGuestInfo.name && addNote && addNote.checked && note
+          ? (baseNotes ? note + "\n" + baseNotes : note)
+          : baseNotes;
+    }
+
+    function addChangeRow() {
+      castOuts.push({ out: "", in: "", role: "", reason: "" });
+      renderChangeRows();
+    }
+
+    function renderSmartOutSections() {
+  renderPlannedOutCards();
+  renderCallInCards();
+}
+
+function renderPlannedOutCards() {
+  const container = document.getElementById("plannedOutsContainer");
+  const status = document.getElementById("plannedOutsStatus");
+
+  if (!container || !status) return;
+
+  status.textContent = plannedOuts.length
+    ? plannedOuts.length + " planned out" + (plannedOuts.length === 1 ? "" : "s") + " found."
+    : "No planned outs found.";
+
+  plannedOuts.sort((a, b) => {
+    if (a.isContractLOA && !b.isContractLOA) return -1;
+    if (!a.isContractLOA && b.isContractLOA) return 1;
+    return String(a.actor || "").localeCompare(String(b.actor || ""));
+  });
+
+  container.innerHTML = plannedOuts.map((out, index) =>
+    renderSmartOutCard(out, index, "planned")
+  ).join("");
+}
+
+function renderSmartOutCard(out, index, source) {
+  const prefix = source + "_" + index;
+
+  const selected =
+    out.noCoverNeeded
+      ? "No cover needed"
+      : (out.preselectedCover || out.tempReplacement || out.weeklyAssigned || out.inActor || "");
+
+  const sourceLabel = out.noCoverNeeded
+    ? "No Cover Needed"
+    : out.tempReplacement
+      ? "Temporary Replacement"
+      : out.weeklyAssigned
+        ? "Scheduled Cover"
+        : "";
+
+  const options = out.coverOptions || [];
+
+  const optionHtml = [
+    `<option value="">Choose cover...</option>`,
+    ...options.map(name =>
+      `<option value="${escapeAttr(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`
+    ),
+    `<option value="__manual__">Other / Type manually...</option>`
+  ].join("");
+
+  const badges = [
+    `<span class="smart-badge">${escapeHtml(out.reason || "Planned")}</span>`,
+    out.isContractLOA
+      ? `<span class="smart-badge loa">Not on IN/OUT</span>`
+      : `<span class="smart-badge">IN/OUT</span>`,
+    sourceLabel
+      ? `<span class="smart-badge auto">${escapeHtml(sourceLabel)}</span>`
+      : ""
+  ].join("");
+
+  const autoBlock = selected
+    ? `
+      <div id="auto_${prefix}">
+        <div class="label">${escapeHtml(sourceLabel || "Assigned Cover")}</div>
+        <div class="smart-cover-box">${escapeHtml(selected)}</div>
+        ${out.noCoverNeeded ? "" : `<button class="mini-button" style="margin-top:8px;" onclick="showSmartAdjust('${source}', ${index})">Adjust</button>`}
+      </div>
+    `
+    : "";
+
+  const dropdownDisplay = selected ? "none" : "block";
+
+  return `
+    <div class="smart-out-card ${selected ? "complete" : ""}" id="smartCard_${prefix}">
+      <div class="smart-out-name">${escapeHtml(out.actor || "New Call-in")} OUT</div>
+
+      <div class="smart-badges">${badges}</div>
+
+      <div class="smart-meta">
+        <strong>Character:</strong> ${escapeHtml(out.role || "Not found")}<br>
+        <strong>Status:</strong> ${escapeHtml(out.status || "Not listed")}<br>
+        <strong>Performances:</strong> ${escapeHtml(out.performances || "Not listed")}
+      </div>
+
+      ${autoBlock}
+
+      <div id="adjust_${prefix}" style="display:${dropdownDisplay};">
+        <div class="label">${out.isContractLOA ? "Temporary Replacement" : "Who is covering?"}</div>
+        <select id="cover_${prefix}" onchange="handleSmartCoverChange('${source}', ${index})">
+          ${optionHtml}
+        </select>
+        <input id="manual_${prefix}" style="display:none; margin-top:8px;" placeholder="Type name manually" oninput="handleSmartManualInput('${source}', ${index})">
+      </div>
+
+      <input type="hidden" id="final_${prefix}" value="${escapeAttr(selected)}">
+
+      ${source === "callin" ? `<button class="mini-button danger" style="margin-top:10px;" onclick="removeCallInRow(${index})">Remove</button>` : ""}
+
+      <div class="note">
+        ${out.isContractLOA
+          ? "LOA/MLOA: this will not be written to the IN/OUT sheet."
+          : out.noCoverNeeded
+            ? "Swing/understudy out: no cover is needed."
+            : "This will be written to the IN/OUT sheet."}
+      </div>
+    </div>
+  `;
+}
+
+function showSmartAdjust(source, index) {
+  const prefix = source + "_" + index;
+  const auto = document.getElementById("auto_" + prefix);
+  const adjust = document.getElementById("adjust_" + prefix);
+
+  if (auto) auto.style.display = "none";
+  if (adjust) adjust.style.display = "block";
+}
+
+function handleSmartCoverChange(source, index) {
+  const prefix = source + "_" + index;
+  const select = document.getElementById("cover_" + prefix);
+  const manual = document.getElementById("manual_" + prefix);
+  const card = document.getElementById("smartCard_" + prefix);
+  const final = document.getElementById("final_" + prefix);
+
+  if (!select || !final) return;
+
+  manual.style.display = select.value === "__manual__" ? "block" : "none";
+
+  if (select.value && select.value !== "__manual__") {
+    final.value = select.value;
+    if (card) card.classList.add("complete");
+  } else {
+    final.value = "";
+    if (card) card.classList.remove("complete");
+  }
+}
+
+function handleSmartManualInput(source, index) {
+  const prefix = source + "_" + index;
+  const manual = document.getElementById("manual_" + prefix);
+  const final = document.getElementById("final_" + prefix);
+  const card = document.getElementById("smartCard_" + prefix);
+
+  if (!manual || !final) return;
+
+  final.value = manual.value.trim();
+
+  if (final.value) {
+    if (card) card.classList.add("complete");
+  } else {
+    if (card) card.classList.remove("complete");
+  }
+}
+
+function addCallInRow() {
+  callIns.push({
+    actor: "",
+    role: "",
+    reason: "Illness",
+    status: "Day-of",
+    performances: "",
+    isContractLOA: false,
+    writeToInOutSheet: true,
+    noCoverNeeded: false,
+    inActor: "",
+    coverOptions: []
+  });
+
+  renderCallInCards();
+}
+
+function removeCallInRow(index) {
+  callIns.splice(index, 1);
+  renderCallInCards();
+}
+
+function renderCallInCards() {
+  const container = document.getElementById("callInsContainer");
+  if (!container) return;
+
+  container.innerHTML = callIns.map((item, index) => {
+    return `
+      <div class="smart-out-card" id="callinWrapper_${index}">
+        <div class="label">Who is OUT?</div>
+        <select onchange="setCallInActor(${index}, this.value)">
+          <option value="">Choose actor...</option>
+          ${(intelligence.actorOptions || []).map(actor =>
+            `<option value="${escapeAttr(actor.fullName)}" ${actor.fullName === item.actor ? "selected" : ""}>${escapeHtml(actor.fullName)}</option>`
+          ).join("")}
+        </select>
+
+        <div class="label" style="margin-top:10px;">Reason</div>
+        <select onchange="callIns[${index}].reason = this.value; renderCallInCards();">
+          ${(intelligence.reasonOptions || dropdowns.reason || []).map(reason =>
+            `<option value="${escapeAttr(reason)}" ${reason === item.reason ? "selected" : ""}>${escapeHtml(reason)}</option>`
+          ).join("")}
+        </select>
+
+        <div id="callinDetails_${index}" style="margin-top:12px;">
+          ${item.actor ? renderSmartOutCard(item, index, "callin") : ""}
+        </div>
+
+        <button class="mini-button danger" style="margin-top:10px;" onclick="removeCallInRow(${index})">Remove</button>
+      </div>
+    `;
+  }).join("");
+}
+
+function setCallInActor(index, actorName) {
+  const actor = (intelligence.actorOptions || []).find(row => row.fullName === actorName);
+
+  const character = actor ? actor.character : "";
+  const roleType = actor ? actor.role : "";
+
+  const noCoverNeeded =
+    normalizeSmartRole(character) === "swing" ||
+    normalizeSmartRole(roleType) === "swing" ||
+    normalizeSmartRole(roleType).includes("understudy");
+
+  callIns[index].actor = actorName;
+  callIns[index].role = character;
+  callIns[index].status = "Day-of";
+  callIns[index].writeToInOutSheet = true;
+  callIns[index].noCoverNeeded = noCoverNeeded;
+  callIns[index].coverOptions = noCoverNeeded ? [] : getSmartCoverOptionsForCharacter(character);
+  callIns[index].inActor = noCoverNeeded ? "No cover needed" : "";
+  callIns[index].preselectedCover = noCoverNeeded ? "No cover needed" : "";
+
+  renderCallInCards();
+}
+
+function getSmartCoverOptionsForCharacter(character) {
+  const target = normalizeSmartRole(character);
+  if (!target) return [];
+
+  return (intelligence.actorOptions || [])
+    .filter(actor => {
+      const covers = String(actor.covers || "")
+        .split(/[\n,]/)
+        .map(normalizeSmartRole);
+
+      return covers.includes(target);
+    })
+    .map(actor => actor.fullName)
+    .sort();
+}
+
+function collectSmartOuts(source, list) {
+  return list.map((out, index) => {
+    const prefix = source + "_" + index;
+    const select = document.getElementById("cover_" + prefix);
+    const manual = document.getElementById("manual_" + prefix);
+    const final = document.getElementById("final_" + prefix);
+
+    let inActor = final ? final.value : "";
+
+    if (select && select.value && select.value !== "__manual__") {
+      inActor = select.value;
+    }
+
+    if (select && select.value === "__manual__" && manual) {
+      inActor = manual.value.trim();
+    }
+
+    return {
+      out: out.actor || "",
+      in: inActor || "",
+      role: out.role || "",
+      reason: out.reason || "",
+      isContractLOA: !!out.isContractLOA,
+      writeToInOutSheet: out.writeToInOutSheet !== false,
+      noCoverNeeded: !!out.noCoverNeeded
+    };
+  }).filter(item =>
+    item.out || item.in || item.role || item.reason
+  );
+}
+
+function normalizeSmartRole(value) {
+  return String(value || "")
+    .replace(/é/g, "e")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+    function removeChangeRow(index) {
+      castOuts.splice(index, 1);
+      renderChangeRows();
+    }
+
+    function updateChangeRow(index, field, value) {
+      castOuts[index][field] = value;
+    }
+
+    function dropdownHtml(options, value, field, index) {
+      const currentValue = value || "";
+      let html = `<select onchange="updateChangeRow(${index}, '${field}', this.value)">`;
+      html += `<option value=""></option>`;
+
+      const hasCurrentValue = (options || []).includes(currentValue);
+      if (currentValue && !hasCurrentValue) {
+        html += `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue)}</option>`;
+      }
+
+      (options || []).forEach(option => {
+        const selected = option === currentValue ? "selected" : "";
+        html += `<option value="${escapeHtml(option)}" ${selected}>${escapeHtml(option)}</option>`;
+      });
+
+      html += `</select>`;
+      return html;
+    }
+
+    // function renderChangeRows() {
+    //   const container = document.getElementById("castOutsContainer");
+    //   container.innerHTML = "";
+
+    //   castOuts.forEach((item, index) => {
+    //     const row = document.createElement("div");
+    //     row.className = "change-row";
+
+    //     row.innerHTML = `
+    //       ${dropdownHtml(dropdowns.out, item.out, "out", index)}
+    //       ${dropdownHtml(dropdowns.in, item.in, "in", index)}
+    //       ${dropdownHtml(dropdowns.role, item.role, "role", index)}
+    //       ${dropdownHtml(dropdowns.reason, item.reason, "reason", index)}
+    //       <button class="mini-button danger" onclick="removeChangeRow(${index})">X</button>
+    //     `;
+
+    //     container.appendChild(row);
+    //   });
+    // }
+
+    function renderAssignments() {
+      renderAssignmentGroup("stageManagement", "stageManagementAssignments");
+      renderAssignmentGroup("audio", "audioAssignments");
+
+      document.getElementById("officeShowEnabled").checked = assignments.officeShow === true;
+    }
+
+    function renderAssignmentGroup(groupId, containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      container.innerHTML = "";
+
+      const tracks = (assignments.tracks || []).filter(track =>
+        track.departmentGroup === groupId
+      );
+
+      tracks.forEach(track => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "assignment-row";
+
+        wrapper.innerHTML =
+          "<div class='assignment-track'>" + escapeHtml(track.label) + "</div>" +
+          "<div>" +
+            assignmentDropdownHtml(track.id, assignments.values[track.id] || "") +
+            "<div class='assignment-title' id='assignmentTitle_" + escapeHtml(track.id) + "'></div>" +
+          "</div>";
+
+        container.appendChild(wrapper);
+        refreshAssignmentTitle(track.id);
+      });
+    }
+
+    function assignmentDropdownHtml(trackId, value) {
+      const dropdowns = assignments.dropdowns || {};
+      const peopleByTrack = dropdowns.peopleByTrack || {};
+      const people = peopleByTrack[trackId] || [];
+
+      let html = `<select onchange="assignments.values['${trackId}'] = this.value; refreshAssignmentTitle('${trackId}')">`;
+      html += `<option value=""></option>`;
+
+      people.forEach(person => {
+        const name = person.name || person;
+        const selected = name === value ? "selected" : "";
+        html += `<option value="${escapeHtml(name)}" ${selected}>${escapeHtml(name)}</option>`;
+      });
+
+      html += `</select>`;
+      return html;
+    }
+
+    function refreshAssignmentTitle(trackId) {
+      const el = document.getElementById("assignmentTitle_" + trackId);
+      if (!el) return;
+
+      const personName = assignments.values[trackId] || "";
+      const person = getAssignmentPerson_(trackId, personName);
+
+      el.textContent = person && person.title ? person.title : "";
+    }
+
+    function getAssignmentPerson_(trackId, personName) {
+      const dropdowns = assignments.dropdowns || {};
+      const peopleByTrack = dropdowns.peopleByTrack || {};
+      const people = peopleByTrack[trackId] || [];
+
+      return people.find(person => {
+        const name = person.name || person;
+        return name === personName;
+      });
+    }
+
+    function renderDepartmentTraining(groupId) {
+      const checkbox = document.getElementById(groupId + "TrainingEnabled");
+      const container = document.getElementById(groupId + "TrainingContainer");
+
+      if (!checkbox || !container) return;
+
+      if (!assignments.training[groupId]) {
+        assignments.training[groupId] = {
+          enabled: false,
+          trackId: "",
+          trainer: "",
+          trainee: "",
+          note: ""
+        };
+      }
+
+      const training = assignments.training[groupId];
+      training.enabled = checkbox.checked;
+
+      container.style.display = training.enabled ? "block" : "none";
+
+      if (!training.enabled) {
+        container.innerHTML = "";
+        return;
+      }
+
+      const tracks = (assignments.tracks || []).filter(track =>
+        track.departmentGroup === groupId
+      );
+
+      const people = getPeopleForTrainingGroup_(groupId);
+
+      container.innerHTML =
+        "<div class='label'>Track</div>" +
+        trainingTrackDropdownHtml(groupId, tracks) +
+
+        "<div class='label' style='margin-top:10px;'>Trainer</div>" +
+        trainingPersonDropdownHtml(groupId, "trainer", people) +
+
+        "<div class='label' style='margin-top:10px;'>Trainee</div>" +
+        trainingPersonDropdownHtml(groupId, "trainee", people) +
+
+        "<div class='label' style='margin-top:10px;'>Training Note</div>" +
+        `<input value="${escapeHtml(training.note || "")}" oninput="assignments.training['${groupId}'].note = this.value">`;
+    }
+
+    function getPeopleForTrainingGroup_(groupId) {
+      const dropdowns = assignments.dropdowns || {};
+      const peopleByTrack = dropdowns.peopleByTrack || {};
+      const tracks = (assignments.tracks || []).filter(track =>
+        track.departmentGroup === groupId
+      );
+
+      const names = [];
+
+      tracks.forEach(track => {
+        (peopleByTrack[track.id] || []).forEach(person => {
+          const name = person.name || person;
+          if (name && !names.includes(name)) names.push(name);
+        });
+      });
+
+      return names.sort();
+    }
+
+    function trainingTrackDropdownHtml(groupId, tracks) {
+      const training = assignments.training[groupId];
+
+      let html = `<select onchange="assignments.training['${groupId}'].trackId = this.value">`;
+      html += `<option value=""></option>`;
+
+      tracks.forEach(track => {
+        const selected = track.id === training.trackId ? "selected" : "";
+        html += `<option value="${escapeHtml(track.id)}" ${selected}>${escapeHtml(track.label)}</option>`;
+      });
+
+      html += `</select>`;
+      return html;
+    }
+
+    function trainingPersonDropdownHtml(groupId, field, people) {
+      const training = assignments.training[groupId];
+
+      let html = `<select onchange="assignments.training['${groupId}']['${field}'] = this.value">`;
+      html += `<option value=""></option>`;
+
+      people.forEach(person => {
+        const selected = person === training[field] ? "selected" : "";
+        html += `<option value="${escapeHtml(person)}" ${selected}>${escapeHtml(person)}</option>`;
+      });
+
+      html += `</select>`;
+      return html;
+    }
+
+    function applyPrep() {
+      document.getElementById("status").textContent = "Applying...";
+
+      const payload = {
+        performance: performanceInput.value,
+        conductor: conductorInput.value,
+        notes: notesInput.value,
+        castOuts: collectSmartOuts("planned", plannedOuts)
+          .concat(collectSmartOuts("callin", callIns))
+          .filter(item => item.writeToInOutSheet !== false),
+        assignments: assignments,
+        guestSpellerName: selectedGuestInfo.name || "",
+        guestDateTimeText: selectedGuestInfo.dateTimeText || "",
+        guestSpellerNote: selectedGuestInfo.note || ""
+      };
+
+      google.script.run
+        .withSuccessHandler(result => {
+          document.getElementById("status").textContent = result.message || "Done.";
+
+          google.script.run
+            .withSuccessHandler(() => google.script.host.close())
+            .showInOutExportDialog(result.nextData);
+        })
+        .withFailureHandler(error => {
+          document.getElementById("status").textContent = "Error: " + error.message;
+        })
+        .applyInOutPrepFromDialog(payload);
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    renderPerformanceButtons();
+
+    if (selectedIndex !== null && selectedIndex !== undefined) {
+      selectPerformance(selectedIndex);
+    } else if (data.performances.length > 0) {
+      selectPerformance(0);
+    } else {
+      notesInput.value = data.notes || "";
+    }
+
+    renderAssignments();
+    renderSmartOutSections();
+  </script>
+</body>
+</html>

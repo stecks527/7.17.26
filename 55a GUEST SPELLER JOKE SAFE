@@ -1,0 +1,60 @@
+/*************************************************
+ * 55a GUEST SPELLER JOKE SAFE
+ *************************************************/
+
+function addUniversalGuestSpellerJoke_SAFE() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Performance Highlights");
+  const ui = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Could not find the "Performance Highlights" tab.');
+    return;
+  }
+
+  const response = ui.prompt(
+    "Add Universal Guest Speller Joke",
+    "Enter the joke text once:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const baseJoke = response.getResponseText().trim();
+
+  if (!baseJoke) {
+    ui.alert("No joke entered.");
+    return;
+  }
+
+  const sections = [
+    { header: "GUEST SPELLER #5 - ROUND 1", guest: "#5" },
+    { header: "GUEST SPELLER #7 - ROUND 1", guest: "#7" },
+    { header: "GUEST SPELLER #13 - ROUND 1", guest: "#13" },
+    { header: "GUEST SPELLER #23 - ROUND 1", guest: "#23" },
+    { header: "GUEST SPELLER #5 JOKE", guest: "#5" },
+    { header: "GUEST SPELLER #7 JOKE", guest: "#7" },
+    { header: "GUEST SPELLER #13 JOKE", guest: "#13" },
+    { header: "GUEST SPELLER #23 JOKE", guest: "#23" }
+  ];
+
+  let addedCount = 0;
+
+  sections.forEach(section => {
+    const headerRow = findGuestSpellerJokeHeaderAfterRow215_(sheet, section.header);
+    if (!headerRow) return;
+
+    const nextHeaderRow = findNextJokeBankHeaderAfter_(sheet, headerRow + 1);
+    const endRow = nextHeaderRow ? nextHeaderRow - 1 : sheet.getLastRow();
+
+    const targetRow = findFirstBlankInColumnB_(sheet, headerRow + 1, endRow);
+    if (!targetRow) return;
+
+    const fullJoke = `– Rona's Guest Speller ${section.guest} "${baseJoke}"`;
+
+    sheet.getRange(targetRow, 2).setValue(fullJoke);
+    addedCount++;
+  });
+
+  ui.alert(`Universal Guest Speller Joke added to ${addedCount} section(s).`);
+}

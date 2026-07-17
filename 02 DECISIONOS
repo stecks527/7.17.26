@@ -1,0 +1,1243 @@
+/*************************************************
+ * 02 DECISIONOS
+ * Version: 4.0.0
+ * Status: ACTIVE
+ *
+ * Canonical Engine-backed decision API.
+ *
+ * Standard lifecycle:
+ * - current()
+ * - get()
+ * - refresh()
+ * - status()
+ * - test()
+ *
+ * Compatibility methods remain available.
+ *************************************************/
+
+function DecisionOS() {
+  let currentLoaded = false;
+  let currentPerformance = null;
+
+  function current_() {
+    if (!currentLoaded) {
+      currentPerformance =
+        decisionOSCurrentPerformance_();
+
+      currentLoaded = true;
+    }
+
+    return currentPerformance;
+  }
+
+  return {
+    /***************
+     * Platform API
+     ***************/
+    current: function () {
+      return current_();
+    },
+
+    get: function () {
+      return current_();
+    },
+
+    refresh: function () {
+      decisionOSClearCache_();
+
+      currentLoaded = false;
+      currentPerformance = null;
+
+      return current_();
+    },
+
+    status: function () {
+      return decisionOSStatus_(
+        current_()
+      );
+    },
+
+    test: function () {
+      return testDecisionOSPlatformAPI();
+    },
+
+    /***************
+     * Core
+     ***************/
+    currentPerformance: function () {
+      return current_();
+    },
+
+    available: function () {
+      return Boolean(
+        current_()
+      );
+    },
+
+    summary: function () {
+      return decisionOSSummaryFromPerformance_(
+        current_()
+      );
+    },
+
+    performancesToday: function () {
+      return decisionOSPerformancesTodayFromPerformance_(
+        current_()
+      );
+    },
+
+    today: function () {
+      return decisionOSTodayFromPerformance_(
+        current_()
+      );
+    },
+
+    /***************
+     * Performance
+     ***************/
+    showDate: function () {
+      const perf = current_();
+      return perf ? perf.date : "";
+    },
+
+    performanceLabel: function () {
+      const perf = current_();
+      return perf ? perf.performanceLabel : "";
+    },
+
+    performanceNumber: function () {
+      const perf = current_();
+      return perf ? perf.performanceNumber : "";
+    },
+
+    performanceTime: function () {
+      const perf = current_();
+      return perf ? perf.performanceTime : "";
+    },
+
+    showType: function () {
+      const perf = current_();
+      return perf ? perf.showType : "";
+    },
+
+    conductor: function () {
+      const perf = current_();
+      return perf ? perf.conductor : "";
+    },
+
+    guestSpeller: function () {
+      const perf = current_();
+      return perf ? perf.guestSpeller : "";
+    },
+
+    hasGuestSpeller: function () {
+      return Boolean(
+        String(
+          this.guestSpeller() || ""
+        ).trim()
+      );
+    },
+
+    notes: function () {
+      const perf = current_();
+      return perf ? perf.notes || "" : "";
+    },
+
+    /***************
+     * Engine rows
+     ***************/
+    showState: function () {
+      const perf = current_();
+      return perf ? perf.showState || {} : {};
+    },
+
+    showStateHistory: function () {
+      const perf = current_();
+      return perf ? perf.showStateHistory || [] : [];
+    },
+
+    assignments: function () {
+      const perf = current_();
+      return perf ? perf.assignments || [] : [];
+    },
+
+    resolvedCast: function () {
+      const perf = current_();
+      return perf ? perf.resolvedCast || [] : [];
+    },
+
+    coveredRoles: function () {
+      const perf = current_();
+      return perf ? perf.coveredRoles || [] : [];
+    },
+
+    outs: function () {
+      const perf = current_();
+      return perf ? perf.outs || [] : [];
+    },
+
+    principalOuts: function () {
+      return decisionOSPrincipalOutsFromPerformance_(
+        current_()
+      );
+    },
+
+    insertLines: function () {
+      return decisionOSInsertLinesFromPerformance_(
+        current_()
+      );
+    },
+
+    /***************
+     * Assignments
+     ***************/
+    assignmentByTrack: function (trackId) {
+      return decisionOSAssignmentByTrackFromPerformance_(
+        current_(),
+        trackId
+      );
+    },
+
+    callingSM: function () {
+      return decisionOSAssignmentByTrackFromPerformance_(
+        current_(),
+        "calling"
+      );
+    },
+
+    deckSM: function () {
+      return decisionOSAssignmentByTrackFromPerformance_(
+        current_(),
+        "deck"
+      );
+    },
+
+    audio: function () {
+      return decisionOSAssignmentByTrackFromPerformance_(
+        current_(),
+        "audio"
+      );
+    },
+
+    assignmentNameByTrack: function (trackId) {
+      const row =
+        decisionOSAssignmentByTrackFromPerformance_(
+          current_(),
+          trackId
+        );
+
+      return row
+        ? row["Assigned Person"] ||
+          row["Person"] ||
+          row["Actor"] ||
+          row["Name"] ||
+          ""
+        : "";
+    },
+
+    /***************
+     * Cast
+     ***************/
+    actorForRole: function (roleName) {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        roleName
+      );
+    },
+
+    roleRow: function (roleName) {
+      return decisionOSRoleRowFromPerformance_(
+        current_(),
+        roleName
+      );
+    },
+
+    barfee: function () {
+      return (
+        decisionOSActorForRoleFromPerformance_(
+          current_(),
+          "Barfée"
+        ) ||
+        decisionOSActorForRoleFromPerformance_(
+          current_(),
+          "Barfee"
+        )
+      );
+    },
+
+    olive: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Olive"
+      );
+    },
+
+    rona: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Rona"
+      );
+    },
+
+    panch: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Panch"
+      );
+    },
+
+    chip: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Chip"
+      );
+    },
+
+    leaf: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Leaf"
+      );
+    },
+
+    marcy: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Marcy"
+      );
+    },
+
+    mitch: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Mitch"
+      );
+    },
+
+    schwartzy: function () {
+      return decisionOSActorForRoleFromPerformance_(
+        current_(),
+        "Schwartzy"
+      );
+    },
+
+    /***************
+     * Flags
+     ***************/
+    hasPerformance: function () {
+      return Boolean(
+        this.performanceLabel()
+      );
+    },
+
+    isMatinee: function () {
+      return (
+        decisionOSNormalize_(
+          this.showType()
+        ).includes("mat") ||
+        decisionOSNormalize_(
+          this.performanceLabel()
+        ).includes("mat")
+      );
+    },
+
+    isEvening: function () {
+      return (
+        decisionOSNormalize_(
+          this.showType()
+        ).includes("eve") ||
+        decisionOSNormalize_(
+          this.performanceLabel()
+        ).includes("eve")
+      );
+    },
+
+    officeShow: function () {
+      return decisionOSContainsAny_(
+        [this.notes()],
+        ["office show"]
+      );
+    },
+
+    trainingToday: function () {
+      return decisionOSContainsAny_(
+        [this.notes()],
+        [
+          "training",
+          "rehearsing",
+          "rehearsal"
+        ]
+      );
+    },
+
+    /***************
+     * Snapshot review
+     ***************/
+    review: function () {
+      return decisionOSReviewLatestPerformance_();
+    },
+
+    reviewLatestPerformance: function () {
+      return decisionOSReviewLatestPerformance_();
+    }
+  };
+}
+
+
+/*************************************************
+ * CURRENT PERFORMANCE
+ *************************************************/
+
+function decisionOSCurrentPerformance_() {
+  if (typeof EngineQueryOS !== "function") return null;
+  return EngineQueryOS().latestPerformance();
+}
+
+/*************************************************
+ * TODAY PAYLOAD
+ *************************************************/
+
+function decisionOSToday_() {
+  const perf = decisionOSCurrentPerformance_();
+
+  if (!perf) {
+    return {
+      available: false,
+      message: "No current Engine performance found."
+    };
+  }
+
+  return {
+    available: true,
+    snapshotId: perf.snapshotId || "",
+    date: perf.date || "",
+    dateText: perf.date || "",
+    performanceLabel: perf.performanceLabel || "",
+    performanceText: perf.performanceLabel || "",
+    performanceNumber: perf.performanceNumber || "",
+    performanceTime: perf.performanceTime || "",
+    showType: perf.showType || "",
+    conductor: perf.conductor || "",
+    guestSpeller: perf.guestSpeller || "",
+    notes: perf.notes || "",
+    assignments: perf.assignments || [],
+    resolvedCast: perf.resolvedCast || [],
+    coveredRoles: perf.coveredRoles || [],
+    outs: perf.outs || [],
+    principalOuts: decisionOSPrincipalOuts_(),
+    insertLines: decisionOSInsertLines_(),
+    counts: perf.counts || {}
+  };
+}
+
+/*************************************************
+ * ASSIGNMENTS
+ *************************************************/
+
+function decisionOSAssignmentByTrack_(trackId) {
+  const perf = decisionOSCurrentPerformance_();
+  const assignments = perf ? perf.assignments || [] : [];
+  const target = decisionOSNormalize_(trackId);
+
+  return assignments.find(row =>
+    decisionOSNormalize_(
+      row["Track ID"] ||
+      row["Track"] ||
+      row["Track Label"]
+    ) === target
+  ) || null;
+}
+
+/*************************************************
+ * CAST
+ *************************************************/
+
+function decisionOSRoleRow_(roleName) {
+  const perf = decisionOSCurrentPerformance_();
+  const cast = perf ? perf.resolvedCast || [] : [];
+  const target = decisionOSNormalizeRole_(roleName);
+
+  return cast.find(row =>
+    decisionOSNormalizeRole_(row["Role"]) === target
+  ) || null;
+}
+
+function decisionOSActorForRole_(roleName) {
+  const row = decisionOSRoleRow_(roleName);
+
+  return row
+    ? row["Resolved Actor"] ||
+      row["Actor"] ||
+      row["Default Actor"] ||
+      ""
+    : "";
+}
+
+function decisionOSPrincipalOuts_() {
+  const perf = decisionOSCurrentPerformance_();
+  const cast = perf ? perf.resolvedCast || [] : [];
+
+  return cast.filter(row => {
+    const status = decisionOSNormalize_(row["Status"]);
+    const role = decisionOSNormalize_(row["Role"]);
+    const outActor = String(
+      row["Default Actor"] ||
+      row["Out Actor"] ||
+      row["Out"] ||
+      ""
+    ).trim();
+
+    if (!outActor) return false;
+
+    if (
+      role.includes("swing") ||
+      role.includes("understudy") ||
+      role.includes("u/s") ||
+      role.includes("standby")
+    ) {
+      return false;
+    }
+
+    return (
+      status.includes("covered") ||
+      status.includes("out")
+    );
+  });
+}
+
+function decisionOSInsertLines_() {
+  return decisionOSPrincipalOuts_().map(row => {
+    const role = row["Role"] || "Role";
+    const actor =
+      row["Resolved Actor"] ||
+      row["Cover Actor"] ||
+      row["In Actor"] ||
+      "Cover TBD";
+
+    return role + " = " + actor;
+  });
+}
+
+/*************************************************
+ * SNAPSHOT REVIEW
+ *************************************************/
+
+function decisionOSReviewLatestPerformance_() {
+  const assignmentChanges =
+    typeof SnapshotDiffOS === "function"
+      ? SnapshotDiffOS().assignments()
+      : [];
+
+  const castChanges =
+    typeof SnapshotDiffOS === "function"
+      ? SnapshotDiffOS().cast()
+      : [];
+
+  return {
+    system: "DecisionOS",
+    version: "2.0.0",
+    reviewedAt: new Date(),
+    currentPerformance: decisionOSSummary_(),
+    assignmentChanges,
+    castChanges,
+    recommendations: decisionOSBuildRecommendations_(assignmentChanges, castChanges)
+  };
+}
+
+function decisionOSBuildRecommendations_(assignmentChanges, castChanges) {
+  const recommendations = [];
+
+  assignmentChanges.forEach(change => {
+    recommendations.push({
+      type: "ASSIGNMENT_CHANGE",
+      severity: "INFO",
+      message:
+        change.key +
+        " changed from " +
+        (change.previous || "blank") +
+        " to " +
+        (change.current || "blank") +
+        "."
+    });
+  });
+
+  castChanges.forEach(change => {
+    recommendations.push({
+      type: "CAST_CHANGE",
+      severity: "INFO",
+      message:
+        change.key +
+        " changed from " +
+        (change.previous || "blank") +
+        " to " +
+        (change.current || "blank") +
+        "."
+    });
+  });
+
+  if (!recommendations.length) {
+    recommendations.push({
+      type: "NO_CHANGES",
+      severity: "OK",
+      message: "No major changes detected from the previous snapshot."
+    });
+  }
+
+  return recommendations;
+}
+
+/*************************************************
+ * SUMMARY
+ *************************************************/
+
+function decisionOSSummary_() {
+  const perf = decisionOSCurrentPerformance_();
+
+  if (!perf) {
+    return {
+      available: false,
+      message: "No current Engine performance found."
+    };
+  }
+
+  return {
+    available: true,
+    snapshotId: perf.snapshotId || "",
+    date: perf.date || "",
+    performanceLabel: perf.performanceLabel || "",
+    performanceNumber: perf.performanceNumber || "",
+    performanceTime: perf.performanceTime || "",
+    showType: perf.showType || "",
+    conductor: perf.conductor || "",
+    guestSpeller: perf.guestSpeller || "",
+    hasGuestSpeller: !!String(perf.guestSpeller || "").trim(),
+    assignmentCount: (perf.assignments || []).length,
+    resolvedCastCount: (perf.resolvedCast || []).length,
+    coveredRoleCount: (perf.coveredRoles || []).length,
+    uncoveredOutCount: (perf.outs || []).length,
+    principalOutCount: decisionOSPrincipalOuts_().length,
+    insertLineCount: decisionOSInsertLines_().length
+  };
+}
+
+/*************************************************
+ * HELPERS
+ *************************************************/
+
+function decisionOSNormalize_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decisionOSNormalizeRole_(value) {
+  return decisionOSNormalize_(value)
+    .replace(/[ée]/g, "e")
+    .replace(/[^a-z0-9 ]/g, "")
+    .trim();
+}
+
+function decisionOSContainsAny_(values, needles) {
+  const text = values
+    .map(value => String(value || ""))
+    .join(" ")
+    .toLowerCase();
+
+  return needles.some(needle =>
+    text.includes(String(needle || "").toLowerCase())
+  );
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testDecisionOSCurrentPerformance() {
+  const summary = DecisionOS().summary();
+
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "DecisionOS Current Performance\n\n" +
+    "Available: " + summary.available + "\n" +
+    "Performance: " + (summary.performanceLabel || "") + "\n" +
+    "Date: " + (summary.date || "") + "\n" +
+    "Conductor: " + (summary.conductor || "") + "\n" +
+    "Guest Speller: " + (summary.guestSpeller || "") + "\n" +
+    "Assignments: " + (summary.assignmentCount || 0) + "\n" +
+    "Resolved Cast: " + (summary.resolvedCastCount || 0) + "\n" +
+    "Principal Outs: " + (summary.principalOutCount || 0) + "\n" +
+    "Insert Lines: " + (summary.insertLineCount || 0)
+  );
+}
+
+function testDecisionOSToday() {
+  const today = DecisionOS().today();
+
+  Logger.log(JSON.stringify(today, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "DecisionOS Today\n\n" +
+    "Available: " + today.available + "\n" +
+    "Performance: " + (today.performanceText || "") + "\n" +
+    "Date: " + (today.dateText || "") + "\n" +
+    "Conductor: " + (today.conductor || "") + "\n" +
+    "Guest Speller: " + (today.guestSpeller || "") + "\n" +
+    "Principal Outs: " + ((today.principalOuts || []).length) + "\n" +
+    "Insert Lines: " + ((today.insertLines || []).length)
+  );
+}
+
+function testDecisionOSConvenienceMethods() {
+  const d = DecisionOS();
+
+  const output = {
+    callingSM: d.callingSM(),
+    deckSM: d.deckSM(),
+    audio: d.audio(),
+    barfee: d.barfee(),
+    olive: d.olive(),
+    guestSpeller: d.guestSpeller(),
+    hasGuestSpeller: d.hasGuestSpeller(),
+    officeShow: d.officeShow(),
+    trainingToday: d.trainingToday(),
+    insertLines: d.insertLines()
+  };
+
+  Logger.log(JSON.stringify(output, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "DecisionOS Convenience Test\n\n" +
+    "Barfée: " + (output.barfee || "") + "\n" +
+    "Olive: " + (output.olive || "") + "\n" +
+    "Guest: " + (output.guestSpeller || "") + "\n" +
+    "Insert Lines: " + output.insertLines.length
+  );
+}
+
+function testDecisionOSReviewLatestPerformance() {
+  const review = DecisionOS().reviewLatestPerformance();
+
+  Logger.log(JSON.stringify(review, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "DecisionOS Review\n\n" +
+    "Assignment Changes: " + review.assignmentChanges.length + "\n" +
+    "Cast Changes: " + review.castChanges.length + "\n" +
+    "Recommendations: " + review.recommendations.length
+  );
+}
+
+function decisionOSPerformancesToday_() {
+  const current = decisionOSCurrentPerformance_();
+  if (!current || typeof EngineQueryOS !== "function") return [];
+
+  const perfs = EngineQueryOS().performancesByDate(current.date);
+
+  return perfs && perfs.length ? perfs : [current];
+}
+
+/*************************************************
+ * PLATFORM HELPERS
+ *************************************************/
+
+function decisionOSClearCache_() {
+  if (
+    typeof EngineQueryOS ===
+    "function"
+  ) {
+    const query =
+      EngineQueryOS();
+
+    if (
+      query &&
+      typeof query.clearCache ===
+      "function"
+    ) {
+      query.clearCache();
+    }
+  }
+
+  return true;
+}
+
+
+function decisionOSTodayFromPerformance_(perf) {
+  if (!perf) {
+    return {
+      available: false,
+      message:
+        "No current Engine performance found."
+    };
+  }
+
+  return {
+    available: true,
+    snapshotId: perf.snapshotId || "",
+    date: perf.date || "",
+    dateText: perf.date || "",
+    performanceLabel:
+      perf.performanceLabel || "",
+    performanceText:
+      perf.performanceLabel || "",
+    performanceNumber:
+      perf.performanceNumber || "",
+    performanceTime:
+      perf.performanceTime || "",
+    showType: perf.showType || "",
+    conductor: perf.conductor || "",
+    guestSpeller:
+      perf.guestSpeller || "",
+    notes: perf.notes || "",
+    assignments:
+      perf.assignments || [],
+    resolvedCast:
+      perf.resolvedCast || [],
+    coveredRoles:
+      perf.coveredRoles || [],
+    outs: perf.outs || [],
+    principalOuts:
+      decisionOSPrincipalOutsFromPerformance_(
+        perf
+      ),
+    insertLines:
+      decisionOSInsertLinesFromPerformance_(
+        perf
+      ),
+    counts: perf.counts || {}
+  };
+}
+
+
+function decisionOSSummaryFromPerformance_(perf) {
+  if (!perf) {
+    return {
+      available: false,
+      message:
+        "No current Engine performance found."
+    };
+  }
+
+  return {
+    available: true,
+    snapshotId: perf.snapshotId || "",
+    date: perf.date || "",
+    performanceLabel:
+      perf.performanceLabel || "",
+    performanceNumber:
+      perf.performanceNumber || "",
+    performanceTime:
+      perf.performanceTime || "",
+    showType: perf.showType || "",
+    conductor: perf.conductor || "",
+    guestSpeller:
+      perf.guestSpeller || "",
+    hasGuestSpeller:
+      Boolean(
+        String(
+          perf.guestSpeller || ""
+        ).trim()
+      ),
+    assignmentCount:
+      (perf.assignments || []).length,
+    resolvedCastCount:
+      (perf.resolvedCast || []).length,
+    coveredRoleCount:
+      (perf.coveredRoles || []).length,
+    uncoveredOutCount:
+      (perf.outs || []).length,
+    principalOutCount:
+      decisionOSPrincipalOutsFromPerformance_(
+        perf
+      ).length,
+    insertLineCount:
+      decisionOSInsertLinesFromPerformance_(
+        perf
+      ).length
+  };
+}
+
+
+function decisionOSAssignmentByTrackFromPerformance_(
+  perf,
+  trackId
+) {
+  const assignments =
+    perf
+      ? perf.assignments || []
+      : [];
+
+  const target =
+    decisionOSNormalize_(
+      trackId
+    );
+
+  return (
+    assignments.find(
+      function (row) {
+        return (
+          decisionOSNormalize_(
+            row["Track ID"] ||
+            row["Track"] ||
+            row["Track Label"]
+          ) === target
+        );
+      }
+    ) ||
+    null
+  );
+}
+
+
+function decisionOSRoleRowFromPerformance_(
+  perf,
+  roleName
+) {
+  const cast =
+    perf
+      ? perf.resolvedCast || []
+      : [];
+
+  const target =
+    decisionOSNormalizeRole_(
+      roleName
+    );
+
+  return (
+    cast.find(
+      function (row) {
+        return (
+          decisionOSNormalizeRole_(
+            row["Role"]
+          ) === target
+        );
+      }
+    ) ||
+    null
+  );
+}
+
+
+function decisionOSActorForRoleFromPerformance_(
+  perf,
+  roleName
+) {
+  const row =
+    decisionOSRoleRowFromPerformance_(
+      perf,
+      roleName
+    );
+
+  return row
+    ? row["Resolved Actor"] ||
+      row["Actor"] ||
+      row["Default Actor"] ||
+      ""
+    : "";
+}
+
+
+function decisionOSPrincipalOutsFromPerformance_(
+  perf
+) {
+  const cast =
+    perf
+      ? perf.resolvedCast || []
+      : [];
+
+  return cast.filter(
+    function (row) {
+      const status =
+        decisionOSNormalize_(
+          row["Status"]
+        );
+
+      const role =
+        decisionOSNormalize_(
+          row["Role"]
+        );
+
+      const outActor =
+        String(
+          row["Default Actor"] ||
+          row["Out Actor"] ||
+          row["Out"] ||
+          ""
+        ).trim();
+
+      if (!outActor) return false;
+
+      if (
+        role.includes("swing") ||
+        role.includes("understudy") ||
+        role.includes("u/s") ||
+        role.includes("standby")
+      ) {
+        return false;
+      }
+
+      return (
+        status.includes("covered") ||
+        status.includes("out")
+      );
+    }
+  );
+}
+
+
+function decisionOSInsertLinesFromPerformance_(
+  perf
+) {
+  return decisionOSPrincipalOutsFromPerformance_(
+    perf
+  ).map(
+    function (row) {
+      const role =
+        row["Role"] ||
+        "Role";
+
+      const actor =
+        row["Resolved Actor"] ||
+        row["Cover Actor"] ||
+        row["In Actor"] ||
+        "Cover TBD";
+
+      return (
+        role +
+        " = " +
+        actor
+      );
+    }
+  );
+}
+
+
+function decisionOSPerformancesTodayFromPerformance_(
+  current
+) {
+  if (
+    !current ||
+    typeof EngineQueryOS !==
+      "function"
+  ) {
+    return [];
+  }
+
+  const query =
+    EngineQueryOS();
+
+  const performances =
+    query &&
+    typeof query.performancesByDate ===
+      "function"
+      ? query.performancesByDate(
+          current.date
+        )
+      : [];
+
+  return (
+    performances &&
+    performances.length
+      ? performances
+      : [current]
+  );
+}
+
+
+function decisionOSStatus_(perf) {
+  const summary =
+    decisionOSSummaryFromPerformance_(
+      perf
+    );
+
+  return {
+    system: "DecisionOS",
+    version: "4.0.0",
+    available:
+      Boolean(
+        summary.available
+      ),
+    healthy:
+      Boolean(
+        summary.available &&
+        summary.performanceLabel
+      ),
+    engineAvailable:
+      typeof EngineQueryOS ===
+      "function",
+    snapshotId:
+      summary.snapshotId || "",
+    date:
+      summary.date || "",
+    performance:
+      summary.performanceLabel || "",
+    performanceNumber:
+      summary.performanceNumber || "",
+    conductor:
+      summary.conductor || "",
+    assignments:
+      summary.assignmentCount || 0,
+    resolvedCast:
+      summary.resolvedCastCount || 0,
+    principalOuts:
+      summary.principalOutCount || 0,
+    insertLines:
+      summary.insertLineCount || 0
+  };
+}
+
+
+/*************************************************
+ * PLATFORM API TEST
+ *************************************************/
+
+function testDecisionOSPlatformAPI() {
+  const startedAt =
+    Date.now();
+
+  const decision =
+    DecisionOS();
+
+  const requiredMethods = [
+    "current",
+    "get",
+    "refresh",
+    "status",
+    "test",
+    "summary",
+    "today",
+    "review",
+    "reviewLatestPerformance"
+  ];
+
+  const missingMethods =
+    requiredMethods.filter(
+      function (methodName) {
+        return (
+          typeof decision[methodName] !==
+          "function"
+        );
+      }
+    );
+
+  const current =
+    decision.current();
+
+  const summary =
+    decision.summary();
+
+  const today =
+    decision.today();
+
+  const status =
+    decision.status();
+
+  const result = {
+    healthy:
+      status.healthy &&
+      missingMethods.length === 0,
+
+    methodsChecked:
+      requiredMethods.length,
+
+    missingMethods:
+      missingMethods,
+
+    available:
+      Boolean(current),
+
+    date:
+      status.date,
+
+    performance:
+      status.performance,
+
+    conductor:
+      status.conductor,
+
+    assignments:
+      status.assignments,
+
+    resolvedCast:
+      status.resolvedCast,
+
+    principalOuts:
+      status.principalOuts,
+
+    insertLines:
+      status.insertLines,
+
+    summaryAvailable:
+      Boolean(
+        summary.available
+      ),
+
+    todayAvailable:
+      Boolean(
+        today.available
+      ),
+
+    durationMs:
+      Date.now() - startedAt
+  };
+
+  Logger.log(
+    "DECISIONOS PLATFORM API TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "DecisionOS platform API test " +
+      (
+        result.healthy
+          ? "passed."
+          : "found issues."
+      ) +
+      "\n\n" +
+      "Methods checked: " +
+      result.methodsChecked +
+      "\n" +
+      "Missing methods: " +
+      result.missingMethods.length +
+      "\n" +
+      "Available: " +
+      result.available +
+      "\n" +
+      "Performance: " +
+      result.performance +
+      "\n" +
+      "Date: " +
+      result.date +
+      "\n" +
+      "Conductor: " +
+      result.conductor +
+      "\n" +
+      "Assignments: " +
+      result.assignments +
+      "\n" +
+      "Resolved Cast: " +
+      result.resolvedCast +
+      "\n" +
+      "Principal Outs: " +
+      result.principalOuts +
+      "\n" +
+      "Insert Lines: " +
+      result.insertLines +
+      "\n\n" +
+      "Duration: " +
+      result.durationMs +
+      " ms"
+    );
+
+  return result;
+}

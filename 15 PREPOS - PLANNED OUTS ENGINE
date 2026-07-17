@@ -1,0 +1,975 @@
+/*************************************************
+ * 15 PREPOS - PLANNED OUTS ENGINE
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Canonical planned-out model for PrepOS.
+ *
+ * Responsibilities:
+ * - Normalize planned outs from Show State
+ * - Preserve Weekly-assigned coverage
+ * - Preserve temporary LOA/MLOA replacements
+ * - Build cover options
+ * - Prevent duplicate out cards
+ *************************************************/
+
+
+/* =========================================================
+ * PUBLIC BUILDER
+ * ========================================================= */
+
+function prepOSBuildPlannedOutCards_(
+  showState,
+  weekly
+) {
+  showState = showState || {};
+  weekly = weekly || {};
+
+  const sources = [];
+
+  prepOSAppendPlannedOutSource_(
+    sources,
+    showState.intelligence &&
+      showState.intelligence.plannedOuts
+  );
+
+  prepOSAppendPlannedOutSource_(
+    sources,
+    showState.currentCastOuts
+  );
+
+  prepOSAppendPlannedOutSource_(
+    sources,
+    showState.castOuts
+  );
+
+  prepOSAppendPlannedOutSource_(
+    sources,
+    showState.outs
+  );
+
+  const normalized =
+    sources.map(function (item, index) {
+      return prepOSNormalizePlannedOutCard_(
+        item,
+        index,
+        showState,
+        weekly
+      );
+    });
+
+  return prepOSDedupePlannedOutCards_(
+    normalized
+  );
+}
+
+
+/* =========================================================
+ * SOURCE COLLECTION
+ * ========================================================= */
+
+function prepOSAppendPlannedOutSource_(
+  output,
+  source
+) {
+  if (!source) return;
+
+  if (Array.isArray(source)) {
+    source.forEach(function (item) {
+      if (item) {
+        output.push(item);
+      }
+    });
+
+    return;
+  }
+
+  output.push(source);
+}
+
+
+/* =========================================================
+ * NORMALIZATION
+ * ========================================================= */
+
+function prepOSNormalizePlannedOutCard_(
+  item,
+  index,
+  showState,
+  weekly
+) {
+  item = item || {};
+
+  const actor =
+    prepOSFirstNonBlank_(
+      item.actor,
+      item.actorOut,
+      item.out,
+      item.name
+    );
+
+  const role =
+    prepOSFirstNonBlank_(
+      item.role,
+      item.character
+    );
+
+  const reason =
+    prepOSFirstNonBlank_(
+      item.reason,
+      item.outReason
+    );
+
+  const status =
+    prepOSFirstNonBlank_(
+      item.status,
+      item.approvalStatus,
+      "Review"
+    );
+
+  const performanceCount =
+    prepOSFirstNonBlank_(
+      item.performanceCount,
+      item.performances,
+      1
+    );
+
+  const isContractLOA =
+    Boolean(
+      item.isContractLOA
+    ) ||
+    prepOSIsContractLeaveReason_(
+      reason
+    );
+
+  const temporaryReplacement =
+    prepOSFirstNonBlank_(
+      item.tempReplacement,
+      item.temporaryReplacement,
+      prepOSFindTemporaryReplacementForOut_(
+        actor,
+        role,
+        showState
+      )
+    );
+
+  const weeklyAssigned =
+    prepOSFirstNonBlank_(
+      item.weeklyAssigned,
+      item.weeklyCover,
+      prepOSFindWeeklyCoverForOut_(
+        actor,
+        role,
+        showState,
+        weekly
+      )
+    );
+
+  const existingCover =
+    prepOSFirstNonBlank_(
+      item.finalInActor,
+      item.preselectedCover,
+      item.coverActor,
+      item.inActor,
+      item.in,
+      item.cover,
+      temporaryReplacement,
+      weeklyAssigned
+    );
+
+  const noCoverNeeded =
+    Boolean(
+      item.noCoverNeeded
+    ) ||
+    prepOSIsSwingOrUnderstudyPlannedOut_(
+      actor,
+      role,
+      item
+    );
+
+  const coverOptions =
+    noCoverNeeded
+      ? []
+      : prepOSBuildCoverOptionsForOut_(
+          role,
+          item,
+          showState
+        );
+
+  if (
+    existingCover &&
+    !noCoverNeeded &&
+    coverOptions.indexOf(
+      existingCover
+    ) === -1
+  ) {
+    coverOptions.unshift(
+      existingCover
+    );
+  }
+
+  return {
+    id:
+      item.id ||
+      "planned_" +
+      index,
+
+    source:
+      item.source ||
+      "planned",
+
+    actor:
+      actor,
+
+    actorOut:
+      actor,
+
+    out:
+      actor,
+
+    character:
+      role,
+
+    role:
+      role,
+
+    reason:
+      reason,
+
+    status:
+      status,
+
+    performances:
+      String(
+        performanceCount
+      ),
+
+    performanceCount:
+      Number(
+        performanceCount
+      ) || 1,
+
+    isLoa:
+      /^LOA$/i.test(
+        reason
+      ),
+
+    isMloa:
+      /^MLOA$/i.test(
+        reason
+      ),
+
+    isContractLOA:
+      isContractLOA,
+
+    writeToInOutSheet:
+      item.writeToInOutSheet !== false &&
+      !isContractLOA,
+
+    tempReplacement:
+      temporaryReplacement,
+
+    weeklyAssigned:
+      weeklyAssigned,
+
+    preselectedCover:
+      noCoverNeeded
+        ? ""
+        : existingCover,
+
+    coverActor:
+      noCoverNeeded
+        ? ""
+        : existingCover,
+
+    finalInActor:
+      noCoverNeeded
+        ? ""
+        : existingCover,
+
+    coverSource:
+      temporaryReplacement
+        ? "temporaryReplacement"
+        : weeklyAssigned
+          ? "weeklyAssigned"
+          : existingCover
+            ? "existing"
+            : "",
+
+    coverOptions:
+      prepOSUniqueSorted_(
+        coverOptions
+      ),
+
+    isTemporaryReplacement:
+      Boolean(
+        temporaryReplacement
+      ),
+
+    isWeeklyAssigned:
+      Boolean(
+        weeklyAssigned
+      ),
+
+    noCoverNeeded:
+      noCoverNeeded,
+
+    complete:
+      Boolean(
+        actor &&
+        (
+          noCoverNeeded ||
+          existingCover ||
+          isContractLOA
+        )
+      )
+  };
+}
+
+
+/* =========================================================
+ * WEEKLY COVER
+ * ========================================================= */
+
+function prepOSFindWeeklyCoverForOut_(
+  actor,
+  role,
+  showState,
+  weekly
+) {
+  const assignments = [];
+
+  prepOSAppendPlannedOutSource_(
+    assignments,
+    showState.assignments
+  );
+
+  prepOSAppendPlannedOutSource_(
+    assignments,
+    weekly.assignments
+  );
+
+  const roleKey =
+    prepOSNormalizeRoleKey_(
+      role
+    );
+
+  for (
+    let i = 0;
+    i < assignments.length;
+    i++
+  ) {
+    const assignment =
+      assignments[i] || {};
+
+    const assignmentRole =
+      prepOSNormalizeRoleKey_(
+        prepOSFirstNonBlank_(
+          assignment.role,
+          assignment.character,
+          assignment.track
+        )
+      );
+
+    const assignedActor =
+      prepOSFirstNonBlank_(
+        assignment.actor,
+        assignment.inActor,
+        assignment.cover,
+        assignment.name
+      );
+
+    if (
+      assignmentRole === roleKey &&
+      assignedActor &&
+      assignedActor !== actor
+    ) {
+      return assignedActor;
+    }
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * TEMPORARY REPLACEMENT
+ * ========================================================= */
+
+function prepOSFindTemporaryReplacementForOut_(
+  actor,
+  role,
+  showState
+) {
+  const replacements =
+    []
+      .concat(
+        showState.temporaryReplacements ||
+        []
+      )
+      .concat(
+        showState.tempReplacements ||
+        []
+      );
+
+  const actorKey =
+    prepOSNormalizeNameKey_(
+      actor
+    );
+
+  const roleKey =
+    prepOSNormalizeRoleKey_(
+      role
+    );
+
+  for (
+    let i = 0;
+    i < replacements.length;
+    i++
+  ) {
+    const replacement =
+      replacements[i] || {};
+
+    const replacementActorKey =
+      prepOSNormalizeNameKey_(
+        prepOSFirstNonBlank_(
+          replacement.actorOut,
+          replacement.out,
+          replacement.actor
+        )
+      );
+
+    const replacementRoleKey =
+      prepOSNormalizeRoleKey_(
+        prepOSFirstNonBlank_(
+          replacement.role,
+          replacement.character
+        )
+      );
+
+    if (
+      (
+        actorKey &&
+        replacementActorKey === actorKey
+      ) ||
+      (
+        roleKey &&
+        replacementRoleKey === roleKey
+      )
+    ) {
+      return prepOSFirstNonBlank_(
+        replacement.coverActor,
+        replacement.actorIn,
+        replacement.replacement,
+        replacement.in
+      );
+    }
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+ * COVER OPTIONS
+ * ========================================================= */
+
+function prepOSBuildCoverOptionsForOut_(
+  role,
+  item,
+  showState
+) {
+  const options = [];
+
+  prepOSAppendCoverOptions_(
+    options,
+    item.coverOptions
+  );
+
+  if (
+    showState.intelligence &&
+    showState.intelligence.coverOptionsByRole
+  ) {
+    const byRole =
+      showState.intelligence
+        .coverOptionsByRole;
+
+    const roleKey =
+      prepOSNormalizeRoleKey_(
+        role
+      );
+
+    Object.keys(byRole)
+      .forEach(function (key) {
+        if (
+          prepOSNormalizeRoleKey_(
+            key
+          ) === roleKey
+        ) {
+          prepOSAppendCoverOptions_(
+            options,
+            byRole[key]
+          );
+        }
+      });
+  }
+
+  if (
+    !options.length &&
+    typeof InOutIntelligenceOS ===
+      "function"
+  ) {
+    try {
+      prepOSAppendCoverOptions_(
+        options,
+        InOutIntelligenceOS()
+          .coverOptionsForRole(
+            role
+          )
+      );
+    } catch (err) {
+      Logger.log(
+        "PrepOS cover lookup skipped: " +
+        String(err)
+      );
+    }
+  }
+
+  return uniqueSorted_(
+    options
+  );
+}
+
+
+function prepOSAppendCoverOptions_(
+  output,
+  values
+) {
+  if (!values) return;
+
+  if (!Array.isArray(values)) {
+    values = [values];
+  }
+
+  values.forEach(function (value) {
+    const name =
+      typeof value ===
+        "string"
+        ? value
+        : (
+            value.name ||
+            value.actor ||
+            value.fullName ||
+            ""
+          );
+
+    const cleaned =
+      prepOSClean_(
+        name
+      );
+
+    if (
+      cleaned &&
+      output.indexOf(
+        cleaned
+      ) === -1
+    ) {
+      output.push(
+        cleaned
+      );
+    }
+  });
+}
+
+
+/* =========================================================
+ * DEDUPLICATION
+ * ========================================================= */
+
+function prepOSDedupePlannedOutCards_(cards) {
+  const output = [];
+
+  (cards || []).forEach(function (card) {
+    if (!card || !card.actor) return;
+
+    const existing = output.find(function (candidate) {
+      return prepOSPlannedOutCardsMatch_(
+        candidate,
+        card
+      );
+    });
+
+    if (!existing) {
+      output.push(card);
+      return;
+    }
+
+    prepOSMergePlannedOutCards_(
+      existing,
+      card
+    );
+  });
+
+  return output;
+}
+
+
+function prepOSPlannedOutCardsMatch_(
+  first,
+  second
+) {
+  const firstActor =
+    prepOSNormalizeNameKey_(
+      first.actor
+    );
+
+  const secondActor =
+    prepOSNormalizeNameKey_(
+      second.actor
+    );
+
+  if (
+    !firstActor ||
+    firstActor !== secondActor
+  ) {
+    return false;
+  }
+
+  const firstRole =
+    prepOSNormalizeRoleKey_(
+      first.role
+    );
+
+  const secondRole =
+    prepOSNormalizeRoleKey_(
+      second.role
+    );
+
+  const rolesMatch =
+    !firstRole ||
+    !secondRole ||
+    firstRole === secondRole ||
+    firstRole.includes(secondRole) ||
+    secondRole.includes(firstRole);
+
+  if (!rolesMatch) return false;
+
+  const firstReason =
+    prepOSClean_(
+      first.reason
+    ).toLowerCase();
+
+  const secondReason =
+    prepOSClean_(
+      second.reason
+    ).toLowerCase();
+
+  /*
+   * Blank reason is treated as incomplete information,
+   * not as a genuinely different planned out.
+   */
+  const reasonsMatch =
+    !firstReason ||
+    !secondReason ||
+    firstReason === secondReason;
+
+  return reasonsMatch;
+}
+
+
+function prepOSMergePlannedOutCards_(
+  target,
+  source
+) {
+  /*
+   * Prefer the more descriptive role.
+   * Example: "William Barfée" wins over "Barfée".
+   */
+  if (
+    String(source.role || "").length >
+    String(target.role || "").length
+  ) {
+    target.role =
+      source.role;
+
+    target.character =
+      source.character ||
+      source.role;
+  }
+
+  /*
+   * Preserve whichever source supplied the actual reason.
+   */
+  if (
+    !target.reason &&
+    source.reason
+  ) {
+    target.reason =
+      source.reason;
+  }
+
+  if (
+    !target.status &&
+    source.status
+  ) {
+    target.status =
+      source.status;
+  }
+
+  if (
+    !target.finalInActor &&
+    source.finalInActor
+  ) {
+    target.finalInActor =
+      source.finalInActor;
+
+    target.coverActor =
+      source.coverActor ||
+      source.finalInActor;
+
+    target.preselectedCover =
+      source.preselectedCover ||
+      source.finalInActor;
+
+    target.coverSource =
+      source.coverSource ||
+      target.coverSource;
+  }
+
+  if (
+    !target.tempReplacement &&
+    source.tempReplacement
+  ) {
+    target.tempReplacement =
+      source.tempReplacement;
+  }
+
+  if (
+    !target.weeklyAssigned &&
+    source.weeklyAssigned
+  ) {
+    target.weeklyAssigned =
+      source.weeklyAssigned;
+  }
+
+  target.coverOptions =
+    uniqueSorted_(
+      []
+        .concat(
+          target.coverOptions ||
+          []
+        )
+        .concat(
+          source.coverOptions ||
+          []
+        )
+    );
+
+  target.isContractLOA =
+    Boolean(
+      target.isContractLOA ||
+      source.isContractLOA
+    );
+
+  target.isLoa =
+    Boolean(
+      target.isLoa ||
+      source.isLoa
+    );
+
+  target.isMloa =
+    Boolean(
+      target.isMloa ||
+      source.isMloa
+    );
+
+  target.noCoverNeeded =
+    Boolean(
+      target.noCoverNeeded ||
+      source.noCoverNeeded
+    );
+
+  /*
+   * Contract leave must never write to IN/OUT.
+   */
+  target.writeToInOutSheet =
+    !target.isContractLOA &&
+    target.writeToInOutSheet !== false &&
+    source.writeToInOutSheet !== false;
+
+  target.complete =
+    Boolean(
+      target.actor &&
+      (
+        target.noCoverNeeded ||
+        target.finalInActor ||
+        target.isContractLOA
+      )
+    );
+}
+
+
+/* =========================================================
+ * RULES
+ * ========================================================= */
+
+function prepOSIsSwingOrUnderstudyPlannedOut_(
+  actor,
+  role,
+  item
+) {
+  if (
+    item &&
+    item.noCoverNeeded === true
+  ) {
+    return true;
+  }
+
+  const text =
+    [
+      actor,
+      role,
+      item && item.type,
+      item && item.track
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+  return (
+    text.includes("swing") ||
+    text.includes("understudy") ||
+    text.includes("u/s") ||
+    text.includes("standby")
+  );
+}
+
+
+/* =========================================================
+ * NORMALIZATION HELPERS
+ * ========================================================= */
+
+function prepOSNormalizeNameKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+function prepOSNormalizeRoleKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+/* =========================================================
+ * READ-ONLY TEST
+ * ========================================================= */
+
+function testPrepOSPlannedOutModel() {
+  const state =
+    PrepOS().state();
+
+  const cards =
+    prepOSBuildPlannedOutCards_(
+      state,
+      {}
+    );
+
+  const result = {
+    total:
+      cards.length,
+
+    complete:
+      cards.filter(
+        function (card) {
+          return card.complete;
+        }
+      ).length,
+
+    noCoverNeeded:
+      cards.filter(
+        function (card) {
+          return card.noCoverNeeded;
+        }
+      ).length,
+
+    contractLeave:
+      cards.filter(
+        function (card) {
+          return card.isContractLOA;
+        }
+      ).length,
+
+    writesToInOut:
+      cards.filter(
+        function (card) {
+          return card.writeToInOutSheet;
+        }
+      ).length,
+
+    cards:
+      cards.map(
+        function (card) {
+          return {
+            actor:
+              card.actor,
+
+            role:
+              card.role,
+
+            reason:
+              card.reason,
+
+            cover:
+              card.finalInActor,
+
+            noCoverNeeded:
+              card.noCoverNeeded,
+
+            writeToInOutSheet:
+              card.writeToInOutSheet
+          };
+        }
+      )
+  };
+
+  Logger.log(
+    "PREPOS PLANNED OUT MODEL TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS planned-out model test passed.\n\n" +
+      "Planned outs: " +
+      result.total +
+      "\n" +
+      "Complete: " +
+      result.complete +
+      "\n" +
+      "No cover needed: " +
+      result.noCoverNeeded +
+      "\n" +
+      "Contract leave: " +
+      result.contractLeave +
+      "\n" +
+      "Writing to IN/OUT: " +
+      result.writesToInOut
+    );
+
+  return result;
+}

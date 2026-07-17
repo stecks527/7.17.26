@@ -1,0 +1,203 @@
+/*************************************************
+ * 13 PREP INOUT WIZARD
+ * Version: 2.0.0
+ *
+ * Unified Prep Wizard shell:
+ * - Planned outs
+ * - Day-of call-ins
+ * - Session details
+ *************************************************/
+
+function prepInOutWizard_(targetDate) {
+  const payload = buildPrepInOutWizardPayload_(targetDate);
+
+  const template = HtmlService.createTemplateFromFile("68 Prep InOut Wizard HTML");
+  template.payloadJson = JSON.stringify(payload);
+
+  const html = template.evaluate()
+    .setWidth(620)
+    .setHeight(720);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Prep IN/OUT");
+}
+
+function buildPrepInOutWizardPayload_(targetDate) {
+  const plannedOuts = InOutIntelligenceOS().plannedOutsForDate(targetDate);
+
+  return {
+    targetDate: targetDate instanceof Date ? targetDate.toISOString() : "",
+    dateText: Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "EEEE, MMMM d"),
+    plannedOuts: buildPrepWizardPlannedOutPayload_(plannedOuts, targetDate),
+    actorOptions: getPrepWizardActorOptions_(),
+    smOptions: getPrepWizardSMOptions_(),
+    a1Options: getPrepWizardA1Options_(),
+    reasonOptions: ["Illness", "Approved PD", "Unapproved PD", "Vacation", "Injury", "Other"],
+    defaults: getPrepWizardDefaults_()
+  };
+}
+
+function buildPrepWizardPlannedOutPayload_(plannedOuts, targetDate) {
+  return plannedOuts.map(out => {
+    const tempReplacement = out.tempReplacement || getTempReplacementForLOA_(out);
+
+    const weeklyAssignedRaw = tempReplacement
+      ? ""
+      : resolveAssignedCoverFromWeekly_(targetDate, out.role || "");
+
+    const weeklyAssignedFull = weeklyAssignedRaw
+      ? expandActorNameFromCastList_(weeklyAssignedRaw)
+      : "";
+
+    let coverOptions = tempReplacement
+      ? [tempReplacement]
+      : InOutIntelligenceOS().coverOptionsForRole(out.role || "");
+
+    const preselectedCover = tempReplacement || weeklyAssignedFull || "";
+
+    if (preselectedCover && !coverOptions.includes(preselectedCover)) {
+      coverOptions = [preselectedCover].concat(coverOptions);
+    }
+
+    return {
+      type: "planned",
+      actor: out.actor || "",
+      role: out.role || "",
+      reason: out.reason || "",
+      status: out.status || "",
+      performances: out.performances || "",
+      isContractLOA: !!out.isContractLOA,
+      writeToInOutSheet: !!out.writeToInOutSheet,
+      tempReplacement: tempReplacement || "",
+      weeklyAssigned: weeklyAssignedFull || "",
+      preselectedCover,
+      coverOptions
+    };
+  });
+}
+
+function getPrepWizardActorOptions_() {
+  const data = typeof getCastListData_ === "function" ? getCastListData_() : null;
+  if (!data) return [];
+
+  return data.rows
+    .map(row => ({
+      fullName: row.fullName || "",
+      character: row.character || "",
+      role: row.role || "",
+      covers: row.covers || ""
+    }))
+    .filter(row => row.fullName)
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+function getPrepWizardSMOptions_() {
+  return [
+    "Rachel A. Zucker",
+    "Chris Steckel",
+    "Kristin Newhouse",
+    "Zach De Brino"
+  ];
+}
+
+function getPrepWizardA1Options_() {
+  return [
+    "Corbin Lenard",
+    "A1 Sub"
+  ];
+}
+
+function getPrepWizardDefaults_() {
+  return {
+    psmCalling: "Rachel A. Zucker",
+    asmDeck: "Chris Steckel",
+    a1Mixing: "Corbin Lenard"
+  };
+}
+
+function prepInOutWizardSubmit_(payload) {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  if (!inOut) throw new Error("Could not find IN/OUT tab.");
+
+  const planned = payload.plannedOuts || [];
+  const callIns = payload.callIns || [];
+  const session = payload.session || {};
+
+  const written = [];
+  const skipped = [];
+
+  planned.concat(callIns).forEach(item => {
+    if (!item.inActor) return;
+
+    const record = {
+      actor: item.actor || "",
+      role: item.role || "",
+      reason: item.reason || "",
+      status: item.status || "",
+      performances: item.performances || "",
+      inActor: item.inActor || "",
+      isContractLOA: !!item.isContractLOA,
+      writeToInOutSheet: item.writeToInOutSheet !== false
+    };
+
+    if (record.writeToInOutSheet) {
+      prepWriteOutToInOutSheet_(inOut, record);
+      written.push(record);
+    } else {
+      skipped.push(record);
+    }
+  });
+
+  prepWriteSessionAssignments_(inOut, session);
+
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    "Prep IN/OUT wizard applied.",
+    "StageOS",
+    5
+  );
+
+  return { written, skipped, session };
+}
+
+function prepWriteSessionAssignments_(inOut, session) {
+  if (!session) return;
+
+  if (session.psmCalling) {
+    inOut.getRange("A24").setValue("Calling SM: " + session.psmCalling);
+  }
+
+  if (session.asmDeck) {
+    inOut.getRange("A25").setValue("Deck SM: " + session.asmDeck);
+  }
+
+  if (session.a1Mixing) {
+    inOut.getRange("A26").setValue("A1 / Audio: " + session.a1Mixing);
+  }
+}
+
+function testPrepInOutWizardToday() {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const targetDate = parseInOutDate_(inOut.getRange("A3").getDisplayValue());
+
+  prepInOutWizard_(targetDate);
+}
+
+function debugPrepInOutWizardPayloadToday() {
+  const ss = SpreadsheetApp.getActive();
+  const inOut = ss.getSheetByName("IN/OUT");
+  const targetDate = parseInOutDate_(inOut.getRange("A3").getDisplayValue());
+
+  const payload = buildPrepInOutWizardPayload_(targetDate);
+
+  Logger.log(JSON.stringify(payload, null, 2));
+
+  SpreadsheetApp.getUi().alert(
+    "Payload Debug\n\n" +
+    "Date: " + payload.dateText + "\n" +
+    "Planned Outs: " + payload.plannedOuts.length + "\n" +
+    "Actors: " + payload.actorOptions.length + "\n" +
+    "SM Options: " + payload.smOptions.length + "\n" +
+    "A1 Options: " + payload.a1Options.length
+  );
+}

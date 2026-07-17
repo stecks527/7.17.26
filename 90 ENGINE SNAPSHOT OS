@@ -1,0 +1,124 @@
+/*************************************************
+ * 90 ENGINE SNAPSHOT OS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Storage API for SnapshotOS data in Engine Workbook
+ *************************************************/
+
+const ENGINE_SNAPSHOT_OS_HEADERS = [
+  "Snapshot ID",
+  "Revision",
+  "Revision Captured At",
+  "Date",
+  "Performance Label",
+  "Performance Number",
+  "Performance Time",
+  "Show Type",
+  "Conductor",
+  "Guest Speller",
+  "Payload JSON"
+];
+
+function EngineSnapshotOS() {
+  return {
+    sheet: function () {
+      return EngineOS().sheet("snapshots");
+    },
+
+    append: function (snapshot) {
+      return engineSnapshotOSAppend_(snapshot);
+    },
+
+    writeRows: function (rows, clearFirst) {
+      return engineSnapshotOSWriteRows_(rows, clearFirst);
+    },
+
+    migrateFromProduction: function () {
+      return engineSnapshotOSMigrateFromProduction_();
+    }
+  };
+}
+
+function engineSnapshotOSAppend_(snapshot) {
+  const api = EngineSnapshotOS().sheet();
+  api.ensureHeaders(ENGINE_SNAPSHOT_OS_HEADERS);
+
+  const row = ENGINE_SNAPSHOT_OS_HEADERS.map(header => {
+    if (snapshot && snapshot[header] !== undefined) return snapshot[header];
+
+    const key = header
+      .replace(/[^\w\s]/g, "")
+      .replace(/\s+(.)/g, (_, chr) => chr.toUpperCase())
+      .replace(/^\w/, chr => chr.toLowerCase());
+
+    return snapshot && snapshot[key] !== undefined ? snapshot[key] : "";
+  });
+
+  api.sheet().appendRow(row);
+  return row;
+}
+
+function engineSnapshotOSWriteRows_(rows, clearFirst) {
+  const api = EngineSnapshotOS().sheet();
+  const sh = api.sheet();
+
+  if (clearFirst) sh.clear();
+
+  api.ensureHeaders(ENGINE_SNAPSHOT_OS_HEADERS);
+
+  if (!rows || !rows.length) return 0;
+
+  sh.getRange(2, 1, rows.length, ENGINE_SNAPSHOT_OS_HEADERS.length).setValues(rows);
+  return rows.length;
+}
+
+function engineSnapshotOSMigrateFromProduction_() {
+  const ss = SpreadsheetApp.getActive();
+  const source = ss.getSheetByName("Snapshot History");
+
+  if (!source) {
+    throw new Error('Could not find production tab "Snapshot History".');
+  }
+
+  const lastRow = source.getLastRow();
+  const lastCol = source.getLastColumn();
+
+  if (lastRow < 2 || lastCol < 1) return 0;
+
+  const values = source.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  const headers = values[0];
+  const body = values.slice(1).filter(row => row.some(Boolean));
+
+  const mappedRows = body.map(row => {
+    const obj = {};
+
+    headers.forEach((header, i) => {
+      obj[String(header || "").trim()] = row[i];
+    });
+
+    return ENGINE_SNAPSHOT_OS_HEADERS.map(header => {
+      if (obj[header] !== undefined) return obj[header];
+
+      if (header === "Payload JSON") return JSON.stringify(obj);
+
+      return "";
+    });
+  });
+
+  return engineSnapshotOSWriteRows_(mappedRows, true);
+}
+
+function migrateSnapshotHistoryToEngine() {
+  const count = EngineSnapshotOS().migrateFromProduction();
+
+  EngineLogOS().info(
+    "EngineSnapshotOS",
+    "Migrate Snapshot History",
+    "Snapshot History migrated to Engine workbook.",
+    { rows: count }
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "Snapshot History migrated to Engine.\n\nRows written: " + count
+  );
+}

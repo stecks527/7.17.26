@@ -1,0 +1,63 @@
+/*************************************************
+ * 35c PRODUCTION EVENTS FORMATTERS
+ * Version: 2.0.0
+ *************************************************/
+
+function productionEventsFormatNotesV1_(events) {
+  const notes = [];
+  const seen = {};
+
+  events.forEach(function (event) {
+    if (!event.note) return;
+
+    const key = event.note.trim();
+    if (seen[key]) return;
+
+    seen[key] = true;
+    notes.push(key);
+  });
+
+  return notes.join("\n");
+}
+
+function productionEventsFormatPayrollNotesV1_(events, context) {
+  const sections = [];
+
+  const mainNotes = productionEventsFormatNotesV1_(events);
+  if (mainNotes) sections.push(mainNotes);
+
+  const otNotes = productionEventsBuildOTNotesV1_(context);
+  if (otNotes) sections.push(otNotes);
+
+  return sections.join("\n\n");
+}
+
+function productionEventsBuildOTNotesV1_(context) {
+  const people = context && context.payrollPeople;
+  if (!people || !people.length) return "";
+
+  const wedIndex = 2;
+  const notes = [];
+
+  people.forEach(function (person) {
+    if (!person || !person.hoursRow) return;
+
+    const rawHours = Number(person.hoursRow[wedIndex]);
+    if (!rawHours || rawHours <= 0) return;
+
+    const rounded = Math.round(rawHours * 10) / 10;
+    const hoursText = String(rounded).replace(/\.0$/, "");
+
+    notes.push(
+      "- OT: DADO: " +
+      person.shortName +
+      " gets " +
+      hoursText +
+      " " +
+      (Number(hoursText) === 1 ? "hour" : "hours") +
+      " of OT ($61.68 per hour or part thereof)"
+    );
+  });
+
+  return notes.join("\n");
+}

@@ -1,0 +1,1574 @@
+/*************************************************
+ * 75 RECEIPTOS
+ * Version: 1.1.0
+ *
+ * Destinations:
+ * - SM Float
+ * - Full Expenses
+ *
+ * Workflow:
+ * 1. Upload PDF or image.
+ * 2. Read receipt with Google Drive OCR.
+ * 3. Confirm destination and receipt details.
+ * 4. Write receipt into the correct sheet location.
+ * 5. Convert/store the receipt as a PDF.
+ *************************************************/
+
+const RECEIPT_OS_CONFIG = Object.freeze({
+  MAX_UPLOAD_BYTES: 10 * 1024 * 1024,
+
+  SM_FLOAT: Object.freeze({
+    SHEET_NAME: "SM Float",
+    FLOAT_LABEL_CELL: "A2",
+
+    FIRST_EXPENSE_ROW: 6,
+    LAST_EXPENSE_ROW: 15,
+
+    NUMBER_COLUMN: 1,       // A
+    DATE_COLUMN: 2,         // B
+    VENDOR_COLUMN: 3,       // C
+    DESCRIPTION_COLUMN: 4,  // D
+    AMOUNT_COLUMN: 5,       // E
+
+    PARENT_FOLDER_ID:
+      "1Dv9qjIjpyOe9R41Va3WHcpOjiPFPVXDX"
+  }),
+
+  FULL_EXPENSES: Object.freeze({
+    SHEET_NAME: "Full Expenses",
+
+    DATE_COLUMN: 1,         // A
+    VENDOR_COLUMN: 2,       // B
+    DESCRIPTION_COLUMN: 3,  // C
+    AMOUNT_COLUMN: 4,       // D
+    WHAT_COLUMN: 5,         // E
+
+    FIRST_DATA_ROW: 2,
+
+    FOLDER_ID:
+      "1-C0yUltQmhkkdPy305NQfkosPBdu4GT1"
+  })
+});
+
+
+/*************************************************
+ * PUBLIC FUNCTIONS
+ *************************************************/
+
+/**
+ * Assign this function to the Upload Receipt button.
+ */
+function showSMFloatReceiptUploader() {
+  const html = HtmlService
+    .createHtmlOutputFromFile("ReceiptUpload")
+    .setWidth(640)
+    .setHeight(760);
+
+  SpreadsheetApp.getUi().showModalDialog(
+    html,
+    "Upload Receipt"
+  );
+}
+
+
+/**
+ * Initial information shown in the popup.
+ */
+function receiptOSGetInitialInfo() {
+  try {
+    const smFloatSheet = receiptOSGetSheet_(
+      RECEIPT_OS_CONFIG.SM_FLOAT.SHEET_NAME
+    );
+
+    const floatLabel = String(
+      smFloatSheet
+        .getRange(
+          RECEIPT_OS_CONFIG.SM_FLOAT.FLOAT_LABEL_CELL
+        )
+        .getDisplayValue()
+    ).trim();
+
+    const nextSMFloatRow =
+      receiptOSFindNextSMFloatRow_(smFloatSheet);
+
+    const nextExpenseNumber = nextSMFloatRow
+      ? receiptOSGetSMFloatExpenseNumber_(
+          smFloatSheet,
+          nextSMFloatRow
+        )
+      : null;
+
+    return {
+      success: true,
+      floatLabel: floatLabel,
+      smFloatAvailable: Boolean(nextSMFloatRow),
+      nextExpenseNumber: nextExpenseNumber
+    };
+
+  } catch (error) {
+    console.error(error);
+
+    return {
+      success: false,
+      message: error.message || String(error)
+    };
+  }
+}
+
+
+/**
+ * Reads an uploaded receipt and returns likely values.
+ */
+function receiptOSAnalyzeUpload(upload) {
+  let temporaryOcrFileId = null;
+
+  try {
+    receiptOSValidateUpload_(upload);
+
+    const bytes = Utilities.base64Decode(upload.base64);
+
+    const blob = Utilities.newBlob(
+      bytes,
+      upload.mimeType,
+      upload.fileName
+    );
+
+    const ocrResult = receiptOSExtractTextFromReceipt_(
+      blob,
+      upload.fileName
+    );
+
+    temporaryOcrFileId = ocrResult.ocrFileId;
+
+    const parsed = receiptOSParseReceiptText_(
+      ocrResult.text,
+      upload.fileName
+    );
+
+    return {
+      success: true,
+
+      date: parsed.date,
+      vendor: parsed.vendor,
+      description: parsed.description,
+      amount: parsed.amount,
+
+      originalFileName: upload.fileName,
+      mimeType: upload.mimeType
+    };
+
+  } catch (error) {
+    console.error(error);
+
+    return {
+      success: false,
+      message: error.message || String(error)
+    };
+
+  } finally {
+    if (temporaryOcrFileId) {
+      receiptOSTrashFileSafely_(temporaryOcrFileId);
+    }
+  }
+}
+
+
+/**
+ * Saves the confirmed receipt.
+ */
+function receiptOSSaveConfirmedReceipt(payload) {
+  const lock = LockService.getDocumentLock();
+
+  try {
+    lock.waitLock(30000);
+
+    receiptOSValidateConfirmedPayload_(payload);
+
+    const destination = String(
+      payload.destination || ""
+    ).trim();
+
+    if (destination === "SM_FLOAT") {
+      return receiptOSSaveToSMFloat_(payload);
+    }
+
+    if (destination === "FULL_EXPENSES") {
+      return receiptOSSaveToFullExpenses_(payload);
+    }
+
+    throw new Error(
+      "Please choose SM Float or Full Expenses."
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    return {
+      success: false,
+      message: error.message || String(error)
+    };
+
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (ignored) {
+      // No action needed.
+    }
+  }
+}
+
+
+/*************************************************
+ * SM FLOAT
+ *************************************************/
+
+function receiptOSSaveToSMFloat_(payload) {
+  const config = RECEIPT_OS_CONFIG.SM_FLOAT;
+
+  const sheet = receiptOSGetSheet_(config.SHEET_NAME);
+
+  const currentFloatLabel = String(
+    sheet
+      .getRange(config.FLOAT_LABEL_CELL)
+      .getDisplayValue()
+  ).trim();
+
+  if (!currentFloatLabel) {
+    throw new Error(
+      "SM Float!A2 does not contain a float number."
+    );
+  }
+
+  if (
+    payload.floatLabel &&
+    receiptOSNormalizeText_(payload.floatLabel) !==
+      receiptOSNormalizeText_(currentFloatLabel)
+  ) {
+    throw new Error(
+      "The SM Float number changed while the popup was open. " +
+      "Please close the popup and upload the receipt again."
+    );
+  }
+
+  const row = receiptOSFindNextSMFloatRow_(sheet);
+
+  if (!row) {
+    throw new Error(
+      "The current SM Float is full."
+    );
+  }
+
+  const expenseNumber =
+    receiptOSGetSMFloatExpenseNumber_(sheet, row);
+
+  const details =
+    receiptOSPrepareConfirmedDetails_(payload);
+
+  const destinationFolder =
+    receiptOSGetOrCreateSMFloatFolder_(
+      currentFloatLabel
+    );
+
+  const dateForName = Utilities.formatDate(
+    details.date,
+    Session.getScriptTimeZone(),
+    "M.d.yy"
+  );
+
+  const desiredFileName =
+    receiptOSSanitizeFileName_(
+      "#" +
+      expenseNumber +
+      " " +
+      details.vendor +
+      " " +
+      dateForName +
+      ".pdf"
+    );
+
+  const savedFile = receiptOSCreateReceiptPdfFile_(
+    payload,
+    destinationFolder,
+    desiredFileName
+  );
+
+  sheet
+    .getRange(
+      row,
+      config.NUMBER_COLUMN,
+      1,
+      5
+    )
+    .setValues([[
+      expenseNumber,
+      details.date,
+      details.vendor,
+      details.description,
+      details.amount
+    ]]);
+
+  sheet
+    .getRange(row, config.DATE_COLUMN)
+    .setNumberFormat("M.d.yy");
+
+  sheet
+    .getRange(row, config.AMOUNT_COLUMN)
+    .setNumberFormat("$#,##0.00");
+
+  SpreadsheetApp.flush();
+
+  return {
+    success: true,
+    destination: "SM Float",
+    destinationDetail: currentFloatLabel,
+    expenseNumber: expenseNumber,
+    row: row,
+    fileName: savedFile.getName(),
+    fileUrl: savedFile.getUrl(),
+    folderUrl: destinationFolder.getUrl()
+  };
+}
+
+
+function receiptOSFindNextSMFloatRow_(sheet) {
+  const config = RECEIPT_OS_CONFIG.SM_FLOAT;
+
+  const rowCount =
+    config.LAST_EXPENSE_ROW -
+    config.FIRST_EXPENSE_ROW +
+    1;
+
+  const values = sheet
+    .getRange(
+      config.FIRST_EXPENSE_ROW,
+      config.DATE_COLUMN,
+      rowCount,
+      4
+    )
+    .getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const rowHasContent = values[i].some(
+      function (value) {
+        return String(value).trim() !== "";
+      }
+    );
+
+    if (!rowHasContent) {
+      return config.FIRST_EXPENSE_ROW + i;
+    }
+  }
+
+  return null;
+}
+
+
+function receiptOSGetSMFloatExpenseNumber_(
+  sheet,
+  row
+) {
+  const config = RECEIPT_OS_CONFIG.SM_FLOAT;
+
+  const existingValue = Number(
+    sheet
+      .getRange(row, config.NUMBER_COLUMN)
+      .getValue()
+  );
+
+  if (
+    Number.isFinite(existingValue) &&
+    existingValue > 0
+  ) {
+    return existingValue;
+  }
+
+  return (
+    row -
+    config.FIRST_EXPENSE_ROW +
+    1
+  );
+}
+
+
+function receiptOSGetOrCreateSMFloatFolder_(
+  floatLabel
+) {
+  const parentFolder = DriveApp.getFolderById(
+    RECEIPT_OS_CONFIG.SM_FLOAT.PARENT_FOLDER_ID
+  );
+
+  const folders = parentFolder.getFoldersByName(
+    floatLabel
+  );
+
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+
+  return parentFolder.createFolder(floatLabel);
+}
+
+
+/*************************************************
+ * FULL EXPENSES
+ *************************************************/
+
+function receiptOSSaveToFullExpenses_(payload) {
+  const config = RECEIPT_OS_CONFIG.FULL_EXPENSES;
+
+  const sheet = receiptOSGetSheet_(config.SHEET_NAME);
+
+  const details =
+    receiptOSPrepareConfirmedDetails_(payload);
+
+  const what = receiptOSNormalizeWhat_(
+    payload.what
+  );
+
+  const weeklyBlock =
+    receiptOSFindFullExpensesWeekBlock_(
+      sheet,
+      details.date
+    );
+
+  if (!weeklyBlock) {
+    throw new Error(
+      "ReceiptOS could not find a Full Expenses weekly block " +
+      "for " +
+      Utilities.formatDate(
+        details.date,
+        Session.getScriptTimeZone(),
+        "M.d.yy"
+      ) +
+      "."
+    );
+  }
+
+  const row =
+    receiptOSFindNextFullExpensesRow_(
+      sheet,
+      weeklyBlock
+    );
+
+  if (!row) {
+    throw new Error(
+      weeklyBlock.label +
+      " does not have an available expense row."
+    );
+  }
+
+  const destinationFolder =
+    DriveApp.getFolderById(config.FOLDER_ID);
+
+  const dateForName = Utilities.formatDate(
+    details.date,
+    Session.getScriptTimeZone(),
+    "M.d.yy"
+  );
+
+  const desiredFileName =
+    receiptOSSanitizeFileName_(
+      details.vendor +
+      " " +
+      dateForName +
+      ".pdf"
+    );
+
+  const savedFile = receiptOSCreateReceiptPdfFile_(
+    payload,
+    destinationFolder,
+    desiredFileName
+  );
+
+  sheet
+    .getRange(
+      row,
+      config.DATE_COLUMN,
+      1,
+      5
+    )
+    .setValues([[
+      details.date,
+      details.vendor,
+      details.description,
+      details.amount,
+      what
+    ]]);
+
+  sheet
+    .getRange(row, config.DATE_COLUMN)
+    .setNumberFormat("M.d.yy");
+
+  sheet
+    .getRange(row, config.AMOUNT_COLUMN)
+    .setNumberFormat("$#,##0.00");
+
+  SpreadsheetApp.flush();
+
+  return {
+    success: true,
+    destination: "Full Expenses",
+    destinationDetail: weeklyBlock.label,
+    row: row,
+    fileName: savedFile.getName(),
+    fileUrl: savedFile.getUrl(),
+    folderUrl: destinationFolder.getUrl()
+  };
+}
+
+
+/**
+ * Finds the "Week Ending M.D.YY - Week ##" block
+ * containing the receipt date.
+ */
+function receiptOSFindFullExpensesWeekBlock_(
+  sheet,
+  receiptDate
+) {
+  const config = RECEIPT_OS_CONFIG.FULL_EXPENSES;
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < config.FIRST_DATA_ROW) {
+    return null;
+  }
+
+  const displayValues = sheet
+    .getRange(
+      config.FIRST_DATA_ROW,
+      1,
+      lastRow - config.FIRST_DATA_ROW + 1,
+      1
+    )
+    .getDisplayValues();
+
+  const headers = [];
+
+  for (let i = 0; i < displayValues.length; i++) {
+    const row = config.FIRST_DATA_ROW + i;
+    const text = String(displayValues[i][0]).trim();
+
+    if (!/^Week Ending\s+/i.test(text)) {
+      continue;
+    }
+
+    const weekEndingDate =
+      receiptOSParseWeekEndingHeader_(text);
+
+    if (!weekEndingDate) {
+      continue;
+    }
+
+    headers.push({
+      headerRow: row,
+      date: weekEndingDate,
+      label: text
+    });
+  }
+
+  for (let i = 0; i < headers.length; i++) {
+    const header = headers[i];
+
+    const weekStart = new Date(
+      header.date.getFullYear(),
+      header.date.getMonth(),
+      header.date.getDate() - 6
+    );
+
+    if (
+      receiptOSDateIsWithin_(
+        receiptDate,
+        weekStart,
+        header.date
+      )
+    ) {
+      const nextHeaderRow =
+        i + 1 < headers.length
+          ? headers[i + 1].headerRow
+          : lastRow + 1;
+
+      return {
+        label: header.label,
+        weekEndingDate: header.date,
+        headerRow: header.headerRow,
+        firstEntryRow: header.headerRow + 1,
+        lastEntryRow: nextHeaderRow - 1
+      };
+    }
+  }
+
+  return null;
+}
+
+
+function receiptOSParseWeekEndingHeader_(text) {
+  const match = String(text).match(
+    /Week Ending\s+(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2}|\d{4})/i
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  let year = Number(match[3]);
+
+  if (year < 100) {
+    year += 2000;
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+
+  const date = new Date(
+    year,
+    month - 1,
+    day
+  );
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+
+function receiptOSFindNextFullExpensesRow_(
+  sheet,
+  weeklyBlock
+) {
+  const config = RECEIPT_OS_CONFIG.FULL_EXPENSES;
+
+  const rowCount =
+    weeklyBlock.lastEntryRow -
+    weeklyBlock.firstEntryRow +
+    1;
+
+  if (rowCount <= 0) {
+    return null;
+  }
+
+  const values = sheet
+    .getRange(
+      weeklyBlock.firstEntryRow,
+      config.DATE_COLUMN,
+      rowCount,
+      5
+    )
+    .getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const row = weeklyBlock.firstEntryRow + i;
+
+    /*
+     * Protect against accidentally treating another header
+     * or formatted label row as an expense row.
+     */
+    const rowText = values[i]
+      .join(" ")
+      .trim();
+
+    if (/^Week Ending\s+/i.test(rowText)) {
+      continue;
+    }
+
+    const transactionColumnsAreBlank =
+      values[i].every(function (value) {
+        return String(value).trim() === "";
+      });
+
+    if (transactionColumnsAreBlank) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
+
+function receiptOSNormalizeWhat_(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (
+    normalized !== "SM" &&
+    normalized !== "PROP"
+  ) {
+    throw new Error(
+      'Full Expenses "What" must be SM or PROP.'
+    );
+  }
+
+  return normalized;
+}
+
+
+/*************************************************
+ * RECEIPT OCR
+ *************************************************/
+
+function receiptOSExtractTextFromReceipt_(
+  blob,
+  fileName
+) {
+  const metadata = {
+    name: "TEMP OCR - " + fileName,
+    mimeType:
+      "application/vnd.google-apps.document"
+  };
+
+  const convertedFile = Drive.Files.create(
+    metadata,
+    blob,
+    {
+      fields: "id,name"
+    }
+  );
+
+  const documentId = convertedFile.id;
+
+  let document = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      Utilities.sleep(
+        attempt === 1 ? 600 : 1000
+      );
+
+      document = DocumentApp.openById(
+        documentId
+      );
+
+      break;
+
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!document) {
+    throw new Error(
+      "Google could not read the receipt. " +
+      (
+        lastError
+          ? lastError.message
+          : ""
+      )
+    );
+  }
+
+  const text = document
+    .getBody()
+    .getText();
+
+  if (!String(text).trim()) {
+    throw new Error(
+      "No readable text was found. Try a clearer image " +
+      "with the entire receipt visible."
+    );
+  }
+
+  return {
+    text: text,
+    ocrFileId: documentId
+  };
+}
+
+
+function receiptOSParseReceiptText_(
+  text,
+  originalFileName
+) {
+  const cleanedText = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const lines = cleanedText
+    .split("\n")
+    .map(function (line) {
+      return line
+        .replace(/\s+/g, " ")
+        .trim();
+    })
+    .filter(function (line) {
+      return Boolean(line);
+    });
+
+  return {
+    date: receiptOSExtractDate_(cleanedText),
+    vendor: receiptOSExtractVendor_(
+      lines,
+      originalFileName
+    ),
+    description: "",
+    amount: receiptOSExtractTotal_(lines)
+  };
+}
+
+
+function receiptOSExtractDate_(text) {
+  const numericMatch = String(text).match(
+    /\b(0?[1-9]|1[0-2])[\/.-](0?[1-9]|[12]\d|3[01])[\/.-](20\d{2}|\d{2})\b/
+  );
+
+  if (numericMatch) {
+    const month = Number(numericMatch[1]);
+    const day = Number(numericMatch[2]);
+
+    let year = Number(numericMatch[3]);
+
+    if (year < 100) {
+      year += 2000;
+    }
+
+    const parsed = new Date(
+      year,
+      month - 1,
+      day
+    );
+
+    if (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
+    ) {
+      return Utilities.formatDate(
+        parsed,
+        Session.getScriptTimeZone(),
+        "M.d.yy"
+      );
+    }
+  }
+
+  const namedDatePatterns = [
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+([0-3]?\d),?\s+(20\d{2}|\d{2})\b/i,
+    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+([0-3]?\d),?\s+(20\d{2}|\d{2})\b/i
+  ];
+
+  for (
+    let i = 0;
+    i < namedDatePatterns.length;
+    i++
+  ) {
+    const match = String(text).match(
+      namedDatePatterns[i]
+    );
+
+    if (!match) {
+      continue;
+    }
+
+    const parsed = new Date(match[0]);
+
+    if (!isNaN(parsed.getTime())) {
+      return Utilities.formatDate(
+        parsed,
+        Session.getScriptTimeZone(),
+        "M.d.yy"
+      );
+    }
+  }
+
+  return Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    "M.d.yy"
+  );
+}
+
+
+function receiptOSExtractTotal_(lines) {
+  const preferredLabels = [
+    "grand total",
+    "amount paid",
+    "total paid",
+    "amount due",
+    "balance due",
+    "order total",
+    "payment total",
+    "total"
+  ];
+
+  for (
+    let keywordIndex = 0;
+    keywordIndex < preferredLabels.length;
+    keywordIndex++
+  ) {
+    const keyword =
+      preferredLabels[keywordIndex];
+
+    for (
+      let lineIndex = lines.length - 1;
+      lineIndex >= 0;
+      lineIndex--
+    ) {
+      const lower =
+        lines[lineIndex].toLowerCase();
+
+      if (
+        lower.indexOf(keyword) === -1 ||
+        lower.indexOf("subtotal") !== -1 ||
+        lower.indexOf("taxable total") !== -1
+      ) {
+        continue;
+      }
+
+      const values =
+        receiptOSExtractCurrencyValues_(
+          lines[lineIndex]
+        );
+
+      if (values.length) {
+        return values[
+          values.length - 1
+        ].toFixed(2);
+      }
+
+      if (lineIndex + 1 < lines.length) {
+        const nextValues =
+          receiptOSExtractCurrencyValues_(
+            lines[lineIndex + 1]
+          );
+
+        if (nextValues.length) {
+          return nextValues[
+            nextValues.length - 1
+          ].toFixed(2);
+        }
+      }
+    }
+  }
+
+  const allValues = [];
+
+  lines.forEach(function (line) {
+    receiptOSExtractCurrencyValues_(
+      line
+    ).forEach(function (value) {
+      if (
+        value > 0 &&
+        value < 100000
+      ) {
+        allValues.push(value);
+      }
+    });
+  });
+
+  if (!allValues.length) {
+    return "";
+  }
+
+  return Math.max.apply(
+    null,
+    allValues
+  ).toFixed(2);
+}
+
+
+function receiptOSExtractCurrencyValues_(text) {
+  const matches = String(text).match(
+    /(?:\$|USD\s*)?(\d{1,3}(?:,\d{3})*|\d+)\.\d{2}\b/g
+  ) || [];
+
+  return matches
+    .map(function (value) {
+      return Number(
+        value
+          .replace(/USD/gi, "")
+          .replace(/\$/g, "")
+          .replace(/,/g, "")
+          .trim()
+      );
+    })
+    .filter(function (value) {
+      return Number.isFinite(value);
+    });
+}
+
+
+function receiptOSExtractVendor_(
+  lines,
+  originalFileName
+) {
+  const ignoredPatterns = [
+    /^receipt$/i,
+    /^invoice$/i,
+    /^order$/i,
+    /^thank you/i,
+    /^welcome/i,
+    /^www\./i,
+    /^https?:/i,
+    /^tel[:\s]/i,
+    /^phone[:\s]/i,
+    /^\d+$/,
+    /^\W+$/
+  ];
+
+  for (
+    let i = 0;
+    i < Math.min(lines.length, 12);
+    i++
+  ) {
+    const line = lines[i];
+
+    const shouldIgnore =
+      ignoredPatterns.some(
+        function (pattern) {
+          return pattern.test(line);
+        }
+      );
+
+    if (
+      shouldIgnore ||
+      line.length < 2 ||
+      line.length > 60 ||
+      receiptOSLooksLikeAddress_(line) ||
+      receiptOSExtractCurrencyValues_(line)
+        .length
+    ) {
+      continue;
+    }
+
+    return receiptOSTitleCaseVendor_(line);
+  }
+
+  const fallback = String(
+    originalFileName || ""
+  )
+    .replace(/\.[^.]+$/, "")
+    .replace(/^#?\d+\s*/, "")
+    .replace(
+      /\b\d{1,2}[.-]\d{1,2}[.-]\d{2,4}\b/g,
+      ""
+    )
+    .trim();
+
+  return receiptOSTitleCaseVendor_(fallback);
+}
+
+
+function receiptOSLooksLikeAddress_(line) {
+  return (
+    /\b(street|st\.|avenue|ave\.|road|rd\.|boulevard|blvd|drive|dr\.|lane|ln\.|highway|hwy)\b/i.test(
+      line
+    ) ||
+    /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(
+      line
+    )
+  );
+}
+
+
+function receiptOSTitleCaseVendor_(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  /*
+   * Preserve intentional mixed capitalization.
+   */
+  if (
+    /[a-z]/.test(text) &&
+    /[A-Z]/.test(text.slice(1))
+  ) {
+    return text;
+  }
+
+  return text
+    .toLowerCase()
+    .replace(
+      /\b\w/g,
+      function (character) {
+        return character.toUpperCase();
+      }
+    );
+}
+
+
+/*************************************************
+ * PDF CREATION
+ *************************************************/
+
+function receiptOSCreateReceiptPdfFile_(
+  payload,
+  destinationFolder,
+  desiredFileName
+) {
+  const bytes = Utilities.base64Decode(
+    payload.base64
+  );
+
+  const originalBlob = Utilities.newBlob(
+    bytes,
+    payload.mimeType,
+    payload.originalFileName
+  );
+
+  const pdfBlob =
+    receiptOSConvertReceiptToPdf_(
+      originalBlob,
+      payload.mimeType,
+      payload.originalFileName
+    );
+
+  const finalFileName =
+    receiptOSGetUniqueFileName_(
+      destinationFolder,
+      desiredFileName
+    );
+
+  pdfBlob.setName(finalFileName);
+
+  return destinationFolder.createFile(
+    pdfBlob
+  );
+}
+
+
+function receiptOSConvertReceiptToPdf_(
+  originalBlob,
+  mimeType,
+  originalFileName
+) {
+  const normalizedMimeType =
+    String(mimeType || "").toLowerCase();
+
+  if (
+    normalizedMimeType ===
+    "application/pdf"
+  ) {
+    return originalBlob.getAs(
+      MimeType.PDF
+    );
+  }
+
+  if (
+    !normalizedMimeType.startsWith(
+      "image/"
+    )
+  ) {
+    throw new Error(
+      "ReceiptOS accepts PDF or image files."
+    );
+  }
+
+  const document = DocumentApp.create(
+    "TEMP RECEIPT PDF - " +
+    originalFileName
+  );
+
+  const documentId = document.getId();
+
+  try {
+    const body = document.getBody();
+
+    body.clear();
+
+    const image = body.appendImage(
+      originalBlob
+    );
+
+    const maxWidth = 540;
+    const maxHeight = 720;
+
+    let width = image.getWidth();
+    let height = image.getHeight();
+
+    const widthRatio =
+      maxWidth / width;
+
+    const heightRatio =
+      maxHeight / height;
+
+    const scale = Math.min(
+      1,
+      widthRatio,
+      heightRatio
+    );
+
+    if (scale < 1) {
+      image.setWidth(
+        Math.round(width * scale)
+      );
+
+      image.setHeight(
+        Math.round(height * scale)
+      );
+    }
+
+    document.saveAndClose();
+
+    Utilities.sleep(500);
+
+    return DriveApp
+      .getFileById(documentId)
+      .getAs(MimeType.PDF);
+
+  } finally {
+    receiptOSTrashFileSafely_(
+      documentId
+    );
+  }
+}
+
+
+/*************************************************
+ * VALIDATION / SHARED HELPERS
+ *************************************************/
+
+function receiptOSPrepareConfirmedDetails_(
+  payload
+) {
+  const date = receiptOSParseUserDate_(
+    payload.date
+  );
+
+  if (!date) {
+    throw new Error(
+      "Please enter the receipt date in M.D.YY or M/D/YY format."
+    );
+  }
+
+  const vendor = receiptOSCleanCellText_(
+    payload.vendor
+  );
+
+  if (!vendor) {
+    throw new Error(
+      "Please enter the vendor."
+    );
+  }
+
+  const description =
+    receiptOSCleanCellText_(
+      payload.description
+    ) || vendor;
+
+  const amount = receiptOSParseCurrency_(
+    payload.amount
+  );
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    throw new Error(
+      "Please enter a valid amount greater than zero."
+    );
+  }
+
+  return {
+    date: date,
+    vendor: vendor,
+    description: description,
+    amount: amount
+  };
+}
+
+
+function receiptOSGetSheet_(sheetName) {
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error(
+      'Could not find the "' +
+      sheetName +
+      '" sheet.'
+    );
+  }
+
+  return sheet;
+}
+
+
+function receiptOSValidateUpload_(upload) {
+  if (
+    !upload ||
+    !upload.base64
+  ) {
+    throw new Error(
+      "No receipt file was received."
+    );
+  }
+
+  if (!upload.fileName) {
+    throw new Error(
+      "The receipt needs a filename."
+    );
+  }
+
+  if (!upload.mimeType) {
+    throw new Error(
+      "The receipt file type could not be determined."
+    );
+  }
+
+  const mimeType = String(
+    upload.mimeType
+  ).toLowerCase();
+
+  const allowed =
+    mimeType === "application/pdf" ||
+    mimeType.startsWith("image/");
+
+  if (!allowed) {
+    throw new Error(
+      "Please upload a PDF or image."
+    );
+  }
+
+  const estimatedBytes = Math.ceil(
+    upload.base64.length * 0.75
+  );
+
+  if (
+    estimatedBytes >
+    RECEIPT_OS_CONFIG.MAX_UPLOAD_BYTES
+  ) {
+    throw new Error(
+      "This receipt is larger than 10 MB."
+    );
+  }
+}
+
+
+function receiptOSValidateConfirmedPayload_(
+  payload
+) {
+  if (!payload) {
+    throw new Error(
+      "No receipt information was received."
+    );
+  }
+
+  receiptOSValidateUpload_({
+    base64: payload.base64,
+    fileName: payload.originalFileName,
+    mimeType: payload.mimeType
+  });
+
+  if (!payload.destination) {
+    throw new Error(
+      "Please choose a destination."
+    );
+  }
+
+  if (!payload.date) {
+    throw new Error(
+      "Please enter the receipt date."
+    );
+  }
+
+  if (!payload.vendor) {
+    throw new Error(
+      "Please enter the vendor."
+    );
+  }
+
+  if (!payload.amount) {
+    throw new Error(
+      "Please enter the amount."
+    );
+  }
+}
+
+
+function receiptOSParseUserDate_(value) {
+  const text = String(value || "").trim();
+
+  const match = text.match(
+    /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+
+  let year = Number(match[3]);
+
+  if (year < 100) {
+    year += 2000;
+  }
+
+  const date = new Date(
+    year,
+    month - 1,
+    day
+  );
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+
+function receiptOSParseCurrency_(value) {
+  return Number(
+    String(value || "")
+      .replace(/[$,\s]/g, "")
+      .trim()
+  );
+}
+
+
+function receiptOSDateIsWithin_(
+  date,
+  startDate,
+  endDate
+) {
+  const target = receiptOSDateKey_(date);
+  const start = receiptOSDateKey_(startDate);
+  const end = receiptOSDateKey_(endDate);
+
+  return (
+    target >= start &&
+    target <= end
+  );
+}
+
+
+function receiptOSDateKey_(date) {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  ).getTime();
+}
+
+
+function receiptOSGetUniqueFileName_(
+  folder,
+  desiredName
+) {
+  if (
+    !folder
+      .getFilesByName(desiredName)
+      .hasNext()
+  ) {
+    return desiredName;
+  }
+
+  const extensionMatch =
+    desiredName.match(/(\.[^.]+)$/);
+
+  const extension = extensionMatch
+    ? extensionMatch[1]
+    : "";
+
+  const baseName = extension
+    ? desiredName.slice(
+        0,
+        -extension.length
+      )
+    : desiredName;
+
+  let copyNumber = 2;
+
+  while (
+    folder
+      .getFilesByName(
+        baseName +
+        " (" +
+        copyNumber +
+        ")" +
+        extension
+      )
+      .hasNext()
+  ) {
+    copyNumber++;
+  }
+
+  return (
+    baseName +
+    " (" +
+    copyNumber +
+    ")" +
+    extension
+  );
+}
+
+
+function receiptOSSanitizeFileName_(value) {
+  return String(value || "")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function receiptOSCleanCellText_(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function receiptOSNormalizeText_(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+
+function receiptOSTrashFileSafely_(fileId) {
+  if (!fileId) {
+    return;
+  }
+
+  try {
+    DriveApp
+      .getFileById(fileId)
+      .setTrashed(true);
+
+  } catch (error) {
+    console.warn(
+      "Could not trash temporary file " +
+      fileId +
+      ": " +
+      error
+    );
+  }
+}
+
+function authorizeReceiptOS() {
+  const tempDoc = DocumentApp.create("ReceiptOS Authorization Test");
+
+  try {
+    const reopenedDoc = DocumentApp.openById(tempDoc.getId());
+    reopenedDoc.getBody().appendParagraph("ReceiptOS authorized.");
+    reopenedDoc.saveAndClose();
+
+    DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+
+    SpreadsheetApp.getUi().alert(
+      "ReceiptOS authorization is complete."
+    );
+  } catch (error) {
+    try {
+      DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+    } catch (ignored) {}
+
+    throw error;
+  }
+}

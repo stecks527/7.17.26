@@ -1,0 +1,1514 @@
+/*************************************************
+ * 15 PREPOS - INTELLIGENCE BRIDGE
+ * Version: 3.1.0
+ * Status: ACTIVE
+ *
+ * Fast cached intelligence bridge for ShowStateOS
+ * and PrepOS.
+ *************************************************/
+
+const PREP_INTELLIGENCE_CACHE_KEY_ =
+  "PREP_INTELLIGENCE_OS_CACHE";
+
+const PREP_INTELLIGENCE_CACHE_MAX_AGE_MS_ =
+  5 * 60 * 1000;
+
+
+/* =========================================================
+ * PUBLIC BRIDGE
+ * ========================================================= */
+
+function addPrepIntelligenceToShowState_(state) {
+  state = state || {};
+
+  const startedAt = Date.now();
+
+  const targetDate =
+    prepOSParseDate_(
+      state.date
+    );
+
+  if (!targetDate) {
+    state.intelligence =
+      prepOSBuildEmptyIntelligence_();
+
+    return state;
+  }
+
+  const dateKey =
+    Utilities.formatDate(
+      targetDate,
+      Session.getScriptTimeZone(),
+      "yyyy-MM-dd"
+    );
+
+  const cached =
+    prepOSGetIntelligenceCache_(
+      dateKey
+    );
+
+  if (cached) {
+    state.intelligence = cached;
+
+    Logger.log(
+      "Prep intelligence source: cache"
+    );
+
+    Logger.log(
+      "Prep intelligence total: " +
+      (Date.now() - startedAt) +
+      "ms"
+    );
+
+    return state;
+  }
+
+  const intelligence =
+    prepOSBuildIntelligenceForDate_(
+      targetDate,
+      state
+    );
+
+  prepOSSetIntelligenceCache_(
+    dateKey,
+    intelligence
+  );
+
+  state.intelligence =
+    intelligence;
+
+  Logger.log(
+    "Prep intelligence source: rebuilt"
+  );
+
+  Logger.log(
+    "Prep intelligence total: " +
+    (Date.now() - startedAt) +
+    "ms"
+  );
+
+  return state;
+}
+
+
+/* =========================================================
+ * INTELLIGENCE BUILDER
+ * ========================================================= */
+
+function prepOSBuildIntelligenceForDate_(
+  targetDate,
+  showState
+) {
+  const startedAt = Date.now();
+
+  showState = showState || {};
+
+  const plannedOuts =
+    prepOSReadPlannedOutsFromWeeklyOS_(
+      targetDate
+    );
+
+  Logger.log(
+    "Prep intelligence planned outs: " +
+    (Date.now() - startedAt) +
+    "ms"
+  );
+
+  /*
+   * Read Cast List only once.
+   */
+  const actorOptions =
+    prepOSGetCachedActorOptions_();
+
+  Logger.log(
+    "Prep intelligence actor options: " +
+    (Date.now() - startedAt) +
+    "ms total"
+  );
+
+  /*
+   * Build role -> possible covers once from actor options.
+   */
+  const coverOptionsByRole =
+    prepOSBuildCoverOptionsByRole_(
+      actorOptions
+    );
+
+  /*
+   * Build role -> Weekly-assigned cover from the Weekly
+   * cast-outs already present in Show State.
+   */
+  const weeklyCoverByRole =
+    prepOSBuildWeeklyCoverByRole_(
+      showState.currentCastOuts ||
+      showState.castOuts ||
+      []
+    );
+
+  /*
+   * Normalize every planned out without rereading Weekly,
+   * Cast List, or PD/Vacation Tracker.
+   */
+  const normalizedPlannedOuts =
+    plannedOuts.map(
+      function (out, index) {
+        return prepOSBuildFastPlannedOutPayload_(
+          out,
+          index,
+          weeklyCoverByRole,
+          coverOptionsByRole
+        );
+      }
+    );
+
+  Logger.log(
+    "Prep intelligence normalize outs: " +
+    (Date.now() - startedAt) +
+    "ms total"
+  );
+
+  return {
+    plannedOuts:
+      normalizedPlannedOuts,
+
+    actorOptions:
+      actorOptions,
+
+    coverOptionsByRole:
+      coverOptionsByRole,
+
+    reasonOptions: [
+      "Illness",
+      "Personal",
+      "Approved PD",
+      "Unapp PD",
+      "Vacation",
+      "Injury",
+      "LOA",
+      "MLOA",
+      "Other"
+    ]
+  };
+}
+
+/* =========================================================
+ * PAYROLLSCHEDULEOS PLANNED-OUT SOURCE
+ *
+ * Uses the same resolved weekly model already proven by:
+ * - Payroll
+ * - Payroll Notes
+ * - PerformanceAssignmentOS
+ *
+ * Excludes same-day call-ins because those are entered
+ * separately in the Prep dialog.
+ * ========================================================= */
+
+function prepOSReadPlannedOutsFromWeeklyOS_(
+  targetDate
+) {
+  if (
+    !(targetDate instanceof Date) ||
+    isNaN(targetDate.getTime())
+  ) {
+    return [];
+  }
+
+  if (
+    typeof PayrollScheduleOS !==
+    "function"
+  ) {
+    throw new Error(
+      "PayrollScheduleOS is unavailable."
+    );
+  }
+
+  const schedule =
+    PayrollScheduleOS().current();
+
+  const targetDateKey =
+    Utilities.formatDate(
+      targetDate,
+      Session.getScriptTimeZone(),
+      "yyyy-MM-dd"
+    );
+
+  const outs = [];
+  const coverageByOutAndRole = {};
+
+  /*
+   * First collect resolved coverage for the date.
+   */
+  (schedule.people || []).forEach(
+    function (person) {
+      const day =
+        (person.days || []).find(
+          function (item) {
+            return (
+              String(item.date || "") ===
+              targetDateKey
+            );
+          }
+        );
+
+      if (!day) return;
+
+      (day.coverage || []).forEach(
+        function (coverage) {
+          const key = [
+            prepOSNormalizePersonKey_(
+              coverage.out
+            ),
+            prepOSNormalizeRoleKey_(
+              coverage.role
+            )
+          ].join("::");
+
+          if (
+            !coverageByOutAndRole[key]
+          ) {
+            coverageByOutAndRole[key] = {
+              in:
+                coverage.in || "",
+
+              source:
+                coverage.source || "",
+
+              reason:
+                coverage.reason || ""
+            };
+          }
+        }
+      );
+    }
+  );
+
+  /*
+   * Then collect planned OUT records.
+   *
+   * Same-day call-ins remain in the separate
+   * Call-Ins section of the Prep dialog.
+   */
+  (schedule.people || []).forEach(
+    function (person) {
+      const day =
+        (person.days || []).find(
+          function (item) {
+            return (
+              String(item.date || "") ===
+              targetDateKey
+            );
+          }
+        );
+
+      if (!day) return;
+
+      (day.outs || []).forEach(
+        function (out) {
+          const source =
+            String(
+              out.source || ""
+            ).toLowerCase();
+
+          if (
+            source === "callin" ||
+            source === "call-in"
+          ) {
+            return;
+          }
+
+          const actor =
+            out.person ||
+            person.name ||
+            "";
+
+          const role =
+            out.role || "";
+
+          const key = [
+            prepOSNormalizePersonKey_(
+              actor
+            ),
+            prepOSNormalizeRoleKey_(
+              role
+            )
+          ].join("::");
+
+          const coverage =
+            coverageByOutAndRole[key] ||
+            {};
+
+          const reason =
+            out.reason ||
+            coverage.reason ||
+            "Out";
+
+          const isContractLOA =
+            prepOSIsContractLeaveReason_(
+              reason
+            );
+
+          outs.push({
+            id:
+              [
+                "planned",
+                targetDateKey,
+                actor,
+                role,
+                out.part || ""
+              ].join("_"),
+
+            actor:
+              actor,
+
+            actorOut:
+              actor,
+
+            out:
+              actor,
+
+            role:
+              role,
+
+            character:
+              role,
+
+            reason:
+              reason,
+
+            status:
+              out.approvalStatus ||
+              "Review",
+
+            approvalStatus:
+              out.approvalStatus || "",
+
+            appliesTo:
+              out.appliesTo ||
+              out.part ||
+              "ALL",
+
+            performances:
+              "1",
+
+            performanceCount:
+              1,
+
+            isContractLOA:
+              isContractLOA,
+
+            isLoa:
+              /^LOA$/i.test(reason),
+
+            isMloa:
+              /^MLOA$/i.test(reason),
+
+            writeToInOutSheet:
+              out.writeToInOutSheet !==
+                false &&
+              !isContractLOA,
+
+            tempReplacement:
+              /temporary replacement/i.test(
+                coverage.source || ""
+              )
+                ? coverage.in || ""
+                : "",
+
+            weeklyAssigned:
+              /weekly schedule/i.test(
+                coverage.source || ""
+              )
+                ? coverage.in || ""
+                : "",
+
+            preselectedCover:
+              coverage.in || "",
+
+            finalInActor:
+              coverage.in || "",
+
+            coverActor:
+              coverage.in || "",
+
+            coverSource:
+              coverage.source || "",
+
+            noCoverNeeded:
+              out.noCoverNeeded === true,
+
+            source:
+              "PayrollScheduleOS"
+          });
+        }
+      );
+    }
+  );
+
+  const deduped = [];
+  const seen = {};
+
+  outs.forEach(function (out) {
+    const key = [
+      prepOSNormalizePersonKey_(
+        out.actor
+      ),
+      prepOSNormalizeRoleKey_(
+        out.role
+      ),
+      String(
+        out.appliesTo || ""
+      ).toUpperCase()
+    ].join("::");
+
+    if (seen[key]) {
+      return;
+    }
+
+    seen[key] = true;
+    deduped.push(out);
+  });
+
+  Logger.log(
+    "Prep PayrollScheduleOS planned-outs source: " +
+    deduped.length +
+    " record(s) for " +
+    targetDateKey
+  );
+
+  return deduped;
+}
+
+
+function prepOSNormalizePersonKey_(
+  value
+) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+/*
+ * Safe fallback if WeeklyOS does not expose its
+ * Monday helper in a future file arrangement.
+ */
+function prepOSFindMondayForDate_(
+  targetDate
+) {
+  const monday =
+    new Date(
+      targetDate
+    );
+
+  monday.setHours(
+    12,
+    0,
+    0,
+    0
+  );
+
+  const day =
+    monday.getDay();
+
+  const distance =
+    day === 0
+      ? -6
+      : 1 - day;
+
+  monday.setDate(
+    monday.getDate() +
+    distance
+  );
+
+  return monday;
+}
+
+function prepOSBuildFastPlannedOutPayload_(
+  out,
+  index,
+  weeklyCoverByRole,
+  coverOptionsByRole
+) {
+  out = out || {};
+
+  const actor =
+    prepOSFirstNonBlank_(
+      out.actor,
+      out.actorOut,
+      out.out,
+      out.name
+    );
+
+  const role =
+    prepOSFirstNonBlank_(
+      out.role,
+      out.character
+    );
+
+  const reason =
+    prepOSClean_(
+      out.reason
+    );
+
+  const roleKey =
+    prepOSNormalizeRoleKey_(
+      role
+    );
+
+  const isContractLOA =
+    Boolean(
+      out.isContractLOA
+    ) ||
+    prepOSIsContractLeaveReason_(
+      reason
+    );
+
+  let temporaryReplacement =
+    prepOSFirstNonBlank_(
+      out.tempReplacement,
+      out.temporaryReplacement
+    );
+
+  /*
+   * Preserve the current LOA/MLOA replacement lookup,
+   * but call it only once for contract leaves.
+   */
+  if (
+    !temporaryReplacement &&
+    isContractLOA &&
+    typeof getTempReplacementForLOA_ ===
+      "function"
+  ) {
+    temporaryReplacement =
+      getTempReplacementForLOA_(
+        out
+      ) || "";
+  }
+
+  const weeklyAssigned =
+    prepOSFirstNonBlank_(
+      out.weeklyAssigned,
+      out.weeklyCover,
+      weeklyCoverByRole[roleKey]
+    );
+
+  const preselectedCover =
+    prepOSFirstNonBlank_(
+      out.finalInActor,
+      out.preselectedCover,
+      out.coverActor,
+      out.inActor,
+      out.in,
+      temporaryReplacement,
+      weeklyAssigned
+    );
+
+  const options =
+    uniqueSorted_(
+      []
+        .concat(
+          coverOptionsByRole[roleKey] ||
+          []
+        )
+        .concat(
+          preselectedCover
+            ? [preselectedCover]
+            : []
+        )
+    );
+
+  return {
+    id:
+      out.id ||
+      "planned_" +
+      index,
+
+    type:
+      "planned",
+
+    source:
+      "planned",
+
+    actor:
+      actor,
+
+    actorOut:
+      actor,
+
+    out:
+      actor,
+
+    role:
+      role,
+
+    character:
+      role,
+
+    reason:
+      reason,
+
+    status:
+      out.status ||
+      out.approvalStatus ||
+      "Review",
+
+    performances:
+      String(
+        out.performances ||
+        out.performanceCount ||
+        "1"
+      ),
+
+    performanceCount:
+      Number(
+        out.performanceCount ||
+        out.performances ||
+        1
+      ) || 1,
+
+    isContractLOA:
+      isContractLOA,
+
+    isLoa:
+      /^LOA$/i.test(
+        reason
+      ),
+
+    isMloa:
+      /^MLOA$/i.test(
+        reason
+      ),
+
+    writeToInOutSheet:
+      out.writeToInOutSheet !== false &&
+      !isContractLOA,
+
+    tempReplacement:
+      temporaryReplacement,
+
+    weeklyAssigned:
+      weeklyAssigned,
+
+    preselectedCover:
+      preselectedCover,
+
+    finalInActor:
+      preselectedCover,
+
+    coverActor:
+      preselectedCover,
+
+    coverSource:
+      temporaryReplacement
+        ? "temporaryReplacement"
+        : weeklyAssigned
+          ? "weeklyAssigned"
+          : preselectedCover
+            ? "existing"
+            : "",
+
+    coverOptions:
+      options,
+
+    isTemporaryReplacement:
+      Boolean(
+        temporaryReplacement
+      ),
+
+    isWeeklyAssigned:
+      Boolean(
+        weeklyAssigned
+      ),
+
+    noCoverNeeded:
+      false,
+
+    complete:
+      Boolean(
+        actor &&
+        (
+          preselectedCover ||
+          isContractLOA
+        )
+      )
+  };
+}
+
+
+function prepOSBuildWeeklyCoverByRole_(
+  castOuts
+) {
+  const output = {};
+
+  (castOuts || []).forEach(
+    function (item) {
+      item = item || {};
+
+      const role =
+        prepOSFirstNonBlank_(
+          item.role,
+          item.character
+        );
+
+      const cover =
+        prepOSFirstNonBlank_(
+          item.in,
+          item.inActor,
+          item.coverActor,
+          item.cover
+        );
+
+      const roleKey =
+        prepOSNormalizeRoleKey_(
+          role
+        );
+
+      if (
+        roleKey &&
+        cover
+      ) {
+        output[roleKey] =
+          cover;
+      }
+    }
+  );
+
+  return output;
+}
+
+
+function prepOSBuildCoverOptionsByRole_(
+  actorOptions
+) {
+  const output = {};
+
+  (actorOptions || []).forEach(
+    function (actor) {
+      actor = actor || {};
+
+      const name =
+        prepOSClean_(
+          actor.fullName ||
+          actor.name
+        );
+
+      if (!name) return;
+
+      const coveredRoles = [];
+
+      if (actor.covers) {
+        String(actor.covers)
+          .split(/[\n,;/]+/)
+          .map(
+            prepOSClean_
+          )
+          .filter(Boolean)
+          .forEach(
+            function (role) {
+              coveredRoles.push(
+                role
+              );
+            }
+          );
+      }
+
+      /*
+       * A person's listed role/character also counts as
+       * a role mapping when the Cast List reader provides it.
+       */
+      [
+        actor.character,
+        actor.role
+      ]
+        .map(
+          prepOSClean_
+        )
+        .filter(Boolean)
+        .forEach(
+          function (role) {
+            coveredRoles.push(
+              role
+            );
+          }
+        );
+
+      coveredRoles.forEach(
+        function (role) {
+          const roleKey =
+            prepOSNormalizeRoleKey_(
+              role
+            );
+
+          if (!roleKey) return;
+
+          if (!output[roleKey]) {
+            output[roleKey] = [];
+          }
+
+          if (
+            output[roleKey]
+              .indexOf(name) === -1
+          ) {
+            output[roleKey].push(
+              name
+            );
+          }
+        }
+      );
+    }
+  );
+
+  Object.keys(output)
+    .forEach(function (roleKey) {
+      output[roleKey] =
+        uniqueSorted_(
+          output[roleKey]
+        );
+    });
+
+  return output;
+}
+
+/* =========================================================
+ * FAST ACTOR OPTIONS
+ * Version: 1.1.0
+ *
+ * Reads structured Cast List data once, normalizes it,
+ * and caches the result for later Prep executions.
+ * ========================================================= */
+
+const PREPOS_ACTOR_OPTIONS_CACHE_KEY_ =
+  "PREPOS_ACTOR_OPTIONS_V1";
+
+const PREPOS_ACTOR_OPTIONS_CACHE_SECONDS_ =
+  21600; // 6 hours
+
+
+function prepOSGetCachedActorOptions_(
+  forceRefresh
+) {
+  if (!forceRefresh) {
+    const cached =
+      prepOSReadActorOptionsCache_();
+
+    if (cached) {
+      Logger.log(
+        "Prep actor options source: cache"
+      );
+
+      return cached;
+    }
+  }
+
+  const actorOptions =
+    prepOSBuildActorOptionsFromSource_();
+
+  prepOSWriteActorOptionsCache_(
+    actorOptions
+  );
+
+  Logger.log(
+    "Prep actor options source: rebuilt"
+  );
+
+  return actorOptions;
+}
+
+
+/* =========================================================
+ * SOURCE BUILD
+ * ========================================================= */
+
+function prepOSBuildActorOptionsFromSource_() {
+  /*
+   * Preferred source:
+   * structured Cast List data with role and cover details.
+   */
+  if (
+    typeof getCastListData_ ===
+    "function"
+  ) {
+    const data =
+      getCastListData_();
+
+    if (
+      data &&
+      Array.isArray(
+        data.rows
+      )
+    ) {
+      return data.rows
+        .map(function (row) {
+          return {
+            fullName:
+              String(
+                row.fullName || ""
+              ).trim(),
+
+            character:
+              String(
+                row.character || ""
+              ).trim(),
+
+            role:
+              String(
+                row.role || ""
+              ).trim(),
+
+            covers:
+              String(
+                row.covers || ""
+              ).trim()
+          };
+        })
+        .filter(function (row) {
+          return Boolean(
+            row.fullName
+          );
+        })
+        .sort(function (a, b) {
+          return a.fullName.localeCompare(
+            b.fullName
+          );
+        });
+    }
+  }
+
+  /*
+   * Fallback:
+   * name-only Cast List cache.
+   */
+  if (
+    typeof CastListCacheOS ===
+    "function"
+  ) {
+    const cache =
+      CastListCacheOS().get() ||
+      {};
+
+    return (
+      cache.actors || []
+    )
+      .map(function (name) {
+        return {
+          fullName:
+            String(
+              name || ""
+            ).trim(),
+
+          character:
+            "",
+
+          role:
+            "",
+
+          covers:
+            ""
+        };
+      })
+      .filter(function (row) {
+        return Boolean(
+          row.fullName
+        );
+      })
+      .sort(function (a, b) {
+        return a.fullName.localeCompare(
+          b.fullName
+        );
+      });
+  }
+
+  return [];
+}
+
+
+/* =========================================================
+ * CACHE READ / WRITE
+ * ========================================================= */
+
+function prepOSReadActorOptionsCache_() {
+  try {
+    const raw =
+      CacheService
+        .getDocumentCache()
+        .get(
+          PREPOS_ACTOR_OPTIONS_CACHE_KEY_
+        );
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(
+        raw
+      );
+
+    if (
+      !parsed ||
+      !Array.isArray(
+        parsed.actorOptions
+      )
+    ) {
+      return null;
+    }
+
+    return parsed.actorOptions;
+
+  } catch (err) {
+    Logger.log(
+      "Prep actor options cache read skipped: " +
+      String(err)
+    );
+
+    return null;
+  }
+}
+
+
+function prepOSWriteActorOptionsCache_(
+  actorOptions
+) {
+  try {
+    const payload =
+      JSON.stringify({
+        cachedAt:
+          new Date()
+            .toISOString(),
+
+        actorOptions:
+          actorOptions || []
+      });
+
+    if (
+      payload.length >
+      95000
+    ) {
+      Logger.log(
+        "Prep actor options cache skipped; " +
+        "payload too large: " +
+        payload.length
+      );
+
+      return false;
+    }
+
+    CacheService
+      .getDocumentCache()
+      .put(
+        PREPOS_ACTOR_OPTIONS_CACHE_KEY_,
+        payload,
+        PREPOS_ACTOR_OPTIONS_CACHE_SECONDS_
+      );
+
+    return true;
+
+  } catch (err) {
+    Logger.log(
+      "Prep actor options cache write skipped: " +
+      String(err)
+    );
+
+    return false;
+  }
+}
+
+
+/* =========================================================
+ * CACHE CONTROL
+ * ========================================================= */
+
+function prepOSClearActorOptionsCache_() {
+  CacheService
+    .getDocumentCache()
+    .remove(
+      PREPOS_ACTOR_OPTIONS_CACHE_KEY_
+    );
+
+  Logger.log(
+    "Prep actor options cache cleared."
+  );
+
+  return true;
+}
+
+
+function refreshPrepOSActorOptionsCache() {
+  prepOSClearActorOptionsCache_();
+
+  const actorOptions =
+    prepOSGetCachedActorOptions_(
+      true
+    );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Prep actor options cache refreshed.\n\n" +
+      "Actors: " +
+      actorOptions.length
+    );
+
+  return actorOptions;
+}
+/* =========================================================
+ * CACHE
+ * ========================================================= */
+
+function prepOSGetIntelligenceCache_(
+  expectedDateKey
+) {
+  const raw =
+    PropertiesService
+      .getDocumentProperties()
+      .getProperty(
+        PREP_INTELLIGENCE_CACHE_KEY_
+      );
+
+  if (!raw) return null;
+
+  try {
+    const cached =
+      JSON.parse(raw);
+
+    const age =
+      Date.now() -
+      Number(
+        cached.savedAt || 0
+      );
+
+    if (
+      age >
+      PREP_INTELLIGENCE_CACHE_MAX_AGE_MS_
+    ) {
+      clearPrepIntelligenceCache_();
+      return null;
+    }
+
+    if (
+      cached.dateKey !==
+      expectedDateKey
+    ) {
+      return null;
+    }
+
+    return cached.intelligence || null;
+
+  } catch (err) {
+    clearPrepIntelligenceCache_();
+    return null;
+  }
+}
+
+
+function prepOSSetIntelligenceCache_(
+  dateKey,
+  intelligence
+) {
+  try {
+    PropertiesService
+      .getDocumentProperties()
+      .setProperty(
+        PREP_INTELLIGENCE_CACHE_KEY_,
+        JSON.stringify({
+          savedAt:
+            Date.now(),
+
+          dateKey:
+            dateKey,
+
+          intelligence:
+            intelligence
+        })
+      );
+
+    return true;
+
+  } catch (err) {
+    Logger.log(
+      "Prep intelligence cache write skipped: " +
+      String(err)
+    );
+
+    return false;
+  }
+}
+
+
+function clearPrepIntelligenceCache_() {
+  PropertiesService
+    .getDocumentProperties()
+    .deleteProperty(
+      PREP_INTELLIGENCE_CACHE_KEY_
+    );
+}
+
+
+function clearPrepIntelligenceAndShowStateCaches() {
+  clearPrepIntelligenceCache_();
+
+  if (
+    typeof clearShowStateOSCache ===
+    "function"
+  ) {
+    clearShowStateOSCache();
+  }
+
+  return true;
+}
+
+
+/* =========================================================
+ * EMPTY STATE
+ * ========================================================= */
+
+function prepOSBuildEmptyIntelligence_() {
+  return {
+    plannedOuts: [],
+    actorOptions: [],
+    reasonOptions: [
+      "Illness",
+      "Personal",
+      "Approved PD",
+      "Unapp PD",
+      "Vacation",
+      "Injury",
+      "LOA",
+      "MLOA",
+      "Other"
+    ]
+  };
+}
+
+
+/* =========================================================
+ * SPEED TEST
+ * ========================================================= */
+
+function testPrepIntelligenceSpeed() {
+  clearPrepIntelligenceAndShowStateCaches();
+
+  const inOut =
+    prepOSSheet_(
+      "IN/OUT"
+    );
+
+  if (!inOut) {
+    throw new Error(
+      'Could not find "IN/OUT".'
+    );
+  }
+
+  const dateText =
+    inOut
+      .getRange("A3")
+      .getDisplayValue();
+
+  const state = {
+    date:
+      dateText
+  };
+
+  const coldStartedAt =
+    Date.now();
+
+  const cold =
+    addPrepIntelligenceToShowState_(
+      Object.assign({}, state)
+    );
+
+  const coldMs =
+    Date.now() -
+    coldStartedAt;
+
+  const warmStartedAt =
+    Date.now();
+
+  const warm =
+    addPrepIntelligenceToShowState_(
+      Object.assign({}, state)
+    );
+
+  const warmMs =
+    Date.now() -
+    warmStartedAt;
+
+  const result = {
+    coldMs:
+      coldMs,
+
+    warmMs:
+      warmMs,
+
+    plannedOuts:
+      cold.intelligence
+        .plannedOuts.length,
+
+    actorOptions:
+      cold.intelligence
+        .actorOptions.length,
+
+    warmAvailable:
+      Boolean(
+        warm.intelligence
+      )
+  };
+
+  Logger.log(
+    "PREP INTELLIGENCE SPEED TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "Prep intelligence speed test complete.\n\n" +
+      "Cold build: " +
+      result.coldMs +
+      " ms\n" +
+      "Warm build: " +
+      result.warmMs +
+      " ms\n\n" +
+      "Planned outs: " +
+      result.plannedOuts +
+      "\n" +
+      "Actor options: " +
+      result.actorOptions
+    );
+
+  return result;
+}
+
+function diagnosePrepPlannedOutsToday() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const inOut =
+    ss.getSheetByName("IN/OUT");
+
+  if (!inOut) {
+    throw new Error(
+      'Could not find "IN/OUT".'
+    );
+  }
+
+  const dateText =
+    inOut
+      .getRange("A3")
+      .getDisplayValue();
+
+  const targetDate =
+    prepOSParseDate_(
+      dateText
+    );
+
+  if (!targetDate) {
+    throw new Error(
+      "Could not parse IN/OUT!A3: " +
+      dateText
+    );
+  }
+
+  clearPrepIntelligenceAndShowStateCaches();
+
+  let rawPlannedOuts = [];
+
+  if (
+    typeof InOutIntelligenceOS ===
+    "function"
+  ) {
+    rawPlannedOuts =
+      InOutIntelligenceOS()
+        .plannedOutsForDate(
+          targetDate
+        ) || [];
+  }
+
+  const state =
+    buildShowState();
+
+  const normalizedPlannedOuts =
+    state &&
+    state.intelligence &&
+    Array.isArray(
+      state.intelligence.plannedOuts
+    )
+      ? state.intelligence.plannedOuts
+      : [];
+
+  const result = {
+    dateText:
+      dateText,
+
+    targetDate:
+      Utilities.formatDate(
+        targetDate,
+        Session.getScriptTimeZone(),
+        "yyyy-MM-dd"
+      ),
+
+    rawCount:
+      rawPlannedOuts.length,
+
+    rawPlannedOuts:
+      rawPlannedOuts,
+
+    normalizedCount:
+      normalizedPlannedOuts.length,
+
+    normalizedPlannedOuts:
+      normalizedPlannedOuts,
+
+    showStateAvailable:
+      Boolean(state),
+
+    intelligenceAvailable:
+      Boolean(
+        state &&
+        state.intelligence
+      )
+  };
+
+  Logger.log(
+    "PREP PLANNED OUTS DIAGNOSTIC"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      [
+        "Prep planned-outs diagnostic complete.",
+        "",
+        "Date: " +
+          result.dateText,
+        "Raw planned outs: " +
+          result.rawCount,
+        "Normalized planned outs: " +
+          result.normalizedCount,
+        "",
+        "Open the execution log for details."
+      ].join("\n")
+    );
+
+  return result;
+}

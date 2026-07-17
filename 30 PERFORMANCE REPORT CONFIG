@@ -1,0 +1,661 @@
+/****************************************************
+ * 30 PERFORMANCE REPORT CONFIG
+ ****************************************************/
+
+const PERFORMANCE_REPORT_CONFIG = {
+  sheetName: "Performance Report",
+  settingsSheetName: "Production Settings",
+
+  logoSettingName: "Logo",
+  logoWidth: 340,
+
+  startRow: 4,
+  endRow: 91,
+  lastCol: 8,
+
+  tableWidth: 820,
+  wrapStartRow: 15,
+
+  subjectPrefix: "SPELLING BEE - Performance Report",
+  showName: "SPELLING BEE"
+};
+
+/****************************************************
+ * BUTTON SCRIPT
+ ****************************************************/
+
+function createPerformanceReportOnlyDraft() {
+  createPerformanceReportEmailDraft();
+  SpreadsheetApp.getUi().alert("Performance Report draft created!");
+}
+
+/****************************************************
+ * PERFORMANCE REPORT EMAIL DRAFT
+ ****************************************************/
+ 
+function createPerformanceReportEmailDraft() {
+  const cfg = PERFORMANCE_REPORT_CONFIG;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(cfg.sheetName);
+
+  if (!sheet) {
+    throw new Error(`Sheet "${cfg.sheetName}" not found.`);
+  }
+
+  // Ensure Accident / Injury section exports correctly.
+  sheet.getRange("A30")
+    .setVerticalAlignment("top")
+    .setHorizontalAlignment("left");
+
+  SpreadsheetApp.flush();
+
+  const reportNumberMatch = sheet.getRange("A2").getDisplayValue().match(/\d+/);
+  if (!reportNumberMatch) {
+    throw new Error(`Could not read report number from ${cfg.sheetName}!A2.`);
+  }
+
+  const reportNumber = reportNumberMatch[0];
+
+  const rawReportDateText = sheet.getRange("A3").getDisplayValue().trim();
+  const reportInfo = parsePerformanceReportDate_(rawReportDateText);
+
+  const cleanReportDateText = reportInfo.cleanDateText;
+  const performanceSuffix = reportInfo.suffix;
+
+  const subject =
+    `${cfg.subjectPrefix} #${reportNumber} ${reportInfo.subjectDate}${performanceSuffix}`;
+
+  const fileName =
+    `${cfg.subjectPrefix} #${reportNumber} ${reportInfo.fileDate}${performanceSuffix}`;
+
+  const logoUrl = getProductionLogoUrl_();
+
+  const reportHtml = buildPerformanceReportHtml_FAST_(
+    sheet,
+    reportNumber,
+    rawReportDateText
+  );
+  t = logStep("Build HTML", t);
+
+  const bodyDateText = performanceSuffix
+    ? `${cleanReportDateText} -${performanceSuffix}`
+    : cleanReportDateText;
+
+  const htmlBody =
+    `Hello Team ${cfg.showName},<br><br>` +
+    `Please find Performance Report #${reportNumber} for Today, ${bodyDateText} for ${cfg.showName} attached and below.<br><br>` +
+    `Please reach out with any questions or concerns.<br><br>` +
+    `<div style="width:100%; overflow-x:auto;">` +
+      `<div style="
+        width:${cfg.tableWidth}px;
+        min-width:${cfg.tableWidth}px;
+        text-align:center;
+        font-family:Arial, sans-serif;
+        margin:0;
+        padding:10px 0 22px 0;
+        line-height:0;
+      ">
+        <img
+          src="${logoUrl}"
+          width="${cfg.logoWidth}"
+          alt="${cfg.showName}"
+          style="
+            display:block;
+            width:${cfg.logoWidth}px;
+            max-width:90%;
+            height:auto;
+            line-height:0;
+            border:0;
+            outline:none;
+            text-decoration:none;
+            margin:0 auto;
+          "
+        >
+      </div>` +
+      (reportHtml ? reportHtml + `<br><br>` : ``) +
+      signatureToHtml_(getStageOSEmailSignature_()) +
+    `</div>`;
+
+  const pdfBlob = exportSingleSheetAsPdf_(ss, sheet, fileName);
+  t = logStep("Export PDF", t);
+
+  // Save one clean copy into Report Folder; trash older duplicates with same file name.
+  savePerformanceReportPdfToDrive_(pdfBlob);
+  t = logStep("Save PDF", t);
+
+    GmailApp.createDraft(
+    "",
+    subject,
+    `Hello Team ${cfg.showName},
+
+Please find Performance Report #${reportNumber} for Today, ${bodyDateText} for ${cfg.showName} attached and below.
+
+Please reach out with any questions or concerns.${getStageOSEmailSignature_()}`,
+    {
+      htmlBody: htmlBody,
+      attachments: [pdfBlob]
+    }
+  );
+
+  t = logStep(
+    "Create Gmail Draft",
+    t
+  );
+
+  Logger.log(
+    "--------------------------------"
+  );
+
+  Logger.log(
+    "TOTAL: " +
+    (
+      Date.now() -
+      overallStart
+    ) +
+    " ms"
+  );
+
+  Logger.log(
+    "--------------------------------"
+  );
+}
+
+/****************************************************
+ * DRIVE SAVE HELPER
+ ****************************************************/
+
+function savePerformanceReportPdfToDrive_(pdfBlob) {
+  const folderValue = getProductionSettingOptional_("Report Folder");
+  if (!folderValue) return null;
+
+  const folderId = extractDriveId_(folderValue);
+  const folder = DriveApp.getFolderById(folderId);
+  const fileName = pdfBlob.getName();
+
+  // Testing safety: remove old exact-name duplicates before saving the new copy.
+  const existing = folder.getFilesByName(fileName);
+  while (existing.hasNext()) {
+    existing.next().setTrashed(true);
+  }
+
+  return folder.createFile(pdfBlob.copyBlob());
+}
+
+/****************************************************
+ * PERFORMANCE REPORT DATE HELPER
+ ****************************************************/
+
+function parsePerformanceReportDate_(dateText) {
+  const tz = Session.getScriptTimeZone();
+
+  let suffix = "";
+  let cleanDateText = String(dateText || "").trim();
+
+  if (/\bMAT\b/i.test(cleanDateText)) {
+    suffix = " MAT";
+    cleanDateText = cleanDateText.replace(/\s*-?\s*MAT\b/i, "").trim();
+  } else if (/\bEVE\b/i.test(cleanDateText)) {
+    suffix = " EVE";
+    cleanDateText = cleanDateText.replace(/\s*-?\s*EVE\b/i, "").trim();
+  }
+
+  const parsedDate = new Date(cleanDateText);
+
+  if (isNaN(parsedDate.getTime())) {
+    throw new Error("Could not parse Performance Report date from A3: " + dateText);
+  }
+
+  return {
+    suffix: suffix,
+    cleanDateText: Utilities.formatDate(parsedDate, tz, "EEEE, MMMM d, yyyy"),
+    subjectDate: Utilities.formatDate(parsedDate, tz, "EEEE M.d.yyyy"),
+    fileDate: Utilities.formatDate(parsedDate, tz, "M.d.yy")
+  };
+}
+
+/****************************************************
+ * PERFORMANCE REPORT HTML HELPER
+ ****************************************************/
+function buildPerformanceReportHtml_FAST_(sheet, reportNumber, reportDateText) {
+  const cfg = PERFORMANCE_REPORT_CONFIG;
+
+  const startRow = cfg.startRow;
+  const lastRow = cfg.endRow;
+  const lastCol = cfg.lastCol;
+  const numRows = lastRow - startRow + 1;
+
+  const range = sheet.getRange(startRow, 1, numRows, lastCol);
+  const values = range.getDisplayValues();
+  const backgrounds = range.getBackgrounds();
+  const fontWeights = range.getFontWeights();
+  const fontSizes = range.getFontSizes();
+  const hAligns = range.getHorizontalAlignments();
+  const vAligns = range.getVerticalAlignments();
+  const wraps = range.getWraps();
+
+  let html = "";
+
+  html += `<div style="
+    text-align:center;
+    font-family:Arial, sans-serif;
+    margin-top:2px;
+    margin-bottom:6px;
+    width:${cfg.tableWidth}px;
+    min-width:${cfg.tableWidth}px;
+  ">`;
+  html += `<div style="font-size:15px;font-weight:bold;line-height:1.1;">PERFORMANCE #${reportNumber}</div>`;
+  html += `<div style="font-size:14px;line-height:1.1;">${escapeHtml_(reportDateText)}</div>`;
+  html += `</div>`;
+
+  html += `<table style="
+    border-collapse:collapse;
+    table-layout:fixed;
+    width:${cfg.tableWidth}px;
+    min-width:${cfg.tableWidth}px;
+    font-family:Arial, sans-serif;
+    font-size:11px;
+  ">`;
+
+  html += `<colgroup>
+    <col style="width:15%;">
+    <col style="width:17%;">
+    <col style="width:10%;">
+    <col style="width:13%;">
+    <col style="width:13%;">
+    <col style="width:13%;">
+    <col style="width:10%;">
+    <col style="width:9%;">
+  </colgroup>`;
+
+  for (let r = 0; r < values.length; r++) {
+    const actualRow = startRow + r;
+
+    if (sheet.isRowHiddenByUser(actualRow) || sheet.isRowHiddenByFilter(actualRow)) {
+      continue;
+    }
+
+    html += `<tr>`;
+
+    for (let c = 0; c < lastCol; c++) {
+      const actualCol = c + 1;
+
+      if (sheet.isColumnHiddenByUser(actualCol)) continue;
+
+      const value = escapeHtml_(values[r][c]).replace(/\n/g, "<br>");
+      const shouldWrap = actualRow >= cfg.wrapStartRow && wraps[r][c];
+      const whiteSpace = shouldWrap ? "pre-wrap" : "nowrap";
+
+      let verticalAlign = vAligns[r][c] || "top";
+      if (actualRow >= 28) verticalAlign = "top";
+
+      html += `<td style="
+        border:1px solid #000;
+        padding:2px 5px;
+        background:${backgrounds[r][c]};
+        font-family:Arial, sans-serif;
+        font-weight:${fontWeights[r][c]};
+        font-size:${fontSizes[r][c]}px;
+        text-align:${hAligns[r][c] || "left"};
+        vertical-align:${verticalAlign};
+        white-space:${whiteSpace};
+        line-height:1.15;
+      ">${value || "&nbsp;"}</td>`;
+    }
+
+    html += `</tr>`;
+  }
+
+  html += `</table>`;
+
+  return html;
+}
+
+
+function buildPerformanceReportHtml_(sheet, reportNumber, reportDateText) {
+  const cfg = PERFORMANCE_REPORT_CONFIG;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const spreadsheetId = ss.getId();
+
+  const startRow = cfg.startRow;
+  const lastRow = cfg.endRow;
+  const lastCol = cfg.lastCol;
+  const numRows = lastRow - startRow + 1;
+
+  const range = sheet.getRange(startRow, 1, numRows, lastCol);
+
+  const values = range.getDisplayValues();
+  const backgrounds = range.getBackgrounds();
+  const fontWeights = range.getFontWeights();
+  const fontSizes = range.getFontSizes();
+  const fontFamilies = range.getFontFamilies();
+  const hAligns = range.getHorizontalAlignments();
+  const vAligns = range.getVerticalAlignments();
+  const wraps = range.getWraps();
+
+  const visibleRows = [];
+  for (let r = startRow; r <= lastRow; r++) {
+    if (!sheet.isRowHiddenByUser(r) && !sheet.isRowHiddenByFilter(r)) {
+      visibleRows.push(r);
+    }
+  }
+
+  const visibleCols = [];
+  for (let c = 1; c <= lastCol; c++) {
+    if (!sheet.isColumnHiddenByUser(c)) {
+      visibleCols.push(c);
+    }
+  }
+
+  const rangeA1 =
+    `'${sheet.getName()}'!A${startRow}:${columnToLetter_(lastCol)}${lastRow}`;
+
+  const apiSheet = Sheets.Spreadsheets.get(spreadsheetId, {
+    ranges: [rangeA1],
+    includeGridData: true
+  });
+
+  const gridData = apiSheet.sheets[0].data[0].rowData || [];
+
+  const visibleRowSet = new Set(visibleRows);
+  const visibleColSet = new Set(visibleCols);
+
+  const mergeMap = {};
+  const skipCells = {};
+
+  range.getMergedRanges().forEach(m => {
+    const rowStart = m.getRow();
+    const colStart = m.getColumn();
+    const rowEnd = rowStart + m.getNumRows() - 1;
+    const colEnd = colStart + m.getNumColumns() - 1;
+
+    if (!visibleRowSet.has(rowStart) || !visibleColSet.has(colStart)) return;
+
+    let visibleRowSpan = 0;
+    for (let r = rowStart; r <= rowEnd; r++) {
+      if (visibleRowSet.has(r)) visibleRowSpan++;
+    }
+
+    let visibleColSpan = 0;
+    for (let c = colStart; c <= colEnd; c++) {
+      if (visibleColSet.has(c)) visibleColSpan++;
+    }
+
+    mergeMap[`${rowStart},${colStart}`] = {
+      rows: visibleRowSpan,
+      cols: visibleColSpan
+    };
+
+    for (let r = rowStart; r <= rowEnd; r++) {
+      for (let c = colStart; c <= colEnd; c++) {
+        if (r === rowStart && c === colStart) continue;
+        if (visibleRowSet.has(r) && visibleColSet.has(c)) {
+          skipCells[`${r},${c}`] = true;
+        }
+      }
+    }
+  });
+
+  let html = "";
+
+  html += `<div style="
+    text-align:center;
+    font-family:Arial, sans-serif;
+    margin-top:2px;
+    margin-bottom:6px;
+    width:${cfg.tableWidth}px;
+    min-width:${cfg.tableWidth}px;
+  ">`;
+  html += `<div style="font-size:15px;font-weight:bold;line-height:1.1;">PERFORMANCE #${reportNumber}</div>`;
+  html += `<div style="font-size:14px;line-height:1.1;">${escapeHtml_(reportDateText)}</div>`;
+  html += `</div>`;
+
+  html += `<table style="
+    border-collapse:collapse;
+    table-layout:fixed;
+    width:${cfg.tableWidth}px;
+    min-width:${cfg.tableWidth}px;
+    max-width:none;
+    font-family:Arial, sans-serif;
+    font-size:11px;
+  ">`;
+
+  html += `<colgroup>`;
+  html += `<col style="width:15%;">`;
+  html += `<col style="width:17%;">`;
+  html += `<col style="width:10%;">`;
+  html += `<col style="width:13%;">`;
+  html += `<col style="width:13%;">`;
+  html += `<col style="width:13%;">`;
+  html += `<col style="width:10%;">`;
+  html += `<col style="width:9%;">`;
+  html += `</colgroup>`;
+
+  visibleRows.forEach(rowNum => {
+    const rIndex = rowNum - startRow;
+
+    html += `<tr>`;
+
+    visibleCols.forEach(colNum => {
+      if (skipCells[`${rowNum},${colNum}`]) return;
+
+      const cIndex = colNum - 1;
+
+      const apiCell =
+        gridData[rIndex] &&
+        gridData[rIndex].values &&
+        gridData[rIndex].values[cIndex]
+          ? gridData[rIndex].values[cIndex]
+          : {};
+
+      const borders =
+        apiCell.userEnteredFormat &&
+        apiCell.userEnteredFormat.borders
+          ? apiCell.userEnteredFormat.borders
+          : {};
+
+      const merge = mergeMap[`${rowNum},${colNum}`] || { rows: 1, cols: 1 };
+
+      const colspan = merge.cols > 1 ? ` colspan="${merge.cols}"` : "";
+      const rowspan = merge.rows > 1 ? ` rowspan="${merge.rows}"` : "";
+
+      const value = escapeHtml_(values[rIndex][cIndex]).replace(/\n/g, "<br>");
+      const shouldWrap = rowNum >= cfg.wrapStartRow && wraps[rIndex][cIndex];
+      const whiteSpace = shouldWrap ? "pre-wrap" : "nowrap";
+
+      let verticalAlign = vAligns[rIndex][cIndex] || "top";
+
+      if (rowNum >= 28) {
+        verticalAlign = "top";
+      }
+
+      html += `<td${colspan}${rowspan} style="
+        ${borderCss_("top", borders.top)}
+        ${borderCss_("right", borders.right)}
+        ${borderCss_("bottom", borders.bottom)}
+        ${borderCss_("left", borders.left)}
+        padding:2px 5px;
+        background:${backgrounds[rIndex][cIndex]};
+        font-family:${fontFamilies[rIndex][cIndex]}, Arial, sans-serif;
+        font-weight:${fontWeights[rIndex][cIndex]};
+        font-size:${fontSizes[rIndex][cIndex]}px;
+        text-align:${hAligns[rIndex][cIndex] || "left"};
+        vertical-align:${verticalAlign};
+        white-space:${whiteSpace};
+        overflow-wrap:normal;
+        word-break:normal;
+        line-height:1.15;
+      ">${value || "&nbsp;"}</td>`;
+    });
+
+    html += `</tr>`;
+  });
+
+  html += `</table>`;
+
+  return html;
+}
+
+/****************************************************
+ * PRODUCTION SETTINGS HELPERS
+ ****************************************************/
+
+function getProductionLogoUrl_() {
+  const fileId = extractDriveId_(getProductionSetting_("Logo"));
+  return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000`;
+}
+
+function getProductionSetting_(settingName) {
+  const sheet = SpreadsheetApp.getActive()
+    .getSheetByName(PERFORMANCE_REPORT_CONFIG.settingsSheetName);
+
+  if (!sheet) {
+    throw new Error(`Could not find "${PERFORMANCE_REPORT_CONFIG.settingsSheetName}" tab.`);
+  }
+
+  const values = sheet.getRange("A:B").getDisplayValues();
+
+  for (const row of values) {
+    if (String(row[0]).trim() === settingName) {
+      return String(row[1]).trim();
+    }
+  }
+
+  throw new Error(`Production setting not found: ${settingName}`);
+}
+
+function getProductionSettingOptional_(settingName) {
+  const sheet = SpreadsheetApp.getActive()
+    .getSheetByName(PERFORMANCE_REPORT_CONFIG.settingsSheetName);
+
+  if (!sheet) return "";
+
+  const values = sheet.getRange("A:B").getDisplayValues();
+
+  for (const row of values) {
+    if (String(row[0]).trim() === settingName) {
+      return String(row[1]).trim();
+    }
+  }
+
+  return "";
+}
+
+/****************************************************
+ * PDF EXPORT HELPER
+ ****************************************************/
+
+function exportSingleSheetAsPdf_(ss, sheet, fileName) {
+  const ssId = ss.getId();
+  const sheetId = sheet.getSheetId();
+
+  const url =
+    `https://docs.google.com/spreadsheets/d/${ssId}/export?` +
+    `format=pdf` +
+    `&gid=${sheetId}` +
+    `&portrait=true` +
+    `&size=letter` +
+    `&fitw=true` +
+    `&top_margin=0.5` +
+    `&bottom_margin=0.6` +
+    `&left_margin=0.5` +
+    `&right_margin=0.5` +
+    `&sheetnames=false` +
+    `&printtitle=false` +
+    `&pagenum=RIGHT` +
+    `&gridlines=false` +
+    `&fzr=false`;
+
+  const token = ScriptApp.getOAuthToken();
+
+  const response = UrlFetchApp.fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  return response.getBlob().setName(`${fileName}.pdf`);
+}
+
+/****************************************************
+ * BORDER HELPERS
+ ****************************************************/
+
+function borderCss_(side, border) {
+  if (!border || !border.style || border.style === "NONE") {
+    return `border-${side}:none;`;
+  }
+
+  const widthMap = {
+    SOLID: "1px",
+    SOLID_MEDIUM: "2px",
+    SOLID_THICK: "3px",
+    DOUBLE: "3px",
+    DASHED: "1px",
+    DOTTED: "1px"
+  };
+
+  const styleMap = {
+    SOLID: "solid",
+    SOLID_MEDIUM: "solid",
+    SOLID_THICK: "solid",
+    DOUBLE: "double",
+    DASHED: "dashed",
+    DOTTED: "dotted"
+  };
+
+  const width = widthMap[border.style] || "1px";
+  const style = styleMap[border.style] || "solid";
+  const color = border.color ? rgbColor_(border.color) : "#000000";
+
+  return `border-${side}:${width} ${style} ${color};`;
+}
+
+function rgbColor_(color) {
+  const r = Math.round((color.red || 0) * 255);
+  const g = Math.round((color.green || 0) * 255);
+  const b = Math.round((color.blue || 0) * 255);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/****************************************************
+ * GENERAL HELPERS
+ ****************************************************/
+
+function columnToLetter_(column) {
+  let letter = "";
+
+  while (column > 0) {
+    const temp = (column - 1) % 26;
+    letter = String.fromCharCode(temp + 65) + letter;
+    column = (column - temp - 1) / 26;
+  }
+
+  return letter;
+}
+
+function escapeHtml_(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function extractDriveId_(input) {
+  input = String(input || "").trim();
+
+  if (!input.includes("http")) return input;
+
+  let match = input.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  match = input.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  match = input.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  throw new Error("Could not extract Drive ID from: " + input);
+}

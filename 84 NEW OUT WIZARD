@@ -1,0 +1,909 @@
+/*************************************************
+ * 84 NEW OUT WIZARD
+ * StageOS v1.3
+ *
+ * Creates planned outs from one form.
+ * Updated for dynamic no-merge tracker blocks.
+ *************************************************/
+
+function NewOutWizardOS() {
+  return {
+    open: openNewOutWizard_,
+    submit: submitNewOutWizard_
+  };
+}
+
+function launchNewOutWizard() {
+  NewOutWizardOS().open();
+}
+
+function openNewOutWizard_() {
+  const html = HtmlService
+    .createTemplateFromFile("NewOutWizardDialog")
+    .evaluate()
+    .setWidth(760)
+    .setHeight(720);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "New Planned Out");
+}
+
+function submitNewOutWizard(payload) {
+  return submitNewOutWizard_(payload);
+}
+
+function getNewOutWizardState() {
+  return {
+    actors: newOutWizardGetCastOptions_(),
+    crewCoverOptionsByPerson: newOutWizardGetCrewCoverOptionsByPerson_(),
+    reasons: [
+      "Approved PD",
+      "Unapp PD",
+      "Vacation",
+      "Illness",
+      "Personal",
+      "LOA",
+      "MLOA",
+      "Other"
+    ],
+    statuses: [
+      "Approved",
+      "Pending",
+      "Denied",
+      "Tentative"
+    ]
+  };
+}
+
+function submitNewOutWizard_(payload) {
+  payload = payload || {};
+
+  const personType = newOutDeterminePersonType_(payload);
+
+  const result = {
+    personType: personType,
+    pdTracker: false,
+    crewOuts: false,
+    productionCalendar: false,
+    gmailCalendar: false,
+    notes: []
+  };
+
+  if (personType === "cast") {
+    writeNewOutToPDTracker_(payload);
+    result.pdTracker = true;
+
+    writeNewOutToProductionCalendar_(payload);
+    result.productionCalendar = true;
+  }
+
+  if (personType === "crew") {
+    writeNewOutToCrewOuts_(payload);
+    result.crewOuts = true;
+  }
+
+  if (personType === "stageManagement") {
+    result.notes.push("Stage Management outs currently route to Gmail Calendar only.");
+  }
+
+  result.gmailCalendar = false;
+  result.notes.push("Gmail Calendar not connected yet.");
+
+  return {
+    success: true,
+    message: "New planned out added for " + personType + ".",
+    result: result
+  };
+}
+
+/*************************************************
+ * NEW OUT WIZARD - OPTIONS
+ *************************************************/
+
+function newOutWizardGetCastOptions_() {
+  const people = [];
+
+  if (typeof getPrepWizardActorOptions_ === "function") {
+    getPrepWizardActorOptions_().forEach(function (actor) {
+      const name = newOutClean_(actor.fullName || actor.name);
+      const role = newOutClean_(actor.character || actor.role);
+
+      if (name && !newOutLooksLikeHeader_(name)) {
+        people.push({
+          name: name,
+          role: role,
+          department: "Cast"
+        });
+      }
+    });
+  }
+
+  newOutWizardGetCrewOutOptions_().forEach(function (person) {
+    people.push(person);
+  });
+
+  const seen = {};
+  return people.filter(function (person) {
+    const key = String(person.name || "").toLowerCase();
+    if (!person.name || seen[key]) return false;
+
+    seen[key] = true;
+    return true;
+  });
+}
+
+function newOutWizardGetCrewOutOptions_() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Crew Outs");
+  if (!sh) return [];
+
+  const values = sh.getDataRange().getDisplayValues();
+  const people = [];
+
+  for (let r = 4; r < values.length; r++) {
+    const name = newOutClean_(values[r][0]);
+    const department = newOutClean_(values[r][1]);
+
+    if (!name) continue;
+    if (newOutLooksLikeHeader_(name)) continue;
+
+    people.push({
+      name: name,
+      role: department,
+      department: "Crew"
+    });
+  }
+
+  return people;
+}
+
+function newOutWizardGetCrewCoverOptionsByPerson_() {
+  const crewOutPeople = newOutWizardGetCrewOutOptions_();
+  const contactCrew = newOutWizardGetContactSheetCrewOptions_();
+  const output = {};
+
+  crewOutPeople.forEach(function (person) {
+    const outName = newOutClean_(person.name);
+    const outTrack = newOutNormalizeCrewTrack_(person.role);
+    const options = [];
+
+    contactCrew.forEach(function (crew) {
+      const crewName = newOutClean_(crew.name);
+      const crewTitle = newOutClean_(crew.title);
+      const crewTrack = newOutNormalizeCrewTrack_(crewTitle);
+
+      if (!crewName || crewName === outName) return;
+
+      const isSuperSwing = /super[\s-]*swing\s*crew\s*sub/i.test(crewTitle);
+      const isSub = /\bsub\b/i.test(crewTitle);
+      const sameTrack = outTrack && crewTrack && outTrack === crewTrack;
+
+      if (isSuperSwing || (sameTrack && isSub)) {
+        options.push(crewName);
+      }
+    });
+
+    output[outName] = ["TBD"].concat(newOutUniqueSorted_(options));
+  });
+
+  return output;
+}
+
+function newOutNormalizeCrewTrack_(value) {
+  const text = newOutClean_(value).toLowerCase();
+
+  if (!text) return "";
+
+  // Lighting
+  if (
+    text.includes("light board") ||
+    text.includes("lx board") ||
+    text.includes("lighting board")
+  ) return "light board";
+
+  if (
+    text.includes("spotlight") ||
+    text.includes("spot light")
+  ) return "spotlight";
+
+  // Sound
+  if (text.includes("a1")) return "a1";
+  if (text.includes("a2")) return "a2";
+
+  // Carpentry / Props
+  if (text.includes("props")) return "props";
+  if (text.includes("carpenter") || text.includes("carpentry")) return "carpentry";
+
+  // Wardrobe
+  if (
+    text.includes("wardrobe") ||
+    text.includes("dresser") ||
+    text.includes("hair") ||
+    text.includes("makeup") ||
+    text.includes("make up")
+  ) return "wardrobe";
+
+  // General fallbacks
+  if (
+    text.includes("electric") ||
+    text.includes("electrics") ||
+    text.includes("lighting") ||
+    text.includes("lights") ||
+    text.includes("lx")
+  ) return "electrics";
+
+  if (text.includes("audio") || text.includes("sound")) return "sound";
+
+  return text;
+}
+
+function newOutWizardGetContactSheetCrewOptions_() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Contact Sheet");
+  if (!sh) return [];
+
+  const values = sh.getDataRange().getDisplayValues();
+  const crew = [];
+  let inCrewSection = false;
+
+  for (let r = 0; r < values.length; r++) {
+    const colA = newOutClean_(values[r][0]);
+    const colC = newOutClean_(values[r][2]);
+
+    if (colA.toUpperCase() === "CREW") {
+      inCrewSection = true;
+      continue;
+    }
+
+    if (!inCrewSection) continue;
+
+    // Stop if another major section starts later.
+    if (
+      colA &&
+      colA === colA.toUpperCase() &&
+      colA !== "CARPENTRY" &&
+      colA !== "PROPS" &&
+      colA !== "ELECTRICS" &&
+      colA !== "SOUND" &&
+      colA !== "WARDROBE"
+    ) {
+      break;
+    }
+
+    if (!colA || !colC) continue;
+    if (newOutLooksLikeHeader_(colA)) continue;
+    if (newOutIsCrewDepartmentHeader_(colA)) continue;
+
+    crew.push({
+      name: colA,
+      title: colC
+    });
+  }
+
+  return crew;
+}
+
+function newOutIsCrewDepartmentHeader_(value) {
+  const text = newOutClean_(value).toUpperCase();
+
+  return (
+    text === "CARPENTRY" ||
+    text === "PROPS" ||
+    text === "ELECTRICS" ||
+    text === "SOUND" ||
+    text === "WARDROBE" ||
+    text === "HAIR" ||
+    text === "MAKEUP" ||
+    text === "MAKE UP"
+  );
+}
+
+function newOutNormalizeCrewDepartment_(value) {
+  const text = newOutClean_(value).toLowerCase();
+
+  if (!text) return "";
+
+  if (
+    text.includes("a1") ||
+    text.includes("a2") ||
+    text.includes("audio") ||
+    text.includes("sound")
+  ) return "sound";
+
+  if (
+    text.includes("props") ||
+    text.includes("carpenter") ||
+    text.includes("carpentry")
+  ) return "carpentry";
+
+  if (
+    text.includes("electric") ||
+    text.includes("lighting") ||
+    text.includes("light board") ||
+    text.includes("light") ||
+    text.includes("spot")
+  ) return "electrics";
+
+  if (
+    text.includes("wardrobe") ||
+    text.includes("dresser") ||
+    text.includes("hair") ||
+    text.includes("makeup") ||
+    text.includes("make up")
+  ) return "wardrobe";
+
+  return text;
+}
+
+function newOutLooksLikeHeader_(value) {
+  const text = String(value || "").toUpperCase().trim();
+
+  return (
+    text === "ACTOR" ||
+    text === "NAME" ||
+    text === "CAST" ||
+    text === "SWINGS" ||
+    text === "UNDERSTUDIES" ||
+    text === "CREW" ||
+    text === "CREW OUTS" ||
+    text === "DEPARTMENT" ||
+    text === "DATES" ||
+    text.indexOf("AS OF") === 0
+  );
+}
+
+/*************************************************
+ * NEW OUT WIZARD - PERFORMANCE LOOKUP
+ *************************************************/
+
+function getNewOutWizardPerformancesForRange(startDateText, endDateText) {
+  const start = newOutParseDate_(startDateText);
+  const end = newOutParseDate_(endDateText || startDateText);
+
+  if (!start || !end) {
+    return {
+      performances: [],
+      count: 0
+    };
+  }
+
+  const performances = newOutWizardGetExpandedCalendarPerformances_(start, end);
+
+  return {
+    performances: performances,
+    count: performances.length
+  };
+}
+
+function newOutWizardGetExpandedCalendarPerformances_(start, end) {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Expanded Calendar");
+  if (!sh) return [];
+
+  const values = sh.getDataRange().getDisplayValues();
+  const output = [];
+  let currentDate = null;
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+
+    const rowDate = newOutParseDate_(row[0]);
+    if (rowDate) currentDate = rowDate;
+
+    if (!currentDate) continue;
+    if (!newOutDateInRange_(currentDate, start, end)) continue;
+
+    const what = newOutClean_(row[1]);
+    const time = newOutClean_(row[2]);
+
+    if (!/PERFORMANCE/i.test(what)) continue;
+
+    const performanceNumber = newOutExtractPerformanceNumber_(what);
+    const showType = newOutFindShowTypeFromTime_(time);
+
+    const label = [
+      performanceNumber ? "PERFORMANCE #" + performanceNumber : "",
+      time,
+      showType
+    ].filter(Boolean).join(" - ");
+
+    output.push({
+      date: Utilities.formatDate(currentDate, Session.getScriptTimeZone(), "yyyy-MM-dd"),
+      dateLabel: Utilities.formatDate(currentDate, Session.getScriptTimeZone(), "EEEE, MMMM d"),
+      label: label,
+      performanceNumber: performanceNumber,
+      time: time,
+      showType: showType
+    });
+  }
+
+  return output;
+}
+
+function newOutExtractPerformanceNumber_(text) {
+  const match = String(text || "").match(/PERFORMANCE\s*#?\s*(\d+)/i);
+  return match ? match[1] : "";
+}
+
+function newOutFindShowTypeFromTime_(time) {
+  const text = String(time || "").toUpperCase();
+
+  if (text.includes("2:00") || text.includes("1:00") || text.includes("3:00")) return "MAT";
+  if (text.includes("7:") || text.includes("8:")) return "EVE";
+
+  return "";
+}
+
+/*************************************************
+ * NEW OUT WIZARD - CAST / PD TRACKER WRITE
+ *************************************************/
+
+function writeNewOutToPDTracker_(payload) {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("PD/Vacation Tracker");
+
+  if (!sh) throw new Error('Could not find "PD/Vacation Tracker" tab.');
+
+  const personName = newOutClean_(payload.actor);
+  if (!personName) throw new Error("Missing actor name.");
+
+  const personRow = findPDTrackerPersonRow_(sh, personName);
+  if (!personRow) {
+    throw new Error('Could not find "' + personName + '" on PD/Vacation Tracker.');
+  }
+
+  const detailRows = buildNewOutDetailRows_(payload);
+  const writableRows = getWritableRowsForPersonBlock_(sh, personRow, detailRows.length, 8);
+
+  detailRows.forEach(function (detail, i) {
+    const row = writableRows[i];
+
+    sh.getRange(row, 2).setValue(detail.dateText);
+    sh.getRange(row, 3).setValue(detail.performanceCount);
+    sh.getRange(row, 4).setValue(detail.status);
+    sh.getRange(row, 5).setValue(detail.reason);
+    sh.getRange(row, 6).setValue(detail.notes || "");
+  });
+
+  return personRow;
+}
+
+function findPDTrackerPersonRow_(sh, personName) {
+  return findPersonRowByColumnA_(sh, personName);
+}
+
+/*************************************************
+ * NEW OUT WIZARD - CREW OUTS WRITE
+ *************************************************/
+
+function writeNewOutToCrewOuts_(payload) {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Crew Outs");
+
+  if (!sh) throw new Error('Could not find "Crew Outs" tab.');
+
+  const personName = newOutClean_(payload.actor);
+  if (!personName) throw new Error("Missing crew member name.");
+
+  const personRow = findCrewOutPersonRow_(sh, personName);
+  if (!personRow) {
+    throw new Error('Could not find "' + personName + '" on Crew Outs.');
+  }
+
+  const detailRows = buildNewOutDetailRows_(payload);
+  const writableRows = getWritableRowsForPersonBlock_(sh, personRow, detailRows.length, 8);
+  const cover = newOutClean_(payload.covering);
+
+  detailRows.forEach(function (detail, i) {
+    const row = writableRows[i];
+
+    sh.getRange(row, 3).setValue(detail.dateText);
+    sh.getRange(row, 4).setValue(detail.performanceCount);
+    sh.getRange(row, 5).setValue(detail.status);
+    sh.getRange(row, 6).setValue(detail.reason);
+    sh.getRange(row, 7).setValue(detail.notes || "");
+    sh.getRange(row, 8).setValue(cover);
+  });
+
+  return personRow;
+}
+
+function findCrewOutPersonRow_(sh, personName) {
+  return findPersonRowByColumnA_(sh, personName);
+}
+
+/*************************************************
+ * NEW OUT WIZARD - SIMPLE DYNAMIC BLOCK HELPERS
+ *************************************************/
+
+function getWritableRowsForPersonBlock_(sh, personRow, rowsNeeded, width) {
+  if (!rowsNeeded) return [];
+
+  const block = getSimplePersonBlock_(sh, personRow);
+  let writableRows = getEmptyRowsInsideSimpleBlock_(sh, block.startRow, block.endRow, width);
+
+  if (writableRows.length >= rowsNeeded) {
+    return writableRows.slice(0, rowsNeeded);
+  }
+
+  const extraNeeded = rowsNeeded - writableRows.length;
+  const insertAt = block.nextPersonRow || block.endRow + 1;
+
+  sh.insertRowsBefore(insertAt, extraNeeded);
+
+  const formatSourceRow = Math.max(insertAt - 1, block.startRow);
+  copySimpleBlockFormatting_(sh, formatSourceRow, insertAt, extraNeeded, width);
+
+  for (let i = 0; i < extraNeeded; i++) {
+    writableRows.push(insertAt + i);
+  }
+
+  return writableRows;
+}
+
+function getSimplePersonBlock_(sh, personRow) {
+  const lastRow = sh.getLastRow();
+  const names = sh.getRange(personRow + 1, 1, Math.max(lastRow - personRow, 1), 1).getDisplayValues();
+
+  let nextPersonRow = null;
+
+  for (let i = 0; i < names.length; i++) {
+    const row = personRow + 1 + i;
+    const name = newOutClean_(names[i][0]);
+
+    if (name && !newOutLooksLikeHeader_(name)) {
+      nextPersonRow = row;
+      break;
+    }
+  }
+
+  return {
+    startRow: personRow,
+    endRow: nextPersonRow ? nextPersonRow - 1 : lastRow,
+    nextPersonRow: nextPersonRow
+  };
+}
+
+function getEmptyRowsInsideSimpleBlock_(sh, startRow, endRow, width) {
+  const rowCount = endRow - startRow + 1;
+  const values = sh.getRange(startRow, 1, rowCount, width).getDisplayValues();
+  const rows = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const sheetRow = startRow + i;
+
+    if (newOutClean_(values[i][0])) continue;
+
+    const detailText = newOutClean_(values[i].slice(1, width).join(""));
+    if (!detailText) rows.push(sheetRow);
+  }
+
+  return rows;
+}
+
+function copySimpleBlockFormatting_(sh, sourceRow, targetRow, numRows, width) {
+  sh.getRange(sourceRow, 1, 1, width)
+    .copyTo(
+      sh.getRange(targetRow, 1, numRows, width),
+      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+      false
+    );
+
+  sh.getRange(targetRow, 1, numRows, width).clearContent();
+
+  if (numRows > 1) {
+    sh.getRange(targetRow, 1, numRows - 1, width)
+      .setBorder(null, null, false, null, null, false);
+  }
+}
+
+/*************************************************
+ * NEW OUT WIZARD - DETAIL ROW BUILDERS
+ *************************************************/
+
+function buildNewOutDetailRows_(payload) {
+  if (payload.performanceScope === "selected") {
+    return buildNewOutSelectedPerformanceDetailRows_(payload);
+  }
+
+  const start = newOutParseDate_(payload.startDate);
+  const end = newOutParseDate_(payload.endDate || payload.startDate);
+
+  if (!start || !end) throw new Error("Could not read date range.");
+
+  const dates = newOutDatesBetween_(start, end);
+  const tz = Session.getScriptTimeZone();
+
+  return dates.map(function (date) {
+    return {
+      dateText: Utilities.formatDate(date, tz, "EEEE, MMMM d, yyyy"),
+      performanceCount: getNewOutPerformanceCountForDate_(date),
+      status: payload.status || "",
+      reason: payload.reason || "",
+      notes: payload.notes || ""
+    };
+  });
+}
+
+function buildNewOutSelectedPerformanceDetailRows_(payload) {
+  const selected = payload.selectedPerformances || [];
+  const grouped = {};
+
+  selected.forEach(function (perf) {
+    const date = newOutParseDate_(perf.date);
+    if (!date) return;
+
+    const key = Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+
+    if (!grouped[key]) {
+      grouped[key] = {
+        date: date,
+        count: 0
+      };
+    }
+
+    grouped[key].count++;
+  });
+
+  return Object.keys(grouped).sort().map(function (key) {
+    const item = grouped[key];
+
+    return {
+      dateText: Utilities.formatDate(item.date, Session.getScriptTimeZone(), "EEEE, MMMM d, yyyy"),
+      performanceCount: item.count,
+      status: payload.status || "",
+      reason: payload.reason || "",
+      notes: payload.notes || ""
+    };
+  });
+}
+
+function getNewOutPerformanceCountForDate_(date) {
+  const performances = newOutWizardGetExpandedCalendarPerformances_(date, date);
+  return performances.length;
+}
+
+function findPersonRowByColumnA_(sh, personName) {
+  const values = sh.getDataRange().getDisplayValues();
+  const target = newOutClean_(personName).toLowerCase();
+
+  for (let r = 0; r < values.length; r++) {
+    const name = newOutClean_(values[r][0]).toLowerCase();
+
+    if (name === target) {
+      return r + 1;
+    }
+  }
+
+  return null;
+}
+
+/*************************************************
+ * NEW OUT WIZARD - PRODUCTION CAL WRITE
+ * Cast only.
+ *************************************************/
+
+function writeNewOutToProductionCalendar_(payload) {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName("Production Cal w/Conflicts");
+
+  if (!sh) throw new Error('Could not find "Production Cal w/Conflicts" tab.');
+
+  const note = buildNewOutProductionCalendarNote_(payload);
+  const dates = getDatesForProductionCalendarWrite_(payload);
+
+  const display = sh.getDataRange().getDisplayValues();
+
+  dates.forEach(function (date) {
+    if (!date) return;
+
+    const row = findProductionCalendarRowForDate_(display, date);
+
+    if (!row) {
+      Logger.log("Could not find date on Production Cal: " + date);
+      return;
+    }
+
+    appendProductionCalendarNote_(sh, row, note);
+  });
+
+  return true;
+}
+
+function getDatesForProductionCalendarWrite_(payload) {
+  if (payload.performanceScope === "selected") {
+    const selected = payload.selectedPerformances || {};
+    const seen = {};
+    const dates = [];
+
+    selected.forEach(function (perf) {
+      const date = newOutParseDate_(perf.date);
+      if (!date) return;
+
+      const key = Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      if (seen[key]) return;
+
+      seen[key] = true;
+      dates.push(date);
+    });
+
+    return dates;
+  }
+
+  const start = newOutParseDate_(payload.startDate);
+  const end = newOutParseDate_(payload.endDate || payload.startDate);
+
+  if (!start) throw new Error("Could not read start date.");
+  if (!end) throw new Error("Could not read end date.");
+
+  return newOutDatesBetween_(start, end);
+}
+
+function buildNewOutProductionCalendarNote_(payload) {
+  const pieces = [];
+
+  const actor = newOutClean_(payload.actor);
+  const role = newOutClean_(payload.role);
+  const reason = newOutClean_(payload.reason);
+  const status = newOutClean_(payload.status);
+
+  if (actor) pieces.push(actor + " OUT");
+  if (role) pieces.push(role);
+  if (reason) pieces.push(reason);
+  if (status) pieces.push(status);
+
+  return pieces.join(" - ");
+}
+
+function findProductionCalendarRowForDate_(displayValues, targetDate) {
+  const tz = Session.getScriptTimeZone();
+
+  const targetKeys = [
+    Utilities.formatDate(targetDate, tz, "M/d/yyyy"),
+    Utilities.formatDate(targetDate, tz, "M/d/yy"),
+    Utilities.formatDate(targetDate, tz, "EEEE, MMMM d"),
+    Utilities.formatDate(targetDate, tz, "MMMM d"),
+    String(targetDate.getDate())
+  ];
+
+  for (let r = 0; r < displayValues.length; r++) {
+    for (let c = 0; c < displayValues[r].length; c++) {
+      const cell = newOutClean_(displayValues[r][c]);
+      if (!cell) continue;
+
+      if (targetKeys.indexOf(cell) !== -1) {
+        return r + 1;
+      }
+    }
+  }
+
+  return null;
+}
+
+function appendProductionCalendarNote_(sh, row, note) {
+  if (!note) return;
+
+  const START_COL = 1;
+  const END_COL = sh.getLastColumn();
+
+  const rowValues = sh.getRange(row, START_COL, 1, END_COL).getDisplayValues()[0];
+
+  let targetCol = rowValues.findIndex(function (value) {
+    return !newOutClean_(value);
+  }) + 1;
+
+  if (!targetCol) targetCol = END_COL;
+
+  const cell = sh.getRange(row, targetCol);
+  const current = newOutClean_(cell.getDisplayValue());
+
+  cell.setValue(current ? current + "\n" + note : note);
+}
+
+/*************************************************
+ * NEW OUT WIZARD - PERSON TYPE
+ *************************************************/
+
+function newOutDeterminePersonType_(payload) {
+  const actor = newOutClean_(payload.actor);
+  const role = newOutClean_(payload.role).toLowerCase();
+
+  if (newOutIsStageManagementPerson_(actor, role)) return "stageManagement";
+  if (newOutIsCrewPerson_(actor)) return "crew";
+
+  return "cast";
+}
+
+function newOutIsStageManagementPerson_(name, role) {
+  const smNames = [
+    "Rachel A. Zucker",
+    "Chris Steckel",
+    "Kristin Newhouse",
+    "Zach De Brino"
+  ];
+
+  if (smNames.indexOf(name) !== -1) return true;
+
+  return (
+    role.includes("stage manager") ||
+    role.includes("stage management") ||
+    role === "psm" ||
+    role === "asm"
+  );
+}
+
+function newOutIsCrewPerson_(name) {
+  return newOutWizardGetCrewOutOptions_().some(function (person) {
+    return person.name === name;
+  });
+}
+
+function newOutUniqueSorted_(items) {
+  const seen = {};
+  const output = [];
+
+  items.forEach(function (item) {
+    const value = newOutClean_(item);
+    const key = value.toLowerCase();
+
+    if (!value || seen[key]) return;
+
+    seen[key] = true;
+    output.push(value);
+  });
+
+  return output.sort();
+}
+
+/*************************************************
+ * NEW OUT WIZARD - DATE HELPERS
+ *************************************************/
+
+function newOutParseDate_(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value)) {
+    return value;
+  }
+
+  const text = newOutClean_(value);
+  if (!text) return null;
+
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  }
+
+  const parsed = new Date(text);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function newOutDatesBetween_(start, end) {
+  const dates = [];
+
+  const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const final = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+
+  while (current.getTime() <= final.getTime()) {
+    dates.push(new Date(current));
+    current.setDate(current.getDate() + 1);
+  }
+
+  return dates;
+}
+
+function newOutDateInRange_(date, start, end) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const s = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const e = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+
+  return d >= s && d <= e;
+}
+
+/*************************************************
+ * NEW OUT WIZARD - GENERAL HELPERS
+ *************************************************/
+
+function newOutClean_(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}

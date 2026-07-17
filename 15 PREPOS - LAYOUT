@@ -1,0 +1,39 @@
+/*************************************************
+ * 15 PREPOS - LAYOUT
+ * Version: 0.1.0
+ * Centralized row/column settings for Prep writers.
+ *************************************************/
+
+function PrepLayout() {
+  return {
+    inOut: {
+      firstCastRow: 6,
+      lastCastRow: 20,
+
+      outCol: 1,
+      inCol: 3,
+      roleCol: 6,
+      reasonCol: 7,
+
+      staffingStartRow: 21,
+      staffingNumRows: 4,
+
+      notesRow: 26
+    },
+
+    performanceReport: {
+      firstCastRow: 11,
+      lastCastRow: 25,
+
+      outCol: 1,
+      inCol: 3,
+      roleCol: 5,
+      reasonCol: 7,
+
+      callingSMCell: "C5",
+      deckSMCell: "C6",
+      conductorCell: "C7",
+      a1Cell: "C8"
+    }
+  };
+}

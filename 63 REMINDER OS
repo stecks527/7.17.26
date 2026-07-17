@@ -1,0 +1,166 @@
+/*************************************************
+ * 63 REMINDER OS
+ * Version: 1.0.0
+ *
+ * Contextual reminders for Home / Mission Control.
+ *************************************************/
+
+function ReminderOS() {
+  return {
+    checkHome: function () {
+      return reminderOSCheckHome_();
+    },
+
+    checkInserts: function () {
+      return reminderOSCheckInsertReminder_();
+    }
+  };
+}
+
+/*************************************************
+ * HOME CHECK
+ *************************************************/
+
+function reminderOSCheckHome_() {
+  reminderOSCheckInsertReminder_();
+}
+
+/*************************************************
+ * INSERT REMINDER
+ *************************************************/
+
+function reminderOSCheckInsertReminder_() {
+  const d = DecisionOS();
+  const today = d.today();
+
+  if (!today.available) return;
+  if (!d.principalOuts().length) return;
+  if (WorkflowStatusOS().isDone("INSERTS_TO_FOH")) return;
+
+  const curtain = reminderOSGetCurtainTime_(today);
+  if (!curtain) return;
+
+  const now = new Date();
+  const minutesToCurtain = Math.round((curtain.getTime() - now.getTime()) / 60000);
+
+  // Only begin interrupting 60 minutes before curtain.
+  if (minutesToCurtain > 60) return;
+
+  const ui = SpreadsheetApp.getUi();
+
+  const message =
+    "FOH inserts have not been confirmed for this performance.\n\n" +
+    reminderOSBuildInsertReminderText_() +
+    "\n\nChoose OK once inserts have been sent to FOH.\n" +
+    "Choose Cancel to keep this reminder active.";
+
+  const response = ui.alert(
+    "FOH Insert Reminder",
+    message,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response === ui.Button.OK) {
+    WorkflowStatusOS().markDone("INSERTS_TO_FOH");
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "FOH inserts marked complete.",
+      "StageOS",
+      4
+    );
+  }
+}
+
+function reminderOSBuildInsertReminderText_() {
+  const outs = DecisionOS().principalOuts();
+
+  if (outs.length >= 3) {
+    return outs.map(row =>
+      "- " +
+      reminderOSOutActor_(row) +
+      " OUT, " +
+      (row["Role"] || "") +
+      " = " +
+      reminderOSInActor_(row)
+    ).join("\n") +
+    "\n\nToday At Insert required.";
+  }
+
+  return outs.map(row => {
+    const out = reminderOSOutActor_(row);
+    const inn = reminderOSInActor_(row);
+    const role = row["Role"] || "";
+
+    return "- " +
+      out +
+      " OUT, " +
+      role +
+      " = " +
+      inn +
+      " (" +
+      inn +
+      " = " +
+      role +
+      " Insert Required - Send to FOH)";
+  }).join("\n");
+}
+
+/*************************************************
+ * TIME
+ *************************************************/
+
+function reminderOSGetCurtainTime_(today) {
+  const date = reminderOSParseDate_(today.dateText || today.date);
+  if (!date) return null;
+
+  const timeText = today.performanceText || today.performanceLabel || "";
+  const match = String(timeText).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const ampm = match[3].toUpperCase();
+
+  if (ampm === "PM" && hour !== 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+
+  const output = new Date(date);
+  output.setHours(hour, minute, 0, 0);
+
+  return output;
+}
+
+function reminderOSParseDate_(dateText) {
+  if (typeof parseInOutDate_ === "function") {
+    const parsed = parseInOutDate_(dateText);
+    if (parsed) return parsed;
+  }
+
+  const direct = new Date(dateText);
+  return isNaN(direct.getTime()) ? null : direct;
+}
+
+/*************************************************
+ * ROW HELPERS
+ *************************************************/
+
+function reminderOSOutActor_(row) {
+  return row["Default Actor"] ||
+    row["Out Actor"] ||
+    row["Out"] ||
+    "";
+}
+
+function reminderOSInActor_(row) {
+  return row["Resolved Actor"] ||
+    row["Cover Actor"] ||
+    row["In Actor"] ||
+    "";
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testReminderOSInserts() {
+  ReminderOS().checkInserts();
+}

@@ -1,0 +1,59 @@
+/**********************
+ * 35 GENERATE WEEKLY
+ *************************/
+
+function createNextWeeklyScheduleTab() {
+  const ss = SpreadsheetApp.getActive();
+  const ui = SpreadsheetApp.getUi();
+
+  const TEMPLATE_NAME = "Weekly Template";
+  const template = ss.getSheetByName(TEMPLATE_NAME);
+  if (!template) throw new Error(`Could not find tab: ${TEMPLATE_NAME}`);
+
+  const monday = getUpcomingMonday_();
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const tz = Session.getScriptTimeZone();
+
+  const newSheetName =
+    "Weekly Schedule Mon " +
+    Utilities.formatDate(monday, tz, "M.d.yy") +
+    " - Sun " +
+    Utilities.formatDate(sunday, tz, "M.d.yy");
+
+  if (ss.getSheetByName(newSheetName)) {
+    ui.alert(`A tab named "${newSheetName}" already exists.`);
+    return;
+  }
+
+  const newSheet = template.copyTo(ss).setName(newSheetName);
+
+  ss.setActiveSheet(newSheet);
+  ss.moveActiveSheet(template.getIndex() + 1);
+
+  newSheet.getRange("B3").setValue(monday);
+  newSheet.getRange("B3").setNumberFormat("mmmm d, yyyy");
+
+  if (typeof WeeklyCacheOS === "function") {
+    WeeklyCacheOS().clear();
+  }
+
+  ui.alert(
+    `Created "${newSheetName}".\n\n` +
+    `Weekly cache cleared. It will rebuild the next time Prep runs for that week.`
+  );
+}
+
+function getUpcomingMonday_() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let daysUntilMonday = (8 - today.getDay()) % 7;
+  if (daysUntilMonday === 0) daysUntilMonday = 7;
+
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + daysUntilMonday);
+
+  return monday;
+}

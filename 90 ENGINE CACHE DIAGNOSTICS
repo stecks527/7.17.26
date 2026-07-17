@@ -1,0 +1,61 @@
+/*************************************************
+ * 90 ENGINE CACHE DIAGNOSTICS
+ * Version: 1.0.0
+ * Status: ACTIVE
+ * Sends StageCacheOS status to Engine Diagnostics
+ *************************************************/
+
+function writeStageCacheStatusToEngine() {
+  if (typeof StageCacheOS !== "function") {
+    SpreadsheetApp.getUi().alert("StageCacheOS is not available.");
+    return;
+  }
+
+  if (typeof EngineLogOS !== "function") {
+    SpreadsheetApp.getUi().alert("EngineLogOS is not available.");
+    return;
+  }
+
+  const status = StageCacheOS().status();
+  let writes = 0;
+
+  status.forEach(item => {
+    EngineLogOS().diagnostic(
+      "StageCacheOS",
+      item.key,
+      item.size,
+      item.exists
+        ? "Cached at: " + (item.cachedAt || "unknown")
+        : "Not cached"
+    );
+
+    if (typeof EngineAnalyticsOS === "function") {
+      EngineAnalyticsOS().record(
+        "StageCacheOS",
+        item.key,
+        item.size,
+        {
+          exists: item.exists,
+          cachedAt: item.cachedAt || ""
+        }
+      );
+    }
+
+    writes++;
+  });
+
+  EngineLogOS().info(
+    "StageCacheOS",
+    "Cache Status Snapshot",
+    "StageCacheOS status written to Engine Diagnostics.",
+    {
+      cacheCount: status.length,
+      writes: writes
+    }
+  );
+
+  SpreadsheetApp.getUi().alert(
+    "StageCacheOS status written to Engine.\n\n" +
+    "Diagnostics written: " + writes
+  );
+}

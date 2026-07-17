@@ -1,0 +1,1352 @@
+/*************************************************
+ * 35a PRODUCTION EVENTS PAYROLL
+ * Version: 2.0.1
+ *
+ * Updates:
+ * - Understudy / swing OUTs are parsed correctly.
+ * - OUT parsing supports multiple text formats.
+ * - Rehearsal-only filtering is checked line by line.
+ * - Duplicate flatten function removed.
+ *************************************************/
+
+function productionEventsReadPayrollPeopleV1_(
+  payroll,
+  dateDisplays,
+  actorMap
+) {
+  const people = [];
+  const notesRow = productionEventsFindNotesRowV1_(payroll);
+  const lastDataRow = notesRow - 1;
+
+  if (lastDataRow < 5) return people;
+
+  const numRows = lastDataRow - 4;
+
+  const names = payroll
+    .getRange(5, 1, numRows, 1)
+    .getDisplayValues();
+
+  const grid = payroll
+    .getRange(5, 2, numRows, 7)
+    .getDisplayValues();
+
+  for (let i = 0; i < numRows; i++) {
+    const name = String(names[i][0] || "").trim();
+    const upper = name.toUpperCase();
+
+    if (!name) continue;
+
+    if (
+      upper === "STAGE MANAGERS" ||
+      upper === "ACTORS" ||
+      upper === "NOTES"
+    ) {
+      continue;
+    }
+
+    if (/total|notes|payroll/i.test(name)) continue;
+
+    const key = name.toLowerCase();
+
+    const info = actorMap[key] || {
+      role: "",
+      shortName: productionEventsShortNameV1_(name)
+    };
+
+    const role = String(info.role || "").trim();
+
+    const shortName = String(
+      info.shortName ||
+      productionEventsShortNameV1_(name)
+    ).trim();
+
+    const block = [
+      grid[i] || ["", "", "", "", "", "", ""],
+      grid[i + 1] || ["", "", "", "", "", "", ""]
+    ];
+
+    const hoursRow =
+      grid[i + 2] || ["", "", "", "", "", "", ""];
+
+    const person = {
+      name: name,
+      key: key,
+      actorKey: key,
+      info: info,
+      role: role,
+      roleKey: productionEventsRoleKeyV1_(role),
+      shortName: shortName,
+      block: block,
+      hoursRow: hoursRow,
+
+      ins: productionEventsParseInsV1_(
+        block,
+        dateDisplays
+      ),
+
+      out: productionEventsParseOutsV1_(
+        block,
+        dateDisplays
+      ),
+
+      officeShows: productionEventsParseOfficeShowsV1_(
+        block,
+        dateDisplays
+      )
+    };
+
+    person.events =
+      productionEventsBuildPersonEventsV1_(person);
+
+    people.push(person);
+  }
+
+  return people;
+}
+
+/*************************************************
+ * IN PARSING
+ *************************************************/
+
+function productionEventsParseInsV1_(
+  block,
+  dateDisplays
+) {
+  const ins = {};
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseInCellV1_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      ins
+    );
+
+    productionEventsParseInCellV1_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      ins
+    );
+  }
+
+  return ins;
+}
+
+function productionEventsParseInCellV1_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  ins
+) {
+  const lines = String(cellText || "")
+    .split("\n")
+    .map(function(line) {
+      return line.trim();
+    })
+    .filter(Boolean);
+
+  lines.forEach(function(line) {
+    const match = line.match(/\bIN\s+as\s+(.+)/i);
+
+    if (!match) return;
+
+    const role = match[1]
+      .trim()
+      .replace(/\s*\(.*?\)\s*$/i, "")
+      .replace(/\s*-\s*Mat\s*&\s*Eve$/i, "")
+      .replace(/\s*-\s*Mat$/i, "")
+      .replace(/\s*-\s*Eve$/i, "")
+      .trim();
+
+    if (!role) return;
+
+    const roleKey =
+      productionEventsRoleKeyV1_(role);
+
+    const entry =
+      productionEventsMakeDateEntryV1_(
+        colIndex,
+        productionEventsPartFromLineV1_(
+          line,
+          defaultPart
+        ),
+        dateDisplays
+      );
+
+    if (!ins[roleKey]) {
+      ins[roleKey] = {
+        role: productionEventsDisplayRoleV1_(role),
+        shows: 0,
+        dates: []
+      };
+    }
+
+    ins[roleKey].shows++;
+    ins[roleKey].dates.push(entry);
+  });
+}
+
+/*************************************************
+ * OUT PARSING
+ *
+ * Accepts:
+ * - OUT (Sick)
+ * - OUT - Sick
+ * - OUT: Sick
+ * - OUT Sick
+ * - OUT
+ *
+ * Rehearsal-only filtering is evaluated per line.
+ *************************************************/
+
+function productionEventsParseOutsV1_(
+  block,
+  dateDisplays
+) {
+  const out = {
+    totalShows: 0,
+    reasonCounts: {},
+    dates: []
+  };
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseOutCellV1_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      out
+    );
+
+    productionEventsParseOutCellV1_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      out
+    );
+  }
+
+  return out;
+}
+
+function productionEventsParseOutCellV1_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  out
+) {
+  const lines = String(cellText || "")
+    .split("\n")
+    .map(function(line) {
+      return line.trim();
+    })
+    .filter(Boolean);
+
+  lines.forEach(function(line) {
+    if (!/\bOUT\b/i.test(line)) return;
+
+    /*
+     * Only evaluate the individual OUT line.
+     * Rehearsal text elsewhere in the same cell must not
+     * suppress a legitimate show OUT.
+     */
+    if (!productionEventsShouldCountOutLineV1_(line)) {
+      return;
+    }
+
+    const reason =
+      productionEventsExtractOutReasonV1_(line);
+
+    const part =
+      productionEventsPartFromLineV1_(
+        line,
+        defaultPart
+      );
+
+    out.totalShows++;
+
+    out.reasonCounts[reason] =
+      (out.reasonCounts[reason] || 0) + 1;
+
+    out.dates.push(
+      productionEventsMakeDateEntryV1_(
+        colIndex,
+        part,
+        dateDisplays
+      )
+    );
+  });
+}
+
+function productionEventsExtractOutReasonV1_(line) {
+  const text = String(line || "").trim();
+
+  const parenthesesMatch =
+    text.match(/\bOUT\b\s*\((.*?)\)/i);
+
+  const dashMatch =
+    text.match(/\bOUT\b\s*[-–—:]\s*(.+)$/i);
+
+  const plainMatch =
+    text.match(/\bOUT\b\s+(.+)$/i);
+
+  let reason = "";
+
+  if (parenthesesMatch) {
+    reason = parenthesesMatch[1].trim();
+
+  } else if (dashMatch) {
+    reason = dashMatch[1].trim();
+
+  } else if (plainMatch) {
+    reason = plainMatch[1].trim();
+  }
+
+  reason = reason
+    .replace(/\s*-\s*Mat\s*&\s*Eve\s*$/i, "")
+    .replace(/\s*-\s*Matinee\s*&\s*Evening\s*$/i, "")
+    .replace(/\s*-\s*Matinee\s*$/i, "")
+    .replace(/\s*-\s*Evening\s*$/i, "")
+    .replace(/\s*-\s*Mat\s*$/i, "")
+    .replace(/\s*-\s*Eve\s*$/i, "")
+    .replace(/^[\s\-–—:]+/, "")
+    .replace(/[\s\-–—:]+$/, "")
+    .trim();
+
+  return reason || "OUT";
+}
+
+function productionEventsShouldCountOutLineV1_(line) {
+  const lower = String(line || "")
+    .trim()
+    .toLowerCase();
+
+  const rehearsalOnlyPatterns = [
+    /\bout\s+from\s+reh\b/i,
+    /\bout\s+from\s+rehearsal\b/i,
+    /\bout\s+of\s+reh\b/i,
+    /\bout\s+of\s+rehearsal\b/i,
+    /\brehearsal\s+only\b/i,
+    /\bput[- ]?in\s+only\b/i,
+    /\bbrush[- ]?up\s+only\b/i
+  ];
+
+  return !rehearsalOnlyPatterns.some(
+    function(pattern) {
+      return pattern.test(lower);
+    }
+  );
+}
+
+/*************************************************
+ * OFFICE SHOW PARSING
+ *************************************************/
+
+function productionEventsParseOfficeShowsV1_(
+  block,
+  dateDisplays
+) {
+  const entries = [];
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseOfficeCellV1_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      entries
+    );
+
+    productionEventsParseOfficeCellV1_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      entries
+    );
+  }
+
+  return entries;
+}
+
+function productionEventsParseOfficeCellV1_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  entries
+) {
+  const text = String(cellText || "");
+
+  if (!/office show/i.test(text)) return;
+
+  entries.push(
+    productionEventsMakeDateEntryV1_(
+      colIndex,
+      productionEventsPartFromLineV1_(
+        text,
+        defaultPart
+      ),
+      dateDisplays
+    )
+  );
+}
+
+/*************************************************
+ * PERSON EVENT BUILD
+ *************************************************/
+
+function productionEventsBuildPersonEventsV1_(
+  person
+) {
+  const events = [];
+
+  Object.keys(person.ins || {}).forEach(
+    function(roleKey) {
+      const data = person.ins[roleKey];
+
+      (data.dates || []).forEach(
+        function(entry) {
+          events.push({
+            type: "IN",
+            actor: person.name,
+            shortName: person.shortName,
+            role: data.role || roleKey,
+            roleKey: roleKey,
+            date: entry.base,
+            part: entry.part,
+            affectsPayroll: true
+          });
+        }
+      );
+    }
+  );
+
+  (person.out.dates || []).forEach(
+    function(entry) {
+      events.push({
+        type: "OUT",
+        actor: person.name,
+        shortName: person.shortName,
+        role: person.role,
+        roleKey: person.roleKey,
+        date: entry.base,
+        part: entry.part,
+        reasonCounts: person.out.reasonCounts,
+        affectsPayroll: true
+      });
+    }
+  );
+
+  (person.officeShows || []).forEach(
+    function(entry) {
+      events.push({
+        type: "OFFICE_SHOW",
+        actor: person.name,
+        shortName: person.shortName,
+        role: person.role,
+        roleKey: person.roleKey,
+        date: entry.base,
+        part: entry.part,
+        affectsPayroll: true
+      });
+    }
+  );
+
+  return events;
+}
+
+/*************************************************
+ * FLATTEN PERSON EVENTS
+ *************************************************/
+
+function productionEventsFlattenPersonEventsV1_(
+  people
+) {
+  const output = [];
+
+  (people || []).forEach(function(person) {
+    (person.events || []).forEach(
+      function(event) {
+        output.push(event);
+      }
+    );
+  });
+
+  return output;
+}
+
+/*************************************************
+ * 35a PRODUCTION EVENTS PAYROLL V2
+ * Version: 2.1.0
+ *
+ * Purpose:
+ * - Bypass duplicated V1 function names.
+ * - Correctly read swing / understudy OUTs.
+ * - Preserve principal coverage matching.
+ *************************************************/
+
+/*************************************************
+ * READ PAYROLL PEOPLE
+ *************************************************/
+
+function productionEventsReadPayrollPeopleV2_(
+  payroll,
+  dateDisplays,
+  actorMap
+) {
+  const people = [];
+
+  const notesRow =
+    productionEventsFindNotesRowV1_(payroll);
+
+  const lastDataRow = notesRow - 1;
+
+  if (lastDataRow < 5) return people;
+
+  const numRows = lastDataRow - 4;
+
+  const names = payroll
+    .getRange(5, 1, numRows, 1)
+    .getDisplayValues();
+
+  const grid = payroll
+    .getRange(5, 2, numRows, 7)
+    .getDisplayValues();
+
+  for (let i = 0; i < numRows; i++) {
+    const name =
+      String(names[i][0] || "").trim();
+
+    const upper = name.toUpperCase();
+
+    if (!name) continue;
+
+    if (
+      upper === "STAGE MANAGERS" ||
+      upper === "ACTORS" ||
+      upper === "NOTES"
+    ) {
+      continue;
+    }
+
+    if (/total|notes|payroll/i.test(name)) {
+      continue;
+    }
+
+    const key = name.toLowerCase();
+
+    const info = actorMap[key] || {
+      role: "",
+      shortName:
+        productionEventsShortNameV1_(name)
+    };
+
+    const role =
+      String(info.role || "").trim();
+
+    const shortName = String(
+      info.shortName ||
+      productionEventsShortNameV1_(name)
+    ).trim();
+
+    /*
+     * Each person's Payroll block is two rows:
+     * top = first show / daytime
+     * bottom = evening
+     */
+    const block = [
+      grid[i] ||
+        ["", "", "", "", "", "", ""],
+
+      grid[i + 1] ||
+        ["", "", "", "", "", "", ""]
+    ];
+
+    const hoursRow =
+      grid[i + 2] ||
+      ["", "", "", "", "", "", ""];
+
+    const person = {
+      name: name,
+      key: key,
+      actorKey: key,
+      info: info,
+
+      role: role,
+      roleKey:
+        productionEventsRoleKeyV1_(role),
+
+      shortName: shortName,
+      block: block,
+      hoursRow: hoursRow,
+
+      ins:
+        productionEventsParseInsV2_(
+          block,
+          dateDisplays
+        ),
+
+      out:
+        productionEventsParseOutsV2_(
+          block,
+          dateDisplays
+        ),
+
+      officeShows:
+        productionEventsParseOfficeShowsV2_(
+          block,
+          dateDisplays
+        )
+    };
+
+    person.events =
+      productionEventsBuildPersonEventsV2_(
+        person
+      );
+
+    people.push(person);
+  }
+
+  return people;
+}
+
+/*************************************************
+ * PARSE IN ENTRIES
+ *************************************************/
+
+function productionEventsParseInsV2_(
+  block,
+  dateDisplays
+) {
+  const ins = {};
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseInCellV2_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      ins
+    );
+
+    productionEventsParseInCellV2_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      ins
+    );
+  }
+
+  return ins;
+}
+
+function productionEventsParseInCellV2_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  ins
+) {
+  const lines = String(cellText || "")
+    .split("\n")
+    .map(function(line) {
+      return line.trim();
+    })
+    .filter(Boolean);
+
+  lines.forEach(function(line) {
+    const match =
+      line.match(/\bIN\s+as\s+(.+)/i);
+
+    if (!match) return;
+
+    const role = match[1]
+      .trim()
+      .replace(/\s*\(.*?\)\s*$/i, "")
+      .replace(
+        /\s*-\s*Mat\s*&\s*Eve$/i,
+        ""
+      )
+      .replace(/\s*-\s*Mat$/i, "")
+      .replace(/\s*-\s*Eve$/i, "")
+      .trim();
+
+    if (!role) return;
+
+    const roleKey =
+      productionEventsRoleKeyV1_(role);
+
+    const entry =
+      productionEventsMakeDateEntryV1_(
+        colIndex,
+        productionEventsPartFromLineV1_(
+          line,
+          defaultPart
+        ),
+        dateDisplays
+      );
+
+    if (!ins[roleKey]) {
+      ins[roleKey] = {
+        role:
+          productionEventsDisplayRoleV1_(
+            role
+          ),
+        shows: 0,
+        dates: []
+      };
+    }
+
+    ins[roleKey].shows++;
+    ins[roleKey].dates.push(entry);
+  });
+}
+
+/*************************************************
+ * PARSE OUT ENTRIES
+ *************************************************/
+
+function productionEventsParseOutsV2_(
+  block,
+  dateDisplays
+) {
+  const out = {
+    totalShows: 0,
+    reasonCounts: {},
+    dates: []
+  };
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseOutCellV2_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      out
+    );
+
+    productionEventsParseOutCellV2_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      out
+    );
+  }
+
+  return out;
+}
+
+function productionEventsParseOutCellV2_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  out
+) {
+  const lines = String(cellText || "")
+    .split("\n")
+    .map(function(line) {
+      return line.trim();
+    })
+    .filter(Boolean);
+
+  lines.forEach(function(line) {
+    if (!/\bOUT\b/i.test(line)) return;
+
+    if (
+      !productionEventsShouldCountOutLineV2_(
+        line
+      )
+    ) {
+      return;
+    }
+
+    const reason =
+      productionEventsExtractOutReasonV2_(
+        line
+      );
+
+    const part =
+      productionEventsPartFromLineV1_(
+        line,
+        defaultPart
+      );
+
+    out.totalShows++;
+
+    out.reasonCounts[reason] =
+      (out.reasonCounts[reason] || 0) + 1;
+
+    out.dates.push(
+      productionEventsMakeDateEntryV1_(
+        colIndex,
+        part,
+        dateDisplays
+      )
+    );
+  });
+}
+
+function productionEventsExtractOutReasonV2_(
+  line
+) {
+  const text =
+    String(line || "").trim();
+
+  const parenthesesMatch =
+    text.match(
+      /\bOUT\b\s*\((.*?)\)/i
+    );
+
+  const dashMatch =
+    text.match(
+      /\bOUT\b\s*[-–—:]\s*(.+)$/i
+    );
+
+  const plainMatch =
+    text.match(
+      /\bOUT\b\s+(.+)$/i
+    );
+
+  let reason = "";
+
+  if (parenthesesMatch) {
+    reason =
+      parenthesesMatch[1].trim();
+
+  } else if (dashMatch) {
+    reason =
+      dashMatch[1].trim();
+
+  } else if (plainMatch) {
+    reason =
+      plainMatch[1].trim();
+  }
+
+  reason = reason
+    .replace(
+      /\s*-\s*Mat\s*&\s*Eve\s*$/i,
+      ""
+    )
+    .replace(
+      /\s*-\s*Matinee\s*&\s*Evening\s*$/i,
+      ""
+    )
+    .replace(
+      /\s*-\s*Matinee\s*$/i,
+      ""
+    )
+    .replace(
+      /\s*-\s*Evening\s*$/i,
+      ""
+    )
+    .replace(
+      /\s*-\s*Mat\s*$/i,
+      ""
+    )
+    .replace(
+      /\s*-\s*Eve\s*$/i,
+      ""
+    )
+    .replace(
+      /^[\s\-–—:]+/,
+      ""
+    )
+    .replace(
+      /[\s\-–—:]+$/,
+      ""
+    )
+    .trim();
+
+  return reason || "OUT";
+}
+
+function productionEventsShouldCountOutLineV2_(
+  line
+) {
+  const lower =
+    String(line || "")
+      .trim()
+      .toLowerCase();
+
+  const rehearsalOnlyPatterns = [
+    /\bout\s+from\s+reh\b/i,
+    /\bout\s+from\s+rehearsal\b/i,
+    /\bout\s+of\s+reh\b/i,
+    /\bout\s+of\s+rehearsal\b/i,
+    /\brehearsal\s+only\b/i,
+    /\bput[- ]?in\s+only\b/i,
+    /\bbrush[- ]?up\s+only\b/i
+  ];
+
+  return !rehearsalOnlyPatterns.some(
+    function(pattern) {
+      return pattern.test(lower);
+    }
+  );
+}
+
+/*************************************************
+ * PARSE OFFICE SHOWS
+ *************************************************/
+
+function productionEventsParseOfficeShowsV2_(
+  block,
+  dateDisplays
+) {
+  const entries = [];
+
+  for (let col = 0; col < 7; col++) {
+    productionEventsParseOfficeCellV2_(
+      block[0][col],
+      col,
+      "",
+      dateDisplays,
+      entries
+    );
+
+    productionEventsParseOfficeCellV2_(
+      block[1][col],
+      col,
+      "Eve",
+      dateDisplays,
+      entries
+    );
+  }
+
+  return entries;
+}
+
+function productionEventsParseOfficeCellV2_(
+  cellText,
+  colIndex,
+  defaultPart,
+  dateDisplays,
+  entries
+) {
+  const text =
+    String(cellText || "");
+
+  if (!/office show/i.test(text)) {
+    return;
+  }
+
+  entries.push(
+    productionEventsMakeDateEntryV1_(
+      colIndex,
+      productionEventsPartFromLineV1_(
+        text,
+        defaultPart
+      ),
+      dateDisplays
+    )
+  );
+}
+
+/*************************************************
+ * BUILD PERSON EVENTS
+ *************************************************/
+
+function productionEventsBuildPersonEventsV2_(
+  person
+) {
+  const events = [];
+
+  Object.keys(person.ins || {})
+    .forEach(function(roleKey) {
+      const data =
+        person.ins[roleKey];
+
+      (data.dates || [])
+        .forEach(function(entry) {
+          events.push({
+            type: "IN",
+            actor: person.name,
+            shortName:
+              person.shortName,
+            role:
+              data.role || roleKey,
+            roleKey: roleKey,
+            date: entry.base,
+            part: entry.part,
+            affectsPayroll: true
+          });
+        });
+    });
+
+  (person.out.dates || [])
+    .forEach(function(entry) {
+      events.push({
+        type: "OUT",
+        actor: person.name,
+        shortName:
+          person.shortName,
+        role: person.role,
+        roleKey:
+          person.roleKey,
+        date: entry.base,
+        part: entry.part,
+        reasonCounts:
+          person.out.reasonCounts,
+        affectsPayroll: true
+      });
+    });
+
+  (person.officeShows || [])
+    .forEach(function(entry) {
+      events.push({
+        type: "OFFICE_SHOW",
+        actor: person.name,
+        shortName:
+          person.shortName,
+        role: person.role,
+        roleKey:
+          person.roleKey,
+        date: entry.base,
+        part: entry.part,
+        affectsPayroll: true
+      });
+    });
+
+  return events;
+}
+
+/*************************************************
+ * FLATTEN PERSON EVENTS
+ *************************************************/
+
+function productionEventsFlattenPersonEventsV2_(
+  people
+) {
+  const output = [];
+
+  (people || [])
+    .forEach(function(person) {
+      (person.events || [])
+        .forEach(function(event) {
+          output.push(event);
+        });
+    });
+
+  return output;
+}
+
+/*************************************************
+ * BUILD ACTOR OUT / COVERAGE NOTES
+ *************************************************/
+
+function productionEventsBuildActorOutCoverageV2_(
+  people,
+  events
+) {
+  (people || [])
+    .forEach(function(person) {
+      const role =
+        String(person.role || "")
+          .trim();
+
+      const roleLower =
+        role.toLowerCase();
+
+      const roleKey =
+        person.roleKey;
+
+      const shortName =
+        person.shortName;
+
+      if (!role) return;
+
+      /*
+       * Stage-management substitutes are handled
+       * by the existing SM workflow.
+       */
+      if (
+        roleLower === "psm / asm sub" ||
+        roleLower.includes(
+          "stage manager sub"
+        ) ||
+        roleLower.includes("sm sub")
+      ) {
+        return;
+      }
+
+      if (
+        !person.out ||
+        person.out.totalShows === 0
+      ) {
+        return;
+      }
+
+      const isSwingOrUnderstudy =
+        roleLower === "swing" ||
+        roleLower.includes("swing") ||
+        roleLower.includes(
+          "understudy"
+        ) ||
+        roleLower.includes("u/s") ||
+        roleLower === "us";
+
+      const reasonText =
+        productionEventsReasonSummaryV1_(
+          person.out.reasonCounts,
+          person.out.totalShows
+        );
+
+      const firstPart =
+        "- " +
+        shortName +
+        " OUT (" +
+        person.out.totalShows +
+        " " +
+        (
+          person.out.totalShows === 1
+            ? "show"
+            : "shows"
+        ) +
+        ") (" +
+        reasonText +
+        ")";
+
+      /*
+       * Swings and understudies report their own OUT.
+       * They do not need principal-role coverage matching.
+       */
+      if (isSwingOrUnderstudy) {
+        events.push({
+          type: "UNDERSTUDY_OUT",
+          priority: 31,
+          affectsPayroll: true,
+          note:
+            firstPart +
+            ": " +
+            productionEventsDateSummaryV1_(
+              person.out.dates
+            )
+        });
+
+        return;
+      }
+
+      const coverage = [];
+
+      (people || [])
+        .forEach(function(cover) {
+          if (
+            cover.key === person.key
+          ) {
+            return;
+          }
+
+          const data =
+            cover.ins &&
+            cover.ins[roleKey];
+
+          if (!data) return;
+
+          coverage.push({
+            sort:
+              productionEventsFirstDateSortV1_(
+                data.dates
+              ),
+
+            text:
+              cover.shortName +
+              " IN as " +
+              productionEventsDisplayRoleV1_(
+                role
+              ) +
+              " (" +
+              data.shows +
+              " " +
+              (
+                data.shows === 1
+                  ? "show"
+                  : "shows"
+              ) +
+              "): " +
+              productionEventsDateSummaryV1_(
+                data.dates
+              )
+          });
+        });
+
+      if (coverage.length > 0) {
+        coverage.sort(
+          function(a, b) {
+            return a.sort - b.sort;
+          }
+        );
+
+        events.push({
+          type:
+            "ACTOR_OUT_COVERAGE",
+          priority: 30,
+          affectsPayroll: true,
+          note:
+            firstPart +
+            ": " +
+            coverage
+              .map(function(item) {
+                return item.text;
+              })
+              .join("; ")
+        });
+
+        return;
+      }
+
+      events.push({
+        type: "ACTOR_OUT",
+        priority: 30,
+        affectsPayroll: true,
+        note:
+          firstPart +
+          ": " +
+          productionEventsDateSummaryV1_(
+            person.out.dates
+          )
+      });
+    });
+}
+
+/*************************************************
+ * V2 DIAGNOSTIC
+ *************************************************/
+
+function diagnoseProductionEventsPayrollV2() {
+  const engine =
+    ProductionEventsEngineV1_();
+
+  const events =
+    engine.events();
+
+  Logger.log(
+    "===================================="
+  );
+
+  Logger.log(
+    "PRODUCTION EVENTS PAYROLL V2"
+  );
+
+  Logger.log(
+    "===================================="
+  );
+
+  events.forEach(function(event) {
+    if (
+      event.type ===
+        "UNDERSTUDY_OUT" ||
+      event.type ===
+        "ACTOR_OUT" ||
+      event.type ===
+        "ACTOR_OUT_COVERAGE"
+    ) {
+      Logger.log(
+        JSON.stringify(event)
+      );
+    }
+  });
+}
+
+/*************************************************
+ * DIAGNOSTIC — UNDERSTUDY PAYROLL READING
+ *************************************************/
+
+function diagnoseUnderstudyPayrollRows() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const payroll = ss.getSheetByName("Payroll");
+  const castList = ss.getSheetByName("Cast List");
+
+  if (!payroll) {
+    throw new Error('Could not find the "Payroll" sheet.');
+  }
+
+  if (!castList) {
+    throw new Error('Could not find the "Cast List" sheet.');
+  }
+
+  const actorMap =
+    productionEventsActorMapV1_(castList);
+
+  const dateDisplays =
+    payroll.getRange("B3:H3").getDisplayValues()[0];
+
+  const people =
+    productionEventsReadPayrollPeopleV1_(
+      payroll,
+      dateDisplays,
+      actorMap
+    );
+
+  Logger.log("====================================");
+  Logger.log("UNDERSTUDY / SWING PAYROLL DIAGNOSTIC");
+  Logger.log("People read: " + people.length);
+  Logger.log("====================================");
+
+  people.forEach(function(person) {
+    const role = String(person.role || "");
+    const roleLower = role.toLowerCase();
+
+    const isPossibleUnderstudy =
+      roleLower.includes("swing") ||
+      roleLower.includes("understudy") ||
+      roleLower.includes("u/s") ||
+      roleLower === "us";
+
+    /*
+     * Also include anyone with an OUT so we can catch
+     * an understudy whose Cast List role is missing or unexpected.
+     */
+    const hasOutText =
+      JSON.stringify(person.block || [])
+        .toUpperCase()
+        .includes("OUT");
+
+    if (!isPossibleUnderstudy && !hasOutText) {
+      return;
+    }
+
+    Logger.log("------------------------------------");
+    Logger.log("NAME: " + person.name);
+    Logger.log("ROLE: " + person.role);
+    Logger.log("ROLE KEY: " + person.roleKey);
+    Logger.log(
+      "RAW BLOCK: " +
+      JSON.stringify(person.block)
+    );
+    Logger.log(
+      "PARSED OUT: " +
+      JSON.stringify(person.out)
+    );
+    Logger.log(
+      "PERSON EVENTS: " +
+      JSON.stringify(person.events)
+    );
+  });
+
+  const engineEvents =
+    ProductionEventsEngineV1_().events();
+
+  Logger.log("====================================");
+  Logger.log("FINAL OUT EVENTS");
+  Logger.log("====================================");
+
+  engineEvents.forEach(function(event) {
+    if (
+      event.type === "ACTOR_OUT" ||
+      event.type === "ACTOR_OUT_COVERAGE" ||
+      event.type === "UNDERSTUDY_OUT"
+    ) {
+      Logger.log(JSON.stringify(event));
+    }
+  });
+}

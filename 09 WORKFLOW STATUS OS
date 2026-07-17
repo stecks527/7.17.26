@@ -1,0 +1,274 @@
+/*************************************************
+ * 09 WORKFLOW STATUS OS
+ * Version: 2.0.0
+ *
+ * Tracks Home / Mission Control task completion.
+ * Auto-resets per performance/session.
+ *************************************************/
+
+function WorkflowStatusOS() {
+  return {
+    isDone: function (taskId) {
+      return workflowStatusIsDone_(taskId);
+    },
+
+    markDone: function (taskId) {
+      return workflowStatusSetDone_(taskId, true);
+    },
+
+    markOpen: function (taskId) {
+      return workflowStatusSetDone_(taskId, false);
+    },
+
+    toggle: function (taskId) {
+      return workflowStatusSetDone_(taskId, !workflowStatusIsDone_(taskId));
+    },
+
+    resetCurrentPerformance: function () {
+      return workflowStatusResetCurrentPerformance_();
+    },
+
+    key: function (taskId) {
+      return workflowStatusKey_(taskId);
+    },
+
+    maybeAutoReset: function () {
+      return workflowStatusMaybeAutoReset_();
+    }
+  };
+}
+
+/*************************************************
+ * CORE
+ *************************************************/
+
+function workflowStatusIsDone_(taskId) {
+  const key = workflowStatusKey_(taskId);
+  return PropertiesService.getDocumentProperties().getProperty(key) === "TRUE";
+}
+
+function workflowStatusSetDone_(taskId, done) {
+  const key = workflowStatusKey_(taskId);
+
+  PropertiesService.getDocumentProperties().setProperty(
+    key,
+    done ? "TRUE" : "FALSE"
+  );
+
+  return done;
+}
+
+function workflowStatusKey_(taskId) {
+  const today = DecisionOS().today();
+  const snapshotId = today.snapshotId || "NO_SNAPSHOT";
+
+  return [
+    "WORKFLOW",
+    snapshotId,
+    String(taskId || "").toUpperCase().replace(/\s+/g, "_")
+  ].join("|");
+}
+
+function workflowStatusSnapshotPrefix_(snapshotId) {
+  return "WORKFLOW|" + snapshotId + "|";
+}
+
+/*************************************************
+ * AUTO RESET
+ *************************************************/
+
+function workflowStatusMaybeAutoReset_() {
+  const today = DecisionOS().today();
+  if (!today.available) return false;
+
+  const snapshotId = today.snapshotId || "NO_SNAPSHOT";
+  const resetKey = "WORKFLOW_RESET_DONE|" + snapshotId;
+
+  const props = PropertiesService.getDocumentProperties();
+
+  if (props.getProperty(resetKey) === "TRUE") return false;
+
+  const resetTime = workflowStatusGetResetTime_(today);
+  if (!resetTime) return false;
+
+  const now = new Date();
+
+  if (now.getTime() < resetTime.getTime()) return false;
+
+  workflowStatusCarryForwardUnfinishedItems_(today);
+  workflowStatusResetCurrentPerformance_();
+
+  props.setProperty(resetKey, "TRUE");
+  props.setProperty("WORKFLOW_LAST_RESET_SNAPSHOT", snapshotId);
+  props.setProperty("WORKFLOW_LAST_RESET_AT", new Date().toISOString());
+
+  return true;
+}
+
+function workflowStatusGetResetTime_(today) {
+  const firstCall = workflowStatusGetFirstCallTime_();
+  if (!firstCall) return null;
+
+  const reset = new Date(firstCall);
+  reset.setMinutes(reset.getMinutes() - 15);
+
+  return reset;
+}
+
+function workflowStatusGetFirstCallTime_() {
+  const timeline =
+    typeof buildTimelineOS === "function"
+      ? buildTimelineOS(buildHomeShowStateFromDecisionOS_(DecisionOS().today()))
+      : null;
+
+  const events = timeline && timeline.displayEvents
+    ? timeline.displayEvents.slice()
+    : [];
+
+  if (!events.length) return null;
+
+  events.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+  return events[0].time || null;
+}
+
+/*************************************************
+ * CARRY FORWARD UNFINISHED ITEMS
+ *************************************************/
+
+function workflowStatusCarryForwardUnfinishedItems_(today) {
+  const unfinished = workflowStatusGetUnfinishedCurrentTasks_();
+
+  // Only carry forward tasks that should actually matter after a reset.
+  const carryForward = unfinished.filter(task =>
+    task.id === "REPORT_EMAIL"
+  );
+
+  if (!carryForward.length) return;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("Long Term Tasks");
+
+  if (!sh) return;
+
+  carryForward.forEach(task => {
+    sh.appendRow([
+      false,
+      workflowStatusCarryForwardText_(task, today),
+      "Carried forward automatically by WorkflowStatusOS.",
+      ""
+    ]);
+  });
+}
+
+function workflowStatusGetUnfinishedCurrentTasks_() {
+  const tasks =
+    typeof buildHomeTodayTasks_ === "function"
+      ? buildHomeTodayTasks_()
+      : [];
+
+  return tasks.filter(task => {
+    if (!task || !task.id) return false;
+    return !workflowStatusIsDoneWithoutReset_(task.id);
+  });
+}
+
+function workflowStatusIsDoneWithoutReset_(taskId) {
+  const key = workflowStatusKey_(taskId);
+  return PropertiesService.getDocumentProperties().getProperty(key) === "TRUE";
+}
+
+function workflowStatusCarryForwardText_(task, today) {
+  const performance = today.performanceText || today.performanceLabel || "previous performance";
+
+  if (task.id === "REPORT_EMAIL") {
+    return "Performance Report Email still needs to be sent for " + performance + ".";
+  }
+
+  return task.title + " still needs attention for " + performance + ".";
+}
+
+/*************************************************
+ * RESET CURRENT PERFORMANCE
+ *************************************************/
+
+function workflowStatusResetCurrentPerformance_() {
+  const today = DecisionOS().today();
+  const snapshotId = today.snapshotId || "NO_SNAPSHOT";
+  const prefix = workflowStatusSnapshotPrefix_(snapshotId);
+
+  const props = PropertiesService.getDocumentProperties();
+  const all = props.getProperties();
+
+  Object.keys(all).forEach(key => {
+    if (key.startsWith(prefix)) {
+      props.deleteProperty(key);
+    }
+  });
+}
+
+/*************************************************
+ * PUBLIC MARKERS
+ *************************************************/
+
+function markWorkflowPrepInOutDone() {
+  WorkflowStatusOS().markDone("PREP_INOUT");
+}
+
+function markWorkflowInOutPrintedDone() {
+  WorkflowStatusOS().markDone("INOUT_PRINTED");
+}
+
+function markWorkflowInOutDistributedDone() {
+  WorkflowStatusOS().markDone("INOUT_DISTRIBUTED");
+}
+
+function markWorkflowReportPrepDone() {
+  WorkflowStatusOS().markDone("REPORT_PREP");
+}
+
+function markWorkflowReportEmailDone() {
+  WorkflowStatusOS().markDone("REPORT_EMAIL");
+}
+
+function markWorkflowWeeklyPrepDone() {
+  WorkflowStatusOS().markDone("WEEKLY_PREP");
+}
+
+function markWorkflowWeeklyEmailDone() {
+  WorkflowStatusOS().markDone("WEEKLY_EMAIL");
+}
+
+function markWorkflowPayrollEmailDone() {
+  WorkflowStatusOS().markDone("PAYROLL_EMAIL");
+}
+
+function markWorkflowPerishablesEmailDone() {
+  WorkflowStatusOS().markDone("PERISHABLES_EMAIL");
+}
+
+function markWorkflowGuestSpellerEmailDone() {
+  WorkflowStatusOS().markDone("GUEST_SPELLER_EMAIL");
+}
+
+/*************************************************
+ * TESTS
+ *************************************************/
+
+function testWorkflowStatusOS() {
+  WorkflowStatusOS().markDone("TEST_TASK");
+
+  SpreadsheetApp.getUi().alert(
+    "WorkflowStatusOS test\n\n" +
+    "TEST_TASK done: " + WorkflowStatusOS().isDone("TEST_TASK")
+  );
+}
+
+function testWorkflowAutoReset() {
+  const didReset = WorkflowStatusOS().maybeAutoReset();
+
+  SpreadsheetApp.getUi().alert(
+    "Workflow auto-reset test\n\n" +
+    "Reset happened: " + didReset
+  );
+}

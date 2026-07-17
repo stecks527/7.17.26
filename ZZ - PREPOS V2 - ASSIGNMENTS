@@ -1,0 +1,616 @@
+/*************************************************
+ * ZZ - PREPOS V2 - ASSIGNMENTS
+ * Version: 3.0.0
+ * Status: ACTIVE
+ *
+ * Builds PrepOS assignment state from the canonical
+ * AssignmentOS definitions and active Show State.
+ *************************************************/
+
+
+/* =========================================================
+ * ASSIGNMENT BLOCK
+ * ========================================================= */
+
+function prepOSBuildAssignmentsBlock_(
+  showState,
+  weekly
+) {
+  showState = showState || {};
+  weekly = weekly || {};
+
+  const assignmentState =
+    typeof getShowAssignmentState_ ===
+    "function"
+      ? getShowAssignmentState_()
+      : prepOSBuildAssignmentFallback_();
+
+  const values =
+    Object.assign(
+      {},
+      assignmentState.values || {}
+    );
+
+  /*
+   * Preserve any assignments already resolved by Show State.
+   */
+  const showAssignments =
+    showState.assignments || {};
+
+  if (
+    showAssignments.values &&
+    typeof showAssignments.values ===
+      "object"
+  ) {
+    Object.assign(
+      values,
+      showAssignments.values
+    );
+  }
+
+  /*
+   * Fill any unresolved values from Weekly / Show State notes.
+   */
+  if (!values.calling) {
+    values.calling =
+      prepOSFindAssignmentValue_(
+        showState,
+        weekly,
+        [
+          "Calling SM",
+          "Caller"
+        ]
+      );
+  }
+
+  if (!values.deck) {
+    values.deck =
+      prepOSFindAssignmentValue_(
+        showState,
+        weekly,
+        [
+          "Deck SM",
+          "Deck"
+        ]
+      );
+  }
+
+  if (!values.audio) {
+    values.audio =
+      prepOSFindAssignmentValue_(
+        showState,
+        weekly,
+        [
+          "A1",
+          "Mixer",
+          "Audio"
+        ]
+      );
+  }
+
+  const firstPerformance =
+    Array.isArray(
+      showState.performances
+    )
+      ? (
+          showState.performances[0] ||
+          {}
+        )
+      : {};
+
+  if (!values.conductor) {
+    values.conductor =
+      prepOSFirstNonBlank_(
+        firstPerformance.conductor,
+        showState.conductor,
+        prepOSReadCellDisplay_(
+          "IN/OUT",
+          "A24"
+        )
+      );
+  }
+
+  return {
+    groups:
+      assignmentState.groups || [],
+
+    tracks:
+      assignmentState.tracks || [],
+
+    values:
+      values,
+
+    dropdowns:
+      assignmentState.dropdowns || {
+        peopleByTrack: {},
+        people: [],
+        tracks: []
+      },
+
+    officeShow:
+      Boolean(
+        showAssignments.officeShow ||
+        assignmentState.officeShow
+      ),
+
+    training:
+      prepOSNormalizeAssignmentTraining_(
+        showAssignments.training ||
+        assignmentState.training
+      )
+  };
+}
+
+
+/* =========================================================
+ * FALLBACK
+ * ========================================================= */
+
+function prepOSBuildAssignmentFallback_() {
+  const tracks =
+    typeof AssignmentOS ===
+      "function"
+      ? AssignmentOS().getTracks()
+      : [];
+
+  const groups =
+    typeof AssignmentOS ===
+      "function"
+      ? AssignmentOS().getGroups()
+      : [];
+
+  const peopleByTrack =
+    typeof AssignmentOS ===
+      "function"
+      ? AssignmentOS()
+          .getPeopleByTrack()
+      : {};
+
+  const values = {};
+
+  tracks.forEach(function (track) {
+    values[track.id] = "";
+  });
+
+  const people =
+    uniqueSorted_(
+      Object.keys(
+        peopleByTrack
+      )
+        .flatMap(function (trackId) {
+          return (
+            peopleByTrack[trackId] ||
+            []
+          );
+        })
+        .map(function (person) {
+          return (
+            person.name ||
+            person
+          );
+        })
+    );
+
+  return {
+    groups:
+      groups,
+
+    tracks:
+      tracks,
+
+    values:
+      values,
+
+    dropdowns: {
+      peopleByTrack:
+        peopleByTrack,
+
+      people:
+        people,
+
+      tracks:
+        tracks
+    },
+
+    officeShow:
+      false,
+
+    training:
+      prepOSNormalizeAssignmentTraining_(
+        {}
+      )
+  };
+}
+
+
+/* =========================================================
+ * TRAINING NORMALIZATION
+ * ========================================================= */
+
+function prepOSNormalizeAssignmentTraining_(
+  training
+) {
+  training = training || {};
+
+  return {
+    stageManagement:
+      prepOSNormalizeTrainingGroup_(
+        training.stageManagement
+      ),
+
+    audio:
+      prepOSNormalizeTrainingGroup_(
+        training.audio
+      )
+  };
+}
+
+
+function prepOSNormalizeTrainingGroup_(
+  group
+) {
+  group = group || {};
+
+  return {
+    enabled:
+      Boolean(group.enabled),
+
+    trackId:
+      group.trackId || "",
+
+    trainer:
+      group.trainer || "",
+
+    trainee:
+      group.trainee || "",
+
+    note:
+      group.note || "",
+
+    mode:
+      group.mode || "Training",
+
+    autoTrainer:
+      Boolean(
+        group.autoTrainer
+      )
+  };
+}
+
+
+/* =========================================================
+ * NOTE / SOURCE LOOKUP
+ * ========================================================= */
+
+function prepOSFindAssignmentValue_(
+  showState,
+  weekly,
+  labels
+) {
+  const wantedLabels =
+    Array.isArray(labels)
+      ? labels
+      : [labels];
+
+  const sources = [];
+
+  prepOSAppendAssignmentSources_(
+    sources,
+    weekly.rawNotes
+  );
+
+  prepOSAppendAssignmentSources_(
+    sources,
+    weekly.notes
+  );
+
+  prepOSAppendAssignmentSources_(
+    sources,
+    showState.notes
+  );
+
+  prepOSAppendAssignmentSources_(
+    sources,
+    showState.companyNotes
+  );
+
+  prepOSAppendAssignmentSources_(
+    sources,
+    showState.assignments
+  );
+
+  for (
+    let i = 0;
+    i < sources.length;
+    i++
+  ) {
+    const line =
+      prepOSAssignmentSourceText_(
+        sources[i]
+      );
+
+    if (!line) continue;
+
+    const lower =
+      line.toLowerCase();
+
+    for (
+      let labelIndex = 0;
+      labelIndex <
+        wantedLabels.length;
+      labelIndex++
+    ) {
+      const label =
+        String(
+          wantedLabels[labelIndex] ||
+          ""
+        ).trim();
+
+      if (!label) continue;
+
+      if (
+        lower.indexOf(
+          label.toLowerCase()
+        ) === -1
+      ) {
+        continue;
+      }
+
+      return (
+        prepOSExtractAssignmentValue_(
+          line,
+          label
+        )
+      );
+    }
+  }
+
+  return "";
+}
+
+
+function prepOSAppendAssignmentSources_(
+  output,
+  source
+) {
+  if (
+    source === null ||
+    source === undefined ||
+    source === ""
+  ) {
+    return;
+  }
+
+  if (Array.isArray(source)) {
+    source.forEach(function (item) {
+      prepOSAppendAssignmentSources_(
+        output,
+        item
+      );
+    });
+
+    return;
+  }
+
+  output.push(source);
+}
+
+
+function prepOSAssignmentSourceText_(
+  source
+) {
+  if (
+    typeof source ===
+    "string"
+  ) {
+    return prepOSClean_(source);
+  }
+
+  if (
+    source &&
+    typeof source ===
+      "object"
+  ) {
+    return [
+      source.label,
+      source.type,
+      source.name,
+      source.value,
+      source.actor,
+      source.role,
+      source.note,
+      source.text
+    ]
+      .filter(Boolean)
+      .join(": ");
+  }
+
+  return "";
+}
+
+
+function prepOSExtractAssignmentValue_(
+  line,
+  label
+) {
+  const text =
+    prepOSClean_(line);
+
+  const colonIndex =
+    text.indexOf(":");
+
+  if (colonIndex !== -1) {
+    return prepOSClean_(
+      text.substring(
+        colonIndex + 1
+      )
+    );
+  }
+
+  const dashIndex =
+    text.indexOf(" - ");
+
+  if (dashIndex !== -1) {
+    return prepOSClean_(
+      text.substring(
+        dashIndex + 3
+      )
+    );
+  }
+
+  return prepOSClean_(
+    text.replace(
+      new RegExp(
+        prepOSEscapeRegex_(label),
+        "i"
+      ),
+      ""
+    )
+  );
+}
+
+
+/* =========================================================
+ * SAFE CELL READER
+ * ========================================================= */
+
+function prepOSReadCellDisplay_(
+  sheetName,
+  a1Notation
+) {
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+  if (!sheet) return "";
+
+  return sheet
+    .getRange(a1Notation)
+    .getDisplayValue();
+}
+
+
+/* =========================================================
+ * HELPERS
+ * ========================================================= */
+
+function prepOSEscapeRegex_(
+  value
+) {
+  return String(value || "")
+    .replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+}
+
+
+/* =========================================================
+ * READ-ONLY TEST
+ * ========================================================= */
+
+function testPrepOSAssignmentsBridge() {
+  const state =
+    PrepOS().state();
+
+  const assignments =
+    state.assignments || {};
+
+  const tracks =
+    assignments.tracks || [];
+
+  const values =
+    assignments.values || {};
+
+  const peopleByTrack =
+    assignments.dropdowns &&
+    assignments.dropdowns
+      .peopleByTrack
+      ? assignments.dropdowns
+          .peopleByTrack
+      : {};
+
+  const result = {
+    tracks:
+      tracks.length,
+
+    groups:
+      (
+        assignments.groups ||
+        []
+      ).length,
+
+    calling:
+      values.calling || "",
+
+    deck:
+      values.deck || "",
+
+    conductor:
+      values.conductor || "",
+
+    audio:
+      values.audio || "",
+
+    callingOptions:
+      (
+        peopleByTrack.calling ||
+        []
+      ).length,
+
+    deckOptions:
+      (
+        peopleByTrack.deck ||
+        []
+      ).length,
+
+    conductorOptions:
+      (
+        peopleByTrack.conductor ||
+        []
+      ).length,
+
+    audioOptions:
+      (
+        peopleByTrack.audio ||
+        []
+      ).length
+  };
+
+  Logger.log(
+    "PREPOS ASSIGNMENTS BRIDGE TEST"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "PrepOS assignments test passed.\n\n" +
+      "Tracks: " +
+      result.tracks +
+      "\n" +
+      "Calling options: " +
+      result.callingOptions +
+      "\n" +
+      "Deck options: " +
+      result.deckOptions +
+      "\n" +
+      "Conductor options: " +
+      result.conductorOptions +
+      "\n" +
+      "Audio options: " +
+      result.audioOptions
+    );
+
+  return result;
+}

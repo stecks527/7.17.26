@@ -1,0 +1,226 @@
+/*************************************************
+ * STAGEOS MANIFEST
+ * Version: 1.0.0
+ *
+ * PURPOSE
+ * -----------------------------------------------
+ * This file defines the canonical architecture of
+ * StageOS.
+ *
+ * Before creating a new file or moving logic,
+ * consult this manifest first.
+ *
+ * GENERAL RULES
+ * -----------------------------------------------
+ * • Each OS owns one responsibility.
+ * • Each feature has one canonical owner.
+ * • Compatibility wrappers contain no business logic.
+ * • Shared helpers belong with their owning OS.
+ * • Historical systems belong in 99 ARCHIVE.
+ *
+ *************************************************/
+
+
+/*************************************************
+ * 00 FRAMEWORK
+ *************************************************
+ *
+ * Owns:
+ * • Settings
+ * • Cache
+ * • Menu
+ * • Actions
+ * • Event Router
+ * • Manifest
+ *
+ */
+
+
+/*************************************************
+ * 10 HOMEOS
+ *************************************************
+ *
+ * Purpose:
+ * Draws and updates the Home dashboard.
+ *
+ * Modules:
+ *
+ * • API
+ * • Header
+ * • Current Show
+ * • Briefing
+ * • Alerts
+ * • Formatting
+ * • Live Updates
+ *
+ * Public entry point:
+ *
+ * refreshStageOSDashboard_DEV()
+ *
+ */
+
+
+/*************************************************
+ * 20 SHOWSTATEOS
+ *************************************************
+ *
+ * Purpose:
+ * Builds the canonical show model used by every
+ * downstream system.
+ *
+ * Owns:
+ *
+ * • Show date
+ * • Performances
+ * • Notes
+ * • Guest Speller
+ * • Assignments
+ * • Staffing
+ * • Planned Outs
+ *
+ */
+
+
+/*************************************************
+ * 21 PERFORMANCEASSIGNMENTOS
+ *************************************************
+ *
+ * Purpose:
+ * Resolves today's company assignments.
+ *
+ */
+
+
+/*************************************************
+ * 22 PERFORMANCESTAFFINGOS
+ *************************************************
+ *
+ * Purpose:
+ * Stores performance-specific staffing selections.
+ *
+ */
+
+
+/*************************************************
+ * 23 CASTRESOLVEROS
+ *************************************************
+ *
+ * Purpose:
+ * Produces the resolved onstage cast.
+ *
+ */
+
+
+/*************************************************
+ * 24 DECISIONOS
+ *************************************************
+ *
+ * Purpose:
+ * Reviews snapshots and highlights operational
+ * changes.
+ *
+ */
+
+
+/*************************************************
+ * 30 PREPOS
+ *************************************************
+ *
+ * Purpose:
+ * Prepares today's performance.
+ *
+ * Modules:
+ *
+ * • API
+ * • Apply
+ * • Cache
+ * • Assignments
+ * • Planned Outs
+ * • Helpers
+ * • IN/OUT Writers
+ * • Report Writers
+ * • Snapshot Queue
+ * • HTML
+ *
+ */
+
+
+/*************************************************
+ * 40 REPORTOS
+ *************************************************
+ *
+ * Purpose:
+ * Generates the Performance Report.
+ *
+ */
+
+
+/*************************************************
+ * 50 SNAPSHOTOS
+ *************************************************
+ *
+ * Purpose:
+ * Captures operational history.
+ *
+ */
+
+
+/*************************************************
+ * 60 PAYROLLOS
+ *************************************************
+ *
+ * Purpose:
+ * Payroll, contracts, rehearsal rules,
+ * payroll notes.
+ *
+ */
+
+
+/*************************************************
+ * 70 WEEKLYOS
+ *************************************************
+ *
+ * Purpose:
+ * Weekly schedule generation and email workflow.
+ *
+ */
+
+
+/*************************************************
+ * 80 COMPANYOS
+ *************************************************
+ *
+ * Purpose:
+ * Company roster, contracts,
+ * onboarding and departures.
+ *
+ */
+
+
+/*************************************************
+ * 90 DEVELOPEROS
+ *************************************************
+ *
+ * Purpose:
+ * Internal developer tools.
+ *
+ * Owns:
+ *
+ * • Function Finder
+ * • Dependency Viewer
+ * • Architecture Explorer
+ * • Project Diagnostics
+ *
+ */
+
+
+/*************************************************
+ * 99 ARCHIVE
+ *************************************************
+ *
+ * Historical implementations only.
+ *
+ * Nothing in this folder should be required for
+ * normal StageOS operation.
+ *
+ *************************************************/

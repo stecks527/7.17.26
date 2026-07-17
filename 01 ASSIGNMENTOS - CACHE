@@ -1,0 +1,68 @@
+/*************************************************
+ * 01 ASSIGNMENTOS - CACHE
+ * Version: 0.1.0
+ *************************************************/
+
+function AssignmentCacheOS() {
+  return {
+    get: function () {
+      return assignmentCacheOSGet_();
+    },
+
+    refresh: function () {
+      return assignmentCacheOSRefresh_();
+    },
+
+    clear: function () {
+      PropertiesService.getDocumentProperties()
+        .deleteProperty("ASSIGNMENT_CACHE_OS_DATA");
+    }
+  };
+}
+
+function assignmentCacheOSGet_() {
+  const props = PropertiesService.getDocumentProperties();
+  const raw = props.getProperty("ASSIGNMENT_CACHE_OS_DATA");
+
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (err) {}
+  }
+
+  return assignmentCacheOSRefresh_();
+}
+
+function assignmentCacheOSRefresh_() {
+  const tracks = AssignmentOS().getTracks();
+  const groups = AssignmentOS().getGroups();
+  const peopleByTrack = AssignmentOS().getPeopleByTrack();
+
+  const allPeople = Object.keys(peopleByTrack)
+    .flatMap(trackId => peopleByTrack[trackId] || []);
+
+  const uniqueNames = uniqueSorted_(allPeople.map(p => p.name));
+
+  const cache = {
+    cachedAt: new Date().toISOString(),
+    groups: groups,
+    tracks: tracks,
+    peopleByTrack: peopleByTrack,
+    people: uniqueNames
+  };
+
+  PropertiesService.getDocumentProperties()
+    .setProperty("ASSIGNMENT_CACHE_OS_DATA", JSON.stringify(cache));
+
+  return cache;
+}
+
+function refreshAssignmentCacheOS() {
+  const cache = AssignmentCacheOS().refresh();
+
+  SpreadsheetApp.getUi().alert(
+    "Assignment cache refreshed.\n\n" +
+    "Tracks: " + cache.tracks.length + "\n" +
+    "People: " + cache.people.length
+  );
+}
